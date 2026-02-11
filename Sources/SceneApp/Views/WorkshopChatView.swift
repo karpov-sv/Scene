@@ -5,8 +5,26 @@ struct WorkshopChatView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingPayloadPreview: Bool = false
     @State private var payloadPreview: AppStore.WorkshopPayloadPreview?
+    @State private var composerHeight: CGFloat = 0
+    @State private var dragStartComposerHeight: CGFloat?
+    @State private var dragStartPointerY: CGFloat?
     private let actionButtonWidth: CGFloat = 126
     private let actionButtonHeight: CGFloat = 30
+    private let actionButtonSpacing: CGFloat = 8
+    private let messagesMinimumHeight: CGFloat = 180
+    private let composerResizeHandleHeight: CGFloat = 10
+
+    private var actionColumnContentHeight: CGFloat {
+        (actionButtonHeight * 3) + (actionButtonSpacing * 2)
+    }
+
+    private var composerMinimumHeight: CGFloat {
+        actionColumnContentHeight + 30
+    }
+
+    private var composerInitialHeight: CGFloat {
+        composerMinimumHeight
+    }
 
     private var sessionSelectionBinding: Binding<UUID?> {
         Binding(
@@ -132,11 +150,29 @@ struct WorkshopChatView: View {
             if store.selectedWorkshopSession != nil {
                 header
                 Divider()
-                messagesList
-                Divider()
-                composer
+                chatSplit
             } else {
                 ContentUnavailableView("No Chat Selected", systemImage: "bubble.left.and.bubble.right", description: Text("Create or select a chat session."))
+            }
+        }
+    }
+
+    private var chatSplit: some View {
+        GeometryReader { proxy in
+            let maxComposerHeight = maximumComposerHeight(in: proxy.size.height)
+            let activeComposerHeight = resolvedComposerHeight(maximum: maxComposerHeight)
+
+            VStack(spacing: 0) {
+                messagesList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                composerResizeHandle(
+                    currentHeight: activeComposerHeight,
+                    maximumHeight: maxComposerHeight
+                )
+
+                composer
+                    .frame(height: activeComposerHeight)
             }
         }
     }
@@ -207,14 +243,14 @@ struct WorkshopChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
                 WorkshopInputTextView(
                     text: $store.workshopInput,
                     onSend: { store.submitWorkshopMessage() }
                 )
-                .frame(minHeight: 90, idealHeight: 110, maxHeight: 170)
+                .frame(minHeight: actionColumnContentHeight, idealHeight: actionColumnContentHeight, maxHeight: .infinity)
 
-                VStack(alignment: .trailing, spacing: 8) {
+                VStack(alignment: .trailing, spacing: actionButtonSpacing) {
                     Menu {
                         if workshopHistory.isEmpty {
                             Button("No previous prompts") {}
@@ -279,13 +315,18 @@ struct WorkshopChatView: View {
                     .disabled(!store.workshopIsGenerating && store.workshopInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .frame(width: actionButtonWidth, alignment: .center)
                 }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(8)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
 
             Text("Press Enter to send. Press Cmd+Enter for a newline.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 6)
         }
-        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func sessionTitle(_ session: WorkshopSession) -> String {
@@ -296,6 +337,51 @@ struct WorkshopChatView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+
+    private func maximumComposerHeight(in totalHeight: CGFloat) -> CGFloat {
+        max(composerMinimumHeight, totalHeight - messagesMinimumHeight - composerResizeHandleHeight)
+    }
+
+    private func resolvedComposerHeight(maximum: CGFloat) -> CGFloat {
+        let value = composerHeight > 0 ? composerHeight : composerInitialHeight
+        return clamp(value, min: composerMinimumHeight, max: maximum)
+    }
+
+    private func composerResizeHandle(currentHeight: CGFloat, maximumHeight: CGFloat) -> some View {
+        ZStack {
+            Divider()
+
+            Capsule()
+                .fill(Color.secondary.opacity(0.25))
+                .frame(width: 44, height: 4)
+        }
+        .frame(height: composerResizeHandleHeight)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartComposerHeight == nil {
+                        dragStartComposerHeight = currentHeight
+                        dragStartPointerY = value.startLocation.y
+                    }
+
+                    let baseHeight = dragStartComposerHeight ?? currentHeight
+                    let baseY = dragStartPointerY ?? value.startLocation.y
+                    let delta = baseY - value.location.y
+                    let proposed = baseHeight + delta
+                    composerHeight = clamp(proposed, min: composerMinimumHeight, max: maximumHeight)
+                }
+                .onEnded { _ in
+                    dragStartComposerHeight = nil
+                    dragStartPointerY = nil
+                }
+        )
+    }
+
+    private func clamp(_ value: CGFloat, min lowerBound: CGFloat, max upperBound: CGFloat) -> CGFloat {
+        guard upperBound >= lowerBound else { return lowerBound }
+        return Swift.min(upperBound, Swift.max(lowerBound, value))
     }
 }
 
@@ -467,10 +553,13 @@ private struct WorkshopInputTextView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .lineBorder
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.scrollerInsets = NSEdgeInsets()
         scrollView.drawsBackground = true
         scrollView.backgroundColor = NSColor.textBackgroundColor
 
@@ -485,7 +574,7 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.font = NSFont.preferredFont(forTextStyle: .body)
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.textContainerInset = .zero
         textView.drawsBackground = true
         textView.backgroundColor = NSColor.textBackgroundColor
         textView.isVerticallyResizable = true
@@ -498,6 +587,7 @@ private struct WorkshopInputTextView: NSViewRepresentable {
             textContainer.widthTracksTextView = true
             textContainer.heightTracksTextView = false
             textContainer.lineBreakMode = .byWordWrapping
+            textContainer.lineFragmentPadding = 0
         }
 
         scrollView.documentView = textView
