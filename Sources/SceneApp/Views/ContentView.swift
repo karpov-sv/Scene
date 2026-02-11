@@ -19,6 +19,8 @@ struct ContentView: View {
 
     @EnvironmentObject private var store: AppStore
     @State private var selectedTab: WorkspaceTab = .writing
+    @State private var isCompendiumVisible: Bool = true
+    @State private var isConversationsVisible: Bool = true
 
     private var hasErrorBinding: Binding<Bool> {
         Binding(
@@ -75,11 +77,27 @@ struct ContentView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 260)
             }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    toggleTrailingPanelVisibility()
+                } label: {
+                    Image(systemName: selectedTab == .writing ? "books.vertical" : "list.bullet")
+                }
+                .help(toggleTrailingPanelHelpText)
+            }
         }
     }
 
     private var workspacePanel: AnyView {
         if selectedTab == .writing {
+            if !isCompendiumVisible {
+                return AnyView(
+                    EditorView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                )
+            }
+
             return AnyView(
                 HSplitView {
                     EditorView()
@@ -92,7 +110,12 @@ struct ContentView: View {
             )
         }
 
-        return AnyView(WorkshopChatView(layout: .embeddedTrailingSessions))
+        return AnyView(
+            WorkshopChatView(
+                layout: .embeddedTrailingSessions,
+                showsConversationsSidebar: isConversationsVisible
+            )
+        )
     }
 
     private var closedProjectView: some View {
@@ -144,6 +167,21 @@ struct ContentView: View {
             try store.openProject(at: selectedURL)
         } catch {
             store.lastError = "Failed to open project: \(error.localizedDescription)"
+        }
+    }
+
+    private var toggleTrailingPanelHelpText: String {
+        if selectedTab == .writing {
+            return isCompendiumVisible ? "Hide Compendium" : "Show Compendium"
+        }
+        return isConversationsVisible ? "Hide Conversations" : "Show Conversations"
+    }
+
+    private func toggleTrailingPanelVisibility() {
+        if selectedTab == .writing {
+            isCompendiumVisible.toggle()
+        } else {
+            isConversationsVisible.toggle()
         }
     }
 }

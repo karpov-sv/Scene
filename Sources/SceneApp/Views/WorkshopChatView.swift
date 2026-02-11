@@ -8,6 +8,12 @@ struct WorkshopChatView: View {
     }
 
     let layout: Layout
+    let showsConversationsSidebar: Bool
+
+    init(layout: Layout, showsConversationsSidebar: Bool = true) {
+        self.layout = layout
+        self.showsConversationsSidebar = showsConversationsSidebar
+    }
 
     @EnvironmentObject private var store: AppStore
     @State private var payloadPreview: AppStore.WorkshopPayloadPreview?
@@ -25,7 +31,7 @@ struct WorkshopChatView: View {
     }
 
     private var composerMinimumHeight: CGFloat {
-        actionColumnContentHeight + 30
+        actionColumnContentHeight + 72
     }
 
     private var composerInitialHeight: CGFloat {
@@ -80,25 +86,37 @@ struct WorkshopChatView: View {
         }
     }
 
+    @ViewBuilder
     private var splitLayout: some View {
-        NavigationSplitView {
-            sessionsSidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 330)
-        } detail: {
+        if showsConversationsSidebar {
+            NavigationSplitView {
+                sessionsSidebar
+                    .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 330)
+            } detail: {
+                chatDetail
+            }
+            .navigationSplitViewStyle(.balanced)
+        } else {
             chatDetail
         }
-        .navigationSplitViewStyle(.balanced)
     }
 
     private var embeddedLayout: some View {
-        HSplitView {
-            chatDetail
-                .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+            if showsConversationsSidebar {
+                HSplitView {
+                    chatDetail
+                        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
 
-            sessionsSidebar
-                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
+                    sessionsSidebar
+                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                chatDetail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sessionsSidebar: some View {
@@ -205,27 +223,10 @@ struct WorkshopChatView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             TextField("Session name", text: selectedSessionNameBinding)
-                .font(.headline)
-
-            HStack(spacing: 12) {
-                Picker("Prompt", selection: selectedPromptBinding) {
-                    Text("Default")
-                        .tag(Optional<UUID>.none)
-                    ForEach(store.workshopPrompts) { prompt in
-                        Text(prompt.title)
-                            .tag(Optional(prompt.id))
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: 300)
-
-                Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
-                Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
-
-                Spacer(minLength: 0)
-            }
+                .textFieldStyle(.roundedBorder)
+                .font(.title3.weight(.semibold))
 
             if !store.workshopStatus.isEmpty {
                 Text(store.workshopStatus)
@@ -270,11 +271,32 @@ struct WorkshopChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Prompt Template", selection: selectedPromptBinding) {
+                    Text("Default")
+                        .tag(Optional<UUID>.none)
+                    ForEach(store.workshopPrompts) { prompt in
+                        Text(prompt.title)
+                            .tag(Optional(prompt.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: 300)
+                .padding(.leading, 8)
+
+                Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
+                Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
+
+                Spacer(minLength: 0)
+            }
+
             HStack(alignment: .top, spacing: 10) {
                 WorkshopInputTextView(
                     text: $store.workshopInput,
                     onSend: { store.submitWorkshopMessage() }
                 )
+                .padding(.leading, 8)
                 .frame(minHeight: actionColumnContentHeight, idealHeight: actionColumnContentHeight, maxHeight: .infinity)
 
                 VStack(alignment: .trailing, spacing: actionButtonSpacing) {

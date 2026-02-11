@@ -163,6 +163,7 @@ struct EditorView: View {
                     text: $store.beatInput,
                     onSend: { store.submitBeatGeneration() }
                 )
+                    .padding(.leading, 8)
                     .frame(minHeight: generationInputMinimumHeight, idealHeight: generationInputMinimumHeight, maxHeight: .infinity)
 
                 VStack(alignment: .trailing, spacing: generationButtonSpacing) {
