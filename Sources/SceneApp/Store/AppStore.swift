@@ -115,6 +115,10 @@ final class AppStore: ObservableObject {
         project.prompts.filter { $0.category == .workshop }
     }
 
+    func prompts(in category: PromptCategory) -> [PromptTemplate] {
+        project.prompts.filter { $0.category == category }
+    }
+
     var selectedScene: Scene? {
         guard let selectedSceneID, let location = sceneLocation(for: selectedSceneID) else {
             return nil
@@ -611,11 +615,6 @@ final class AppStore: ObservableObject {
 
     // MARK: - Workshop
 
-    func setSelectedWorkshopPrompt(_ id: UUID?) {
-        project.selectedWorkshopPromptID = id
-        saveProject(debounced: true)
-    }
-
     func applyWorkshopInputFromHistory(_ text: String) {
         workshopInput = text
     }
@@ -826,34 +825,85 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
-    func addProsePrompt() {
+    func setSelectedWorkshopPrompt(_ id: UUID?) {
+        project.selectedWorkshopPromptID = id
+        saveProject(debounced: true)
+    }
+
+    @discardableResult
+    func addPrompt(category: PromptCategory) -> UUID {
+        let categoryPrompts = prompts(in: category)
+        let defaults = defaultPromptTemplate(for: category)
+        let titleBase = promptTitleBase(for: category)
+
         let prompt = PromptTemplate(
-            category: .prose,
-            title: "Prompt \(prosePrompts.count + 1)",
-            userTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
-            systemTemplate: PromptTemplate.defaultProseTemplate.systemTemplate
+            category: category,
+            title: "\(titleBase) \(categoryPrompts.count + 1)",
+            userTemplate: defaults.userTemplate,
+            systemTemplate: defaults.systemTemplate
         )
 
         project.prompts.append(prompt)
-        project.selectedProsePromptID = prompt.id
-        saveProject()
-    }
-
-    func deleteSelectedProsePrompt() {
-        guard let selected = project.selectedProsePromptID,
-              let index = promptIndex(for: selected),
-              project.prompts[index].category == .prose else {
-            return
+        switch category {
+        case .prose:
+            project.selectedProsePromptID = prompt.id
+        case .workshop:
+            project.selectedWorkshopPromptID = prompt.id
+        case .rewrite, .summary:
+            break
         }
 
-        let proseCount = prosePrompts.count
-        if proseCount <= 1 {
-            return
+        saveProject()
+        return prompt.id
+    }
+
+    @discardableResult
+    func deletePrompt(_ promptID: UUID) -> Bool {
+        guard let index = promptIndex(for: promptID) else {
+            return false
+        }
+
+        let category = project.prompts[index].category
+        let categoryCount = prompts(in: category).count
+        guard categoryCount > 1 else {
+            return false
         }
 
         project.prompts.remove(at: index)
-        project.selectedProsePromptID = prosePrompts.first?.id
+
+        switch category {
+        case .prose:
+            if project.selectedProsePromptID == promptID {
+                project.selectedProsePromptID = prompts(in: .prose).first?.id
+            }
+        case .workshop:
+            if project.selectedWorkshopPromptID == promptID {
+                project.selectedWorkshopPromptID = prompts(in: .workshop).first?.id
+            }
+        case .rewrite, .summary:
+            break
+        }
+
         saveProject()
+        return true
+    }
+
+    func addProsePrompt() {
+        _ = addPrompt(category: .prose)
+    }
+
+    func addWorkshopPrompt() {
+        _ = addPrompt(category: .workshop)
+    }
+
+    func deleteSelectedProsePrompt() {
+        guard let selected = project.selectedProsePromptID else { return }
+        _ = deletePrompt(selected)
+    }
+
+    func deleteSelectedWorkshopPrompt() {
+        guard let selected = project.selectedWorkshopPromptID else { return }
+        _ = deletePrompt(selected)
     }
 
     func updatePromptTitle(_ promptID: UUID, value: String) {
@@ -872,6 +922,61 @@ final class AppStore: ObservableObject {
         guard let index = promptIndex(for: promptID) else { return }
         project.prompts[index].systemTemplate = value
         saveProject(debounced: true)
+    }
+
+    private func defaultPromptTemplate(for category: PromptCategory) -> PromptTemplate {
+        switch category {
+        case .prose:
+            return PromptTemplate.defaultProseTemplate
+        case .workshop:
+            return PromptTemplate.defaultWorkshopTemplate
+        case .rewrite:
+            return PromptTemplate(
+                category: .rewrite,
+                title: "Rewrite",
+                userTemplate: """
+                Rewrite the provided passage according to the requested direction.
+
+                CURRENT SCENE:
+                {scene}
+
+                CONTEXT:
+                {context}
+
+                INSTRUCTION:
+                {beat}
+                """,
+                systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
+            )
+        case .summary:
+            return PromptTemplate(
+                category: .summary,
+                title: "Summary",
+                userTemplate: """
+                Summarize the current material clearly and concisely.
+
+                CURRENT SCENE:
+                {scene}
+
+                CONTEXT:
+                {context}
+                """,
+                systemTemplate: "You summarize fiction drafts with accurate details and continuity awareness."
+            )
+        }
+    }
+
+    private func promptTitleBase(for category: PromptCategory) -> String {
+        switch category {
+        case .prose:
+            return "Writing Prompt"
+        case .workshop:
+            return "Chat Prompt"
+        case .rewrite:
+            return "Rewrite Prompt"
+        case .summary:
+            return "Summary Prompt"
+        }
     }
 
     // MARK: - Generation

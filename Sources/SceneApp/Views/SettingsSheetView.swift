@@ -10,6 +10,7 @@ struct SettingsSheetView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .general
+    @State private var selectedPromptID: UUID?
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -83,9 +84,24 @@ struct SettingsSheetView: View {
 
     private var promptListSelectionBinding: Binding<UUID?> {
         Binding(
-            get: { store.project.selectedProsePromptID ?? store.prosePrompts.first?.id },
-            set: { store.setSelectedProsePrompt($0) }
+            get: { selectedPromptID },
+            set: { selectedPromptID = $0 }
         )
+    }
+
+    private var promptCategoriesInEditor: [PromptCategory] {
+        let withTemplates = PromptCategory.allCases.filter { !store.prompts(in: $0).isEmpty }
+        return withTemplates.isEmpty ? PromptCategory.allCases : withTemplates
+    }
+
+    private var activePromptForEditor: PromptTemplate? {
+        guard let selectedPromptID else { return nil }
+        return store.project.prompts.first(where: { $0.id == selectedPromptID })
+    }
+
+    private var canDeleteSelectedPrompt: Bool {
+        guard let prompt = activePromptForEditor else { return false }
+        return store.prompts(in: prompt.category).count > 1
     }
 
     private var modelPickerOptions: [String] {
@@ -296,19 +312,23 @@ struct SettingsSheetView: View {
     private var promptTemplatesTab: some View {
         HSplitView {
             VStack(spacing: 0) {
-                if store.prosePrompts.isEmpty {
+                if store.project.prompts.isEmpty {
                     ContentUnavailableView("No Prompt Templates", systemImage: "text.badge.star", description: Text("Add a template to start configuring prose generation."))
                 } else {
                     List(selection: promptListSelectionBinding) {
-                        ForEach(store.prosePrompts) { prompt in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(promptTitle(prompt))
-                                    .lineLimit(1)
-                                Text("Prose template")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        ForEach(promptCategoriesInEditor, id: \.self) { category in
+                            Section(promptSectionTitle(for: category)) {
+                                ForEach(store.prompts(in: category)) { prompt in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(promptTitle(prompt))
+                                            .lineLimit(1)
+                                        Text(promptUsageLabel(for: category))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .tag(Optional(prompt.id))
+                                }
                             }
-                            .tag(Optional(prompt.id))
                         }
                     }
                     .listStyle(.sidebar)
@@ -317,20 +337,37 @@ struct SettingsSheetView: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    Button {
-                        store.addProsePrompt()
+                    Menu {
+                        ForEach(PromptCategory.allCases, id: \.self) { category in
+                            Button("Add \(promptCategoryName(for: category)) Template") {
+                                let newPromptID = store.addPrompt(category: category)
+                                selectedPromptID = newPromptID
+                                syncRuntimePromptSelection(from: newPromptID)
+                            }
+                        }
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Label("Add Template", systemImage: "plus")
                     }
 
                     Spacer(minLength: 0)
 
                     Button(role: .destructive) {
-                        store.deleteSelectedProsePrompt()
+                        guard let selectedPromptID else { return }
+                        let selectedCategory = activePromptForEditor?.category
+                        guard store.deletePrompt(selectedPromptID) else { return }
+
+                        if let selectedCategory,
+                           let replacement = store.prompts(in: selectedCategory).first {
+                            self.selectedPromptID = replacement.id
+                        } else {
+                            self.selectedPromptID = store.project.prompts.first?.id
+                        }
+
+                        syncRuntimePromptSelection(from: self.selectedPromptID)
                     } label: {
-                        Label("Delete", systemImage: "trash")
+                        Label("Delete Template", systemImage: "trash")
                     }
-                    .disabled(store.prosePrompts.count <= 1 || store.project.selectedProsePromptID == nil)
+                    .disabled(!canDeleteSelectedPrompt)
                 }
                 .padding(12)
             }
@@ -342,49 +379,48 @@ struct SettingsSheetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
-            if store.project.selectedProsePromptID == nil {
-                store.setSelectedProsePrompt(store.prosePrompts.first?.id)
+            if selectedPromptID == nil {
+                selectedPromptID = store.project.selectedProsePromptID
+                    ?? store.project.selectedWorkshopPromptID
+                    ?? store.project.prompts.first?.id
             }
+            syncRuntimePromptSelection(from: selectedPromptID)
+        }
+        .onChange(of: selectedPromptID) { _, newValue in
+            syncRuntimePromptSelection(from: newValue)
         }
     }
 
     @ViewBuilder
     private var promptEditorDetail: some View {
-        if let prompt = store.activeProsePrompt {
+        if let prompt = activePromptForEditor {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     GroupBox("Template Properties") {
-                        TextField(
-                            "Prompt title",
-                            text: Binding(
-                                get: { prompt.title },
-                                set: { store.updatePromptTitle(prompt.id, value: $0) }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(promptCategoryName(for: prompt.category)) Template")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            TextField(
+                                "Prompt title",
+                                text: promptTitleBinding(prompt.id)
                             )
-                        )
-                        .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.roundedBorder)
+                        }
                     }
 
                     GroupBox("User Template") {
-                        TextEditor(
-                            text: Binding(
-                                get: { prompt.userTemplate },
-                                set: { store.updatePromptUserTemplate(prompt.id, value: $0) }
-                            )
-                        )
+                        TextEditor(text: promptUserTemplateBinding(prompt.id))
                         .frame(minHeight: 220)
                     }
 
                     GroupBox("System Template") {
-                        TextEditor(
-                            text: Binding(
-                                get: { prompt.systemTemplate },
-                                set: { store.updatePromptSystemTemplate(prompt.id, value: $0) }
-                            )
-                        )
+                        TextEditor(text: promptSystemTemplateBinding(prompt.id))
                         .frame(minHeight: 180)
                     }
 
-                    Text("Template placeholders: {beat}, {scene}, {context}")
+                    Text("Template placeholders: \(placeholderHint(for: prompt.category))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -400,6 +436,98 @@ struct SettingsSheetView: View {
     private func promptTitle(_ prompt: PromptTemplate) -> String {
         let trimmed = prompt.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Prompt" : trimmed
+    }
+
+    private func promptCategoryName(for category: PromptCategory) -> String {
+        switch category {
+        case .prose:
+            return "Writing"
+        case .workshop:
+            return "Chat"
+        case .rewrite:
+            return "Rewrite"
+        case .summary:
+            return "Summary"
+        }
+    }
+
+    private func promptSectionTitle(for category: PromptCategory) -> String {
+        "\(promptCategoryName(for: category)) Templates"
+    }
+
+    private func promptUsageLabel(for category: PromptCategory) -> String {
+        switch category {
+        case .prose:
+            return "Used for scene generation"
+        case .workshop:
+            return "Used for workshop chat"
+        case .rewrite:
+            return "Used for rewrite requests"
+        case .summary:
+            return "Used for summary requests"
+        }
+    }
+
+    private func syncRuntimePromptSelection(from promptID: UUID?) {
+        guard let promptID,
+              let prompt = store.project.prompts.first(where: { $0.id == promptID }) else {
+            return
+        }
+
+        switch prompt.category {
+        case .prose:
+            if store.project.selectedProsePromptID != prompt.id {
+                store.setSelectedProsePrompt(prompt.id)
+            }
+        case .workshop:
+            if store.project.selectedWorkshopPromptID != prompt.id {
+                store.setSelectedWorkshopPrompt(prompt.id)
+            }
+        case .rewrite, .summary:
+            break
+        }
+    }
+
+    private func promptTitleBinding(_ promptID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.project.prompts.first(where: { $0.id == promptID })?.title ?? ""
+            },
+            set: { value in
+                store.updatePromptTitle(promptID, value: value)
+            }
+        )
+    }
+
+    private func promptUserTemplateBinding(_ promptID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.project.prompts.first(where: { $0.id == promptID })?.userTemplate ?? ""
+            },
+            set: { value in
+                store.updatePromptUserTemplate(promptID, value: value)
+            }
+        )
+    }
+
+    private func promptSystemTemplateBinding(_ promptID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.project.prompts.first(where: { $0.id == promptID })?.systemTemplate ?? ""
+            },
+            set: { value in
+                store.updatePromptSystemTemplate(promptID, value: value)
+            }
+        )
+    }
+
+    private func placeholderHint(for category: PromptCategory) -> String {
+        switch category {
+        case .workshop:
+            return "{scene}, {context}, {conversation}"
+        case .prose, .rewrite, .summary:
+            return "{beat}, {scene}, {context}"
+        }
     }
 
     private func timeoutLabel(_ seconds: Double) -> String {
