@@ -1,37 +1,104 @@
-# Scene (Native macOS Prototype)
+# Scene (Native macOS App Prototype)
 
-A standalone macOS SwiftUI prototype for long-form writing workflows with:
+`Scene` is a standalone SwiftUI macOS writing tool prototype (no WebView) with:
 
-- Binder-style chapter/scene structure
-- Scene editor
+- Binder-style chapter/scene navigation
+- Scene editor with AI-assisted prose generation
 - Compendium (characters, locations, lore, items, notes)
-- AI text generation from a beat prompt
-- Workshop chat interface with multi-session conversations
+- Workshop chat with multi-session conversations
+- Local project persistence
 
-## Current Scope
+## Requirements
 
-This is an infrastructure-focused foundation intended for iterative development. It includes:
+- macOS 14 or newer
+- Swift 6 toolchain (`swift --version`) or Xcode 15.4+
 
-- Data model and app store architecture
-- Local JSON persistence under `~/Library/Application Support/SceneApp/project.json`
-- Pluggable AI provider layer
-  - `Local Mock` provider for offline testing
-  - `OpenAI-Compatible API` provider for local/remote chat-completion endpoints
-- Modular SwiftUI views for binder, editor, compendium, workshop chat, and settings
+## Project Structure
 
-## Build & Run
+```text
+Scene/
+├─ Package.swift
+├─ README.md
+├─ Resources/
+└─ Sources/SceneApp/
+   ├─ SceneApp.swift
+   ├─ Models/
+   │  ├─ DomainModels.swift
+   │  └─ GenerationModels.swift
+   ├─ Services/
+   │  ├─ AIService.swift
+   │  ├─ OpenAICompatibleAIService.swift
+   │  └─ PersistenceService.swift
+   ├─ Store/
+   │  └─ AppStore.swift
+   └─ Views/
+      ├─ ContentView.swift
+      ├─ BinderSidebarView.swift
+      ├─ EditorView.swift
+      ├─ CompendiumView.swift
+      ├─ WorkshopChatView.swift
+      └─ SettingsSheetView.swift
+```
+
+### Module Roles
+
+- `Models/`: Codable domain objects (project, scenes, compendium, prompts, workshop sessions) and generation request/response models.
+- `Services/`: persistence and provider-specific AI integration.
+- `Store/AppStore.swift`: central app state, mutations, selection logic, and async generation/chat workflows.
+- `Views/`: SwiftUI UI composition for writing workspace, compendium, workshop, and settings.
+
+## Build
 
 ```bash
 cd /Users/karpov/compwork/Scene
 swift build
+```
+
+## Run (Development)
+
+```bash
+cd /Users/karpov/compwork/Scene
 swift run SceneApp
 ```
 
-## Notes
+## Install
 
-- The app defaults to `Local Mock` so generation works without API keys.
-- For real generation, open Settings and switch provider to `OpenAI-Compatible API`, then configure endpoint/model/key.
-- Prompt templates support placeholders:
-  - `{beat}`
-  - `{scene}`
-  - `{context}`
+### Option 1: Install via Xcode (recommended for GUI app distribution)
+
+1. Open `Package.swift` in Xcode.
+2. Select the `SceneApp` scheme and run once (`Product > Run`).
+3. For a distributable app, use `Product > Archive` and then `Distribute App`.
+4. Place the generated app in `/Applications` (or `~/Applications`).
+
+### Option 2: Local release executable via SwiftPM
+
+```bash
+cd /Users/karpov/compwork/Scene
+swift build -c release
+```
+
+Binary path:
+
+```text
+.build/release/SceneApp
+```
+
+You can run this executable directly from Terminal.
+
+## Data & Configuration
+
+- Project data is stored at:
+  - `~/Library/Application Support/SceneApp/project.json`
+- Default provider is `Local Mock` (works without API keys).
+- To use a real model endpoint, open Settings and select `OpenAI-Compatible API`, then configure:
+  - endpoint URL
+  - API key
+  - model name
+
+## Prompt Placeholders
+
+Prompt templates can use:
+
+- `{beat}`
+- `{scene}`
+- `{context}`
