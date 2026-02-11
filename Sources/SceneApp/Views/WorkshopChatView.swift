@@ -31,7 +31,7 @@ struct WorkshopChatView: View {
     }
 
     private var composerMinimumHeight: CGFloat {
-        actionColumnContentHeight + 72
+        actionColumnContentHeight + 84
     }
 
     private var composerInitialHeight: CGFloat {
@@ -67,6 +67,18 @@ struct WorkshopChatView: View {
 
     private var workshopHistory: [String] {
         store.workshopInputHistory
+    }
+
+    private var currentSceneTitle: String {
+        guard let scene = store.selectedScene else {
+            return "No scene selected"
+        }
+        let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Scene" : trimmed
+    }
+
+    private var selectedCompendiumCount: Int {
+        store.selectedSceneContextCompendiumIDs.count
     }
 
     var body: some View {
@@ -271,6 +283,11 @@ struct WorkshopChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("Scene: \(currentSceneTitle) | Context entries: \(selectedCompendiumCount)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 8)
+
             HStack(spacing: 12) {
                 Picker("Prompt Template", selection: selectedPromptBinding) {
                     Text("Default")
