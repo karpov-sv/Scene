@@ -18,6 +18,8 @@ final class AppStore: ObservableObject {
     }
 
     @Published private(set) var project: StoryProject
+    @Published private(set) var isProjectOpen: Bool = false
+    @Published private(set) var currentProjectURL: URL?
 
     @Published var selectedChapterID: UUID?
     @Published var selectedSceneID: UUID?
@@ -59,35 +61,18 @@ final class AppStore: ObservableObject {
         self.mockService = mockService
         self.openAIService = openAIService
 
-        if let loaded = try? persistence.load() {
-            self.project = loaded
-        } else {
-            self.project = StoryProject.starter()
-        }
+        self.project = StoryProject.starter()
 
-        // Ensure workshop baseline exists for older saved files.
-        if !project.prompts.contains(where: { $0.category == .workshop }) {
-            let workshopPrompt = PromptTemplate.defaultWorkshopTemplate
-            project.prompts.append(workshopPrompt)
-            if project.selectedWorkshopPromptID == nil {
-                project.selectedWorkshopPromptID = workshopPrompt.id
+        if let lastProjectURL = persistence.loadLastOpenedProjectURL() {
+            do {
+                let loadedProject = try persistence.loadProject(at: lastProjectURL)
+                applyLoadedProject(loadedProject, from: lastProjectURL, rememberAsLastOpened: true)
+            } catch {
+                setClosedProjectState(clearLastOpenedReference: true)
+                lastError = "Failed to open last project: \(error.localizedDescription)"
             }
-        }
-
-        if project.workshopSessions.isEmpty {
-            let session = Self.makeInitialWorkshopSession(name: "Chat 1")
-            project.workshopSessions = [session]
-            project.selectedWorkshopSessionID = session.id
-        }
-
-        self.selectedChapterID = project.chapters.first?.id
-        self.selectedSceneID = project.chapters.first?.scenes.first?.id
-        self.selectedCompendiumID = project.compendium.first?.id
-        self.selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
-
-        ensureValidSelections()
-        if project.settings.provider == .openAICompatible {
-            scheduleModelDiscovery(immediate: true)
+        } else {
+            setClosedProjectState(clearLastOpenedReference: false)
         }
     }
 
@@ -100,27 +85,40 @@ final class AppStore: ObservableObject {
 
     // MARK: - Read APIs
 
+    var currentProjectPathDisplay: String {
+        currentProjectURL?.path ?? "No project open"
+    }
+
+    var currentProjectName: String {
+        guard let currentProjectURL else { return "No Project" }
+        return currentProjectURL.deletingPathExtension().lastPathComponent
+    }
+
     var chapters: [Chapter] {
-        project.chapters
+        isProjectOpen ? project.chapters : []
     }
 
     var workshopSessions: [WorkshopSession] {
-        project.workshopSessions
+        isProjectOpen ? project.workshopSessions : []
     }
 
     var prosePrompts: [PromptTemplate] {
-        project.prompts.filter { $0.category == .prose }
+        guard isProjectOpen else { return [] }
+        return project.prompts.filter { $0.category == .prose }
     }
 
     var workshopPrompts: [PromptTemplate] {
-        project.prompts.filter { $0.category == .workshop }
+        guard isProjectOpen else { return [] }
+        return project.prompts.filter { $0.category == .workshop }
     }
 
     func prompts(in category: PromptCategory) -> [PromptTemplate] {
-        project.prompts.filter { $0.category == category }
+        guard isProjectOpen else { return [] }
+        return project.prompts.filter { $0.category == category }
     }
 
     var selectedScene: Scene? {
+        guard isProjectOpen else { return nil }
         guard let selectedSceneID, let location = sceneLocation(for: selectedSceneID) else {
             return nil
         }
@@ -128,6 +126,7 @@ final class AppStore: ObservableObject {
     }
 
     var selectedCompendiumEntry: CompendiumEntry? {
+        guard isProjectOpen else { return nil }
         guard let selectedCompendiumID, let index = compendiumIndex(for: selectedCompendiumID) else {
             return nil
         }
@@ -135,6 +134,7 @@ final class AppStore: ObservableObject {
     }
 
     var selectedWorkshopSession: WorkshopSession? {
+        guard isProjectOpen else { return nil }
         guard let selectedWorkshopSessionID,
               let index = workshopSessionIndex(for: selectedWorkshopSessionID) else {
             return nil
@@ -143,6 +143,7 @@ final class AppStore: ObservableObject {
     }
 
     var activeProsePrompt: PromptTemplate? {
+        guard isProjectOpen else { return nil }
         if let selectedID = project.selectedProsePromptID,
            let index = promptIndex(for: selectedID) {
             return project.prompts[index]
@@ -151,6 +152,7 @@ final class AppStore: ObservableObject {
     }
 
     var activeWorkshopPrompt: PromptTemplate? {
+        guard isProjectOpen else { return nil }
         if let selectedID = project.selectedWorkshopPromptID,
            let index = promptIndex(for: selectedID) {
             return project.prompts[index]
@@ -193,9 +195,44 @@ final class AppStore: ObservableObject {
         compendiumEntries(forIDs: selectedSceneContextCompendiumIDs)
     }
 
+    // MARK: - Project Lifecycle
+
+    func createNewProject(at destinationURL: URL) throws {
+        try persistOpenProjectIfNeeded()
+
+        let newProject = StoryProject.starter()
+        let savedURL = try persistence.createProject(newProject, at: destinationURL)
+        applyLoadedProject(newProject, from: savedURL, rememberAsLastOpened: true)
+    }
+
+    func openProject(at projectURL: URL) throws {
+        try persistOpenProjectIfNeeded()
+
+        let loadedProject = try persistence.loadProject(at: projectURL)
+        let resolvedURL = try persistence.resolveExistingProjectURL(projectURL)
+        applyLoadedProject(loadedProject, from: resolvedURL, rememberAsLastOpened: true)
+    }
+
+    func closeProject() {
+        try? persistOpenProjectIfNeeded()
+        setClosedProjectState(clearLastOpenedReference: true)
+    }
+
+    func duplicateCurrentProject(to destinationURL: URL) throws {
+        guard let sourceURL = currentProjectURL, isProjectOpen else {
+            throw ProjectPersistenceError.projectNotFound
+        }
+
+        try persistOpenProjectIfNeeded()
+        let duplicatedURL = try persistence.duplicateProject(from: sourceURL, to: destinationURL)
+        let duplicatedProject = try persistence.loadProject(at: duplicatedURL)
+        applyLoadedProject(duplicatedProject, from: duplicatedURL, rememberAsLastOpened: true)
+    }
+
     // MARK: - Selection
 
     func selectChapter(_ chapterID: UUID) {
+        guard isProjectOpen else { return }
         selectedChapterID = chapterID
         if let chapter = project.chapters.first(where: { $0.id == chapterID }),
            let firstScene = chapter.scenes.first {
@@ -204,6 +241,7 @@ final class AppStore: ObservableObject {
     }
 
     func selectScene(_ sceneID: UUID, chapterID: UUID) {
+        guard isProjectOpen else { return }
         selectedChapterID = chapterID
         selectedSceneID = sceneID
     }
@@ -235,10 +273,12 @@ final class AppStore: ObservableObject {
     }
 
     func selectCompendiumEntry(_ entryID: UUID?) {
+        guard isProjectOpen else { return }
         selectedCompendiumID = entryID
     }
 
     func selectWorkshopSession(_ sessionID: UUID) {
+        guard isProjectOpen else { return }
         guard workshopSessionIndex(for: sessionID) != nil else { return }
         selectedWorkshopSessionID = sessionID
         project.selectedWorkshopSessionID = sessionID
@@ -315,6 +355,13 @@ final class AppStore: ObservableObject {
     }
 
     func refreshAvailableModels(force: Bool = false, showErrors: Bool = true) async {
+        guard isProjectOpen else {
+            availableRemoteModels = []
+            modelDiscoveryStatus = ""
+            isDiscoveringModels = false
+            return
+        }
+
         guard project.settings.provider == .openAICompatible else {
             availableRemoteModels = []
             modelDiscoveryStatus = "Model discovery is available for OpenAI-compatible providers."
@@ -1118,6 +1165,112 @@ final class AppStore: ObservableObject {
 
     // MARK: - Helpers
 
+    private func applyLoadedProject(
+        _ loadedProject: StoryProject,
+        from sourceURL: URL,
+        rememberAsLastOpened: Bool
+    ) {
+        cancelProjectTasksForSwitch()
+
+        project = loadedProject
+        currentProjectURL = sourceURL.standardizedFileURL
+        isProjectOpen = true
+        showingSettings = false
+
+        workshopInput = ""
+        beatInput = ""
+        beatInputHistory = []
+        generationStatus = ""
+        workshopStatus = ""
+        isGenerating = false
+        workshopIsGenerating = false
+        availableRemoteModels = []
+        isDiscoveringModels = false
+        modelDiscoveryStatus = ""
+
+        ensureProjectBaseline()
+
+        selectedChapterID = project.chapters.first?.id
+        selectedSceneID = project.chapters.first?.scenes.first?.id
+        selectedCompendiumID = project.compendium.first?.id
+        selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
+
+        ensureValidSelections()
+
+        if rememberAsLastOpened, let currentProjectURL {
+            persistence.saveLastOpenedProjectURL(currentProjectURL)
+        }
+
+        if project.settings.provider == .openAICompatible {
+            scheduleModelDiscovery(immediate: true)
+        }
+    }
+
+    private func setClosedProjectState(clearLastOpenedReference: Bool) {
+        cancelProjectTasksForSwitch()
+
+        project = StoryProject.starter()
+        isProjectOpen = false
+        currentProjectURL = nil
+        showingSettings = false
+
+        selectedChapterID = nil
+        selectedSceneID = nil
+        selectedCompendiumID = nil
+        selectedWorkshopSessionID = nil
+
+        workshopInput = ""
+        beatInput = ""
+        beatInputHistory = []
+        generationStatus = ""
+        workshopStatus = ""
+        isGenerating = false
+        workshopIsGenerating = false
+        availableRemoteModels = []
+        isDiscoveringModels = false
+        modelDiscoveryStatus = ""
+
+        if clearLastOpenedReference {
+            persistence.clearLastOpenedProjectURL()
+        }
+    }
+
+    private func persistOpenProjectIfNeeded() throws {
+        guard isProjectOpen, let currentProjectURL else { return }
+
+        autosaveTask?.cancel()
+        project.updatedAt = .now
+        self.currentProjectURL = try persistence.saveProject(project, at: currentProjectURL)
+    }
+
+    private func cancelProjectTasksForSwitch() {
+        autosaveTask?.cancel()
+        modelDiscoveryTask?.cancel()
+        workshopRequestTask?.cancel()
+        proseRequestTask?.cancel()
+
+        autosaveTask = nil
+        modelDiscoveryTask = nil
+        workshopRequestTask = nil
+        proseRequestTask = nil
+    }
+
+    private func ensureProjectBaseline() {
+        if !project.prompts.contains(where: { $0.category == .workshop }) {
+            let workshopPrompt = PromptTemplate.defaultWorkshopTemplate
+            project.prompts.append(workshopPrompt)
+            if project.selectedWorkshopPromptID == nil {
+                project.selectedWorkshopPromptID = workshopPrompt.id
+            }
+        }
+
+        if project.workshopSessions.isEmpty {
+            let session = Self.makeInitialWorkshopSession(name: "Chat 1")
+            project.workshopSessions = [session]
+            project.selectedWorkshopSessionID = session.id
+        }
+    }
+
     private static func makeInitialWorkshopSession(name: String) -> WorkshopSession {
         WorkshopSession(
             name: name,
@@ -1400,6 +1553,7 @@ final class AppStore: ObservableObject {
     }
 
     private func ensureValidSelections() {
+        guard isProjectOpen else { return }
         sanitizeSceneContextSelections()
 
         if let selectedSceneID,
@@ -1463,6 +1617,7 @@ final class AppStore: ObservableObject {
     }
 
     private func saveProject(debounced: Bool = false) {
+        guard isProjectOpen else { return }
         project.updatedAt = .now
 
         if debounced {
@@ -1480,8 +1635,10 @@ final class AppStore: ObservableObject {
     }
 
     private func writeProjectToDisk() {
+        guard isProjectOpen, let currentProjectURL else { return }
+
         do {
-            try persistence.save(project)
+            self.currentProjectURL = try persistence.saveProject(project, at: currentProjectURL)
         } catch {
             lastError = "Failed to save project: \(error.localizedDescription)"
         }
@@ -1493,6 +1650,7 @@ final class AppStore: ObservableObject {
     }
 
     private func scheduleModelDiscovery(immediate: Bool = false) {
+        guard isProjectOpen else { return }
         guard project.settings.provider == .openAICompatible else {
             return
         }

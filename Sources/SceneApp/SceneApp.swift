@@ -26,7 +26,88 @@ struct SceneApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .windowResizability(.contentMinSize)
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .newItem) {
+                Button("New Project...") {
+                    createProjectFromDialog()
+                }
+                .keyboardShortcut("n")
+
+                Button("Open Project...") {
+                    openProjectFromDialog()
+                }
+                .keyboardShortcut("o")
+            }
+
+            CommandMenu("Project") {
+                Button("New Project...") {
+                    createProjectFromDialog()
+                }
+
+                Button("Open Project...") {
+                    openProjectFromDialog()
+                }
+
+                Divider()
+
+                Button("Duplicate Project...") {
+                    duplicateProjectFromDialog()
+                }
+                .disabled(!store.isProjectOpen)
+
+                Button("Close Project") {
+                    store.closeProject()
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .disabled(!store.isProjectOpen)
+            }
+
+            CommandGroup(replacing: .appSettings) {
+                Button("Preferences...") {
+                    store.showingSettings = true
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(!store.isProjectOpen)
+            }
+        }
+    }
+
+    private func createProjectFromDialog() {
+        let suggestedName = store.isProjectOpen ? store.project.title : "Untitled"
+        guard let destinationURL = ProjectDialogs.chooseNewProjectURL(suggestedName: suggestedName) else {
+            return
+        }
+
+        do {
+            try store.createNewProject(at: destinationURL)
+        } catch {
+            store.lastError = "Failed to create project: \(error.localizedDescription)"
+        }
+    }
+
+    private func openProjectFromDialog() {
+        guard let selectedURL = ProjectDialogs.chooseExistingProjectURL() else {
+            return
+        }
+
+        do {
+            try store.openProject(at: selectedURL)
+        } catch {
+            store.lastError = "Failed to open project: \(error.localizedDescription)"
+        }
+    }
+
+    private func duplicateProjectFromDialog() {
+        guard store.isProjectOpen else { return }
+
+        let baseName = "\(store.currentProjectName) Copy"
+        guard let destinationURL = ProjectDialogs.chooseDuplicateDestinationURL(defaultName: baseName) else {
+            return
+        }
+
+        do {
+            try store.duplicateCurrentProject(to: destinationURL)
+        } catch {
+            store.lastError = "Failed to duplicate project: \(error.localizedDescription)"
         }
     }
 }

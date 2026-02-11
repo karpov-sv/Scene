@@ -28,7 +28,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        workspaceRoot
+        rootContent
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
                     .environmentObject(store)
@@ -40,6 +40,15 @@ struct ContentView: View {
             } message: {
                 Text(store.lastError ?? "Unknown error")
             }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        if store.isProjectOpen {
+            workspaceRoot
+        } else {
+            closedProjectView
+        }
     }
 
     private var workspaceRoot: some View {
@@ -56,14 +65,16 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var workspaceToolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            Picker("Workspace", selection: $selectedTab) {
-                ForEach(WorkspaceTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
+        if store.isProjectOpen {
+            ToolbarItem(placement: .principal) {
+                Picker("Workspace", selection: $selectedTab) {
+                    ForEach(WorkspaceTab.allCases) { tab in
+                        Text(tab.title).tag(tab)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 260)
         }
     }
 
@@ -82,5 +93,57 @@ struct ContentView: View {
         }
 
         return AnyView(WorkshopChatView(layout: .embeddedTrailingSessions))
+    }
+
+    private var closedProjectView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "folder")
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(.secondary)
+
+            Text("No Project Open")
+                .font(.title3.weight(.semibold))
+
+            Text("Create a new project or open an existing `.sceneproj` folder.")
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button("New Project...") {
+                    createProjectFromDialog()
+                }
+                .keyboardShortcut("n", modifiers: .command)
+
+                Button("Open Project...") {
+                    openProjectFromDialog()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func createProjectFromDialog() {
+        let suggestedName = store.currentProjectName == "No Project" ? "Untitled" : store.currentProjectName
+        guard let destinationURL = ProjectDialogs.chooseNewProjectURL(suggestedName: suggestedName) else {
+            return
+        }
+
+        do {
+            try store.createNewProject(at: destinationURL)
+        } catch {
+            store.lastError = "Failed to create project: \(error.localizedDescription)"
+        }
+    }
+
+    private func openProjectFromDialog() {
+        guard let selectedURL = ProjectDialogs.chooseExistingProjectURL() else {
+            return
+        }
+
+        do {
+            try store.openProject(at: selectedURL)
+        } catch {
+            store.lastError = "Failed to open project: \(error.localizedDescription)"
+        }
     }
 }

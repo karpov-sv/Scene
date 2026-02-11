@@ -113,8 +113,13 @@ Script options:
 
 ## Data & Configuration
 
-- Project data is stored at:
-  - `~/Library/Application Support/SceneApp/project.json`
+- Projects are stored as folder bundles with `.sceneproj` extension.
+- Each project contains:
+  - `manifest.json` (ordering, metadata, settings)
+  - `scenes/*.md` (scene text)
+  - `compendium/*.md` (entry text)
+  - `workshop/*.json` (chat messages)
+- The app restores the last opened project on restart.
 - Default provider is `Local Mock` (works without API keys).
 - To use a real model endpoint, open Settings and select `OpenAI-Compatible API`, then configure:
   - LM Studio default endpoint: `http://localhost:1234/v1`

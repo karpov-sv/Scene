@@ -173,7 +173,7 @@ struct SettingsSheetView: View {
                         Text("Project file location")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("~/Library/Application Support/SceneApp/project.json")
+                        Text(store.currentProjectPathDisplay)
                             .font(.system(.footnote, design: .monospaced))
                             .textSelection(.enabled)
                     }
