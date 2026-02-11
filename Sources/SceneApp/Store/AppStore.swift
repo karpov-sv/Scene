@@ -30,6 +30,7 @@ final class AppStore: ObservableObject {
     @Published var workshopUseCompendiumContext: Bool = true
 
     @Published var beatInput: String = ""
+    @Published private(set) var beatInputHistory: [String] = []
     @Published var isGenerating: Bool = false
     @Published var generationStatus: String = ""
     @Published var lastError: String?
@@ -46,6 +47,7 @@ final class AppStore: ObservableObject {
     private var autosaveTask: Task<Void, Never>?
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
+    private var proseRequestTask: Task<Void, Never>?
 
     init(
         persistence: ProjectPersistence = .shared,
@@ -92,6 +94,7 @@ final class AppStore: ObservableObject {
         autosaveTask?.cancel()
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
+        proseRequestTask?.cancel()
     }
 
     // MARK: - Read APIs
@@ -533,6 +536,79 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    // MARK: - Prose Generation
+
+    func applyBeatInputFromHistory(_ text: String) {
+        beatInput = text
+    }
+
+    func submitBeatGeneration() {
+        guard proseRequestTask == nil else { return }
+
+        proseRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.proseRequestTask = nil
+            }
+            await self.generateFromBeat()
+        }
+    }
+
+    func cancelBeatGeneration() {
+        proseRequestTask?.cancel()
+        generationStatus = "Cancelling..."
+    }
+
+    func makeProsePayloadPreview() throws -> WorkshopPayloadPreview {
+        let beat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !beat.isEmpty else {
+            throw AIServiceError.badResponse("Type a beat to preview payload.")
+        }
+
+        guard let scene = selectedScene else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        let request = makeProseGenerationRequest(beat: beat, scene: scene)
+
+        switch project.settings.provider {
+        case .openAICompatible:
+            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: [
+                    "Prompt includes beat input, current scene excerpt, and compendium context.",
+                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+                ]
+            )
+        case .localMock:
+            let dictionary: [String: Any] = [
+                "provider": project.settings.provider.label,
+                "request": [
+                    "systemPrompt": request.systemPrompt,
+                    "userPrompt": request.userPrompt,
+                    "model": request.model,
+                    "temperature": request.temperature,
+                    "maxTokens": request.maxTokens
+                ]
+            ]
+            let bodyJSON = (try? Self.prettyJSONString(fromJSONObject: dictionary)) ?? "{}"
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: nil,
+                method: nil,
+                headers: [],
+                bodyJSON: bodyJSON,
+                notes: ["Local Mock provider is active. This request does not use network transport."]
+            )
+        }
+    }
+
     // MARK: - Workshop
 
     func setSelectedWorkshopPrompt(_ id: UUID?) {
@@ -812,36 +888,15 @@ final class AppStore: ObservableObject {
             return
         }
 
+        let request = makeProseGenerationRequest(beat: beat, scene: scene)
+        rememberBeatInputHistory(beat)
+
         isGenerating = true
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
 
         defer {
             isGenerating = false
         }
-
-        let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
-        let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(limit: 8)
-
-        let userPrompt = expandPrompt(
-            template: activePrompt.userTemplate,
-            beat: beat,
-            scene: sceneContext,
-            context: compendiumContext,
-            conversation: ""
-        )
-
-        let systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? project.settings.defaultSystemPrompt
-            : activePrompt.systemTemplate
-
-        let request = TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: project.settings.model,
-            temperature: project.settings.temperature,
-            maxTokens: project.settings.maxTokens
-        )
 
         let generationBase = makeGenerationAppendBase(for: scene.id)
 
@@ -872,9 +927,50 @@ final class AppStore: ObservableObject {
             generationStatus = "Generated \(text.count) characters."
             beatInput = ""
             saveProject()
+        } catch is CancellationError {
+            generationStatus = "Generation cancelled."
+            saveProject()
         } catch {
             lastError = error.localizedDescription
             generationStatus = "Generation failed."
+        }
+    }
+
+    private func makeProseGenerationRequest(beat: String, scene: Scene) -> TextGenerationRequest {
+        let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
+        let sceneContext = String(scene.content.suffix(4500))
+        let compendiumContext = buildCompendiumContext(limit: 8)
+
+        let userPrompt = expandPrompt(
+            template: activePrompt.userTemplate,
+            beat: beat,
+            scene: sceneContext,
+            context: compendiumContext,
+            conversation: ""
+        )
+
+        let systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? project.settings.defaultSystemPrompt
+            : activePrompt.systemTemplate
+
+        return TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: project.settings.model,
+            temperature: project.settings.temperature,
+            maxTokens: project.settings.maxTokens
+        )
+    }
+
+    private func rememberBeatInputHistory(_ value: String) {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        beatInputHistory.removeAll { $0 == normalized }
+        beatInputHistory.insert(normalized, at: 0)
+
+        if beatInputHistory.count > 30 {
+            beatInputHistory.removeLast(beatInputHistory.count - 30)
         }
     }
 
