@@ -117,9 +117,12 @@ Script options:
   - `~/Library/Application Support/SceneApp/project.json`
 - Default provider is `Local Mock` (works without API keys).
 - To use a real model endpoint, open Settings and select `OpenAI-Compatible API`, then configure:
+  - LM Studio default endpoint: `http://localhost:1234/v1`
   - endpoint URL
   - API key
   - model name
+  - streaming mode (optional)
+  - request timeout (default: 5 minutes)
 
 ## Prompt Placeholders
 

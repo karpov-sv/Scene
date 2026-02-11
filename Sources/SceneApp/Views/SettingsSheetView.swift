@@ -60,6 +60,20 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var enableStreamingBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.enableStreaming },
+            set: { store.updateEnableStreaming($0) }
+        )
+    }
+
+    private var requestTimeoutBinding: Binding<Double> {
+        Binding(
+            get: { store.project.settings.requestTimeoutSeconds },
+            set: { store.updateRequestTimeoutSeconds($0) }
+        )
+    }
+
     private var defaultSystemPromptBinding: Binding<String> {
         Binding(
             get: { store.project.settings.defaultSystemPrompt },
@@ -72,6 +86,15 @@ struct SettingsSheetView: View {
             get: { store.project.selectedProsePromptID ?? store.prosePrompts.first?.id },
             set: { store.setSelectedProsePrompt($0) }
         )
+    }
+
+    private var modelPickerOptions: [String] {
+        let current = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        var options = store.availableRemoteModels
+        if !current.isEmpty && !options.contains(current) {
+            options.insert(current, at: 0)
+        }
+        return options
     }
 
     var body: some View {
@@ -162,12 +185,77 @@ struct SettingsSheetView: View {
                             .textFieldStyle(.roundedBorder)
                             .disabled(store.project.settings.provider != .openAICompatible)
 
+                        if store.project.settings.provider == .openAICompatible {
+                            HStack(spacing: 10) {
+                                Button("Use LM Studio Default") {
+                                    store.applyLMStudioEndpointPreset()
+                                }
+
+                                Text("http://localhost:1234/v1")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+
+                        Stepper(value: requestTimeoutBinding, in: 30 ... 3600, step: 15) {
+                            HStack {
+                                Text("Request Timeout")
+                                Spacer(minLength: 0)
+                                Text(timeoutLabel(store.project.settings.requestTimeoutSeconds))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+
                         SecureField("API Key", text: apiKeyBinding)
                             .textFieldStyle(.roundedBorder)
                             .disabled(store.project.settings.provider != .openAICompatible)
 
                         TextField("Model", text: modelBinding)
                             .textFieldStyle(.roundedBorder)
+
+                        if store.project.settings.provider == .openAICompatible {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    if modelPickerOptions.isEmpty {
+                                        Text("No discovered models yet.")
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Picker("Discovered Models", selection: modelBinding) {
+                                            ForEach(modelPickerOptions, id: \.self) { modelID in
+                                                Text(modelID).tag(modelID)
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(minLength: 0)
+
+                                    Button {
+                                        Task {
+                                            await store.refreshAvailableModels(force: true, showErrors: true)
+                                        }
+                                    } label: {
+                                        if store.isDiscoveringModels {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Label("Refresh", systemImage: "arrow.clockwise")
+                                        }
+                                    }
+                                    .disabled(store.isDiscoveringModels)
+                                }
+
+                                if !store.modelDiscoveryStatus.isEmpty {
+                                    Text(store.modelDiscoveryStatus)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+
+                        Toggle("Enable Streaming Responses", isOn: enableStreamingBinding)
+                            .disabled(store.project.settings.provider != .openAICompatible)
                     }
                 }
 
@@ -196,6 +284,13 @@ struct SettingsSheetView: View {
             .padding(4)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            if store.project.settings.provider == .openAICompatible,
+               store.availableRemoteModels.isEmpty,
+               !store.isDiscoveringModels {
+                await store.refreshAvailableModels(showErrors: false)
+            }
+        }
     }
 
     private var promptTemplatesTab: some View {
@@ -305,5 +400,13 @@ struct SettingsSheetView: View {
     private func promptTitle(_ prompt: PromptTemplate) -> String {
         let trimmed = prompt.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Prompt" : trimmed
+    }
+
+    private func timeoutLabel(_ seconds: Double) -> String {
+        let rounded = Int(seconds.rounded())
+        if rounded % 60 == 0 {
+            return "\(rounded / 60) min"
+        }
+        return "\(rounded) sec"
     }
 }

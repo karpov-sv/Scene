@@ -202,15 +202,69 @@ struct GenerationSettings: Codable, Equatable {
     var model: String
     var temperature: Double
     var maxTokens: Int
+    var enableStreaming: Bool
+    var requestTimeoutSeconds: Double
     var defaultSystemPrompt: String
+
+    static let lmStudioDefaultEndpoint = "http://localhost:1234/v1"
+    static let ollamaDefaultEndpoint = "http://localhost:11434/v1"
+
+    init(
+        provider: AIProvider,
+        endpoint: String,
+        apiKey: String,
+        model: String,
+        temperature: Double,
+        maxTokens: Int,
+        enableStreaming: Bool,
+        requestTimeoutSeconds: Double,
+        defaultSystemPrompt: String
+    ) {
+        self.provider = provider
+        self.endpoint = endpoint
+        self.apiKey = apiKey
+        self.model = model
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+        self.enableStreaming = enableStreaming
+        self.requestTimeoutSeconds = requestTimeoutSeconds
+        self.defaultSystemPrompt = defaultSystemPrompt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+        case endpoint
+        case apiKey
+        case model
+        case temperature
+        case maxTokens
+        case enableStreaming
+        case requestTimeoutSeconds
+        case defaultSystemPrompt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(AIProvider.self, forKey: .provider)
+        endpoint = try container.decode(String.self, forKey: .endpoint)
+        apiKey = try container.decode(String.self, forKey: .apiKey)
+        model = try container.decode(String.self, forKey: .model)
+        temperature = try container.decode(Double.self, forKey: .temperature)
+        maxTokens = try container.decode(Int.self, forKey: .maxTokens)
+        enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? false
+        requestTimeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .requestTimeoutSeconds) ?? 300
+        defaultSystemPrompt = try container.decode(String.self, forKey: .defaultSystemPrompt)
+    }
 
     static let `default` = GenerationSettings(
         provider: .localMock,
-        endpoint: "http://localhost:11434/v1",
+        endpoint: lmStudioDefaultEndpoint,
         apiKey: "",
         model: "gpt-4o-mini",
         temperature: 0.8,
         maxTokens: 700,
+        enableStreaming: false,
+        requestTimeoutSeconds: 300,
         defaultSystemPrompt: "You are a fiction writing assistant. Keep continuity and return only the generated passage."
     )
 }

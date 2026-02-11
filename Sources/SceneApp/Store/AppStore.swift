@@ -7,6 +7,15 @@ final class AppStore: ObservableObject {
         let sceneIndex: Int
     }
 
+    struct WorkshopPayloadPreview {
+        let providerLabel: String
+        let endpointURL: String?
+        let method: String?
+        let headers: [OpenAICompatibleAIService.RequestPreview.Header]
+        let bodyJSON: String
+        let notes: [String]
+    }
+
     @Published private(set) var project: StoryProject
 
     @Published var selectedChapterID: UUID?
@@ -24,6 +33,9 @@ final class AppStore: ObservableObject {
     @Published var isGenerating: Bool = false
     @Published var generationStatus: String = ""
     @Published var lastError: String?
+    @Published private(set) var availableRemoteModels: [String] = []
+    @Published var isDiscoveringModels: Bool = false
+    @Published var modelDiscoveryStatus: String = ""
 
     @Published var showingSettings: Bool = false
 
@@ -32,6 +44,8 @@ final class AppStore: ObservableObject {
     private let openAIService: OpenAICompatibleAIService
 
     private var autosaveTask: Task<Void, Never>?
+    private var modelDiscoveryTask: Task<Void, Never>?
+    private var workshopRequestTask: Task<Void, Never>?
 
     init(
         persistence: ProjectPersistence = .shared,
@@ -69,10 +83,15 @@ final class AppStore: ObservableObject {
         self.selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
 
         ensureValidSelections()
+        if project.settings.provider == .openAICompatible {
+            scheduleModelDiscovery(immediate: true)
+        }
     }
 
     deinit {
         autosaveTask?.cancel()
+        modelDiscoveryTask?.cancel()
+        workshopRequestTask?.cancel()
     }
 
     // MARK: - Read APIs
@@ -131,6 +150,27 @@ final class AppStore: ObservableObject {
         return workshopPrompts.first
     }
 
+    var workshopInputHistory: [String] {
+        guard let session = selectedWorkshopSession else {
+            return []
+        }
+
+        var seen = Set<String>()
+        var output: [String] = []
+
+        for message in session.messages.reversed() where message.role == .user {
+            let normalized = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            output.append(normalized)
+            if output.count >= 30 {
+                break
+            }
+        }
+
+        return output
+    }
+
     func entries(in category: CompendiumCategory) -> [CompendiumEntry] {
         project.compendium
             .filter { $0.category == category }
@@ -172,16 +212,26 @@ final class AppStore: ObservableObject {
 
     func updateProvider(_ provider: AIProvider) {
         project.settings.provider = provider
+        if provider == .openAICompatible {
+            scheduleModelDiscovery(immediate: true)
+        } else {
+            modelDiscoveryTask?.cancel()
+            availableRemoteModels = []
+            isDiscoveringModels = false
+            modelDiscoveryStatus = "Model discovery is available for OpenAI-compatible providers."
+        }
         saveProject(debounced: true)
     }
 
     func updateEndpoint(_ endpoint: String) {
         project.settings.endpoint = endpoint
+        scheduleModelDiscovery()
         saveProject(debounced: true)
     }
 
     func updateAPIKey(_ apiKey: String) {
         project.settings.apiKey = apiKey
+        scheduleModelDiscovery()
         saveProject(debounced: true)
     }
 
@@ -200,9 +250,79 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateEnableStreaming(_ enabled: Bool) {
+        project.settings.enableStreaming = enabled
+        saveProject(debounced: true)
+    }
+
+    func updateRequestTimeoutSeconds(_ timeout: Double) {
+        project.settings.requestTimeoutSeconds = min(max(timeout, 1), 3600)
+        saveProject(debounced: true)
+    }
+
     func updateDefaultSystemPrompt(_ prompt: String) {
         project.settings.defaultSystemPrompt = prompt
         saveProject(debounced: true)
+    }
+
+    func applyLMStudioEndpointPreset() {
+        project.settings.provider = .openAICompatible
+        project.settings.endpoint = GenerationSettings.lmStudioDefaultEndpoint
+        scheduleModelDiscovery(immediate: true)
+        saveProject(debounced: true)
+    }
+
+    func refreshAvailableModels(force: Bool = false, showErrors: Bool = true) async {
+        guard project.settings.provider == .openAICompatible else {
+            availableRemoteModels = []
+            modelDiscoveryStatus = "Model discovery is available for OpenAI-compatible providers."
+            return
+        }
+
+        let endpoint = project.settings.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            availableRemoteModels = []
+            modelDiscoveryStatus = "Set endpoint URL to discover available models."
+            return
+        }
+
+        if isDiscoveringModels && !force {
+            return
+        }
+
+        isDiscoveringModels = true
+        modelDiscoveryStatus = "Discovering models..."
+
+        defer {
+            isDiscoveringModels = false
+        }
+
+        do {
+            let discovered = try await openAIService.fetchAvailableModels(settings: project.settings)
+            availableRemoteModels = discovered
+
+            if discovered.isEmpty {
+                modelDiscoveryStatus = "No models returned by endpoint."
+                return
+            }
+
+            modelDiscoveryStatus = "Discovered \(discovered.count) model(s)."
+
+            let currentModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if currentModel.isEmpty, let first = discovered.first {
+                project.settings.model = first
+                saveProject(debounced: true)
+            }
+        } catch AIServiceError.invalidEndpoint {
+            availableRemoteModels = []
+            modelDiscoveryStatus = "Endpoint URL is invalid."
+        } catch {
+            availableRemoteModels = []
+            modelDiscoveryStatus = "Model discovery failed."
+            if showErrors {
+                lastError = error.localizedDescription
+            }
+        }
     }
 
     // MARK: - Chapter / Scene
@@ -420,6 +540,82 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func applyWorkshopInputFromHistory(_ text: String) {
+        workshopInput = text
+    }
+
+    func makeWorkshopPayloadPreview() throws -> WorkshopPayloadPreview {
+        guard let sessionID = selectedWorkshopSessionID else {
+            throw AIServiceError.badResponse("Select a chat session first.")
+        }
+
+        let pendingUserInput = workshopInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pendingUserInput.isEmpty else {
+            throw AIServiceError.badResponse("Type a message to preview payload.")
+        }
+
+        let request = TextGenerationRequest(
+            systemPrompt: resolvedWorkshopSystemPrompt(),
+            userPrompt: buildWorkshopUserPrompt(sessionID: sessionID, pendingUserInput: pendingUserInput),
+            model: project.settings.model,
+            temperature: project.settings.temperature,
+            maxTokens: project.settings.maxTokens
+        )
+
+        switch project.settings.provider {
+        case .openAICompatible:
+            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: [
+                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+                ]
+            )
+        case .localMock:
+            let dictionary: [String: Any] = [
+                "provider": project.settings.provider.label,
+                "request": [
+                    "systemPrompt": request.systemPrompt,
+                    "userPrompt": request.userPrompt,
+                    "model": request.model,
+                    "temperature": request.temperature,
+                    "maxTokens": request.maxTokens
+                ]
+            ]
+            let bodyJSON = (try? Self.prettyJSONString(fromJSONObject: dictionary)) ?? "{}"
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: nil,
+                method: nil,
+                headers: [],
+                bodyJSON: bodyJSON,
+                notes: ["Local Mock provider is active. This request does not use network transport."]
+            )
+        }
+    }
+
+    func submitWorkshopMessage() {
+        guard workshopRequestTask == nil else { return }
+
+        workshopRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.workshopRequestTask = nil
+            }
+            await self.sendWorkshopMessage()
+        }
+    }
+
+    func cancelWorkshopMessage() {
+        workshopRequestTask?.cancel()
+        workshopStatus = "Cancelling..."
+    }
+
     func createWorkshopSession() {
         let nextIndex = project.workshopSessions.count + 1
         let session = Self.makeInitialWorkshopSession(name: "Chat \(nextIndex)")
@@ -456,6 +652,8 @@ final class AppStore: ObservableObject {
     }
 
     func sendWorkshopMessage() async {
+        guard !Task.isCancelled else { return }
+
         let userText = workshopInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !workshopIsGenerating else { return }
         guard !userText.isEmpty else {
@@ -471,12 +669,17 @@ final class AppStore: ObservableObject {
         appendWorkshopMessage(.init(role: .user, content: userText), to: sessionID)
         workshopInput = ""
         workshopIsGenerating = true
-        workshopStatus = "Thinking..."
+        workshopStatus = shouldUseStreaming ? "Streaming..." : "Thinking..."
 
         let prompt = buildWorkshopUserPrompt(sessionID: sessionID)
-        let systemPrompt = activeWorkshopPrompt?.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? activeWorkshopPrompt!.systemTemplate
-            : "You are an experienced writing coach. Provide concise, practical guidance and concrete alternatives."
+        let systemPrompt = resolvedWorkshopSystemPrompt()
+
+        var streamingAssistantMessageID: UUID?
+        if shouldUseStreaming {
+            let placeholder = WorkshopMessage(role: .assistant, content: "")
+            streamingAssistantMessageID = placeholder.id
+            appendWorkshopMessage(placeholder, to: sessionID)
+        }
 
         let request = TextGenerationRequest(
             systemPrompt: systemPrompt,
@@ -490,19 +693,52 @@ final class AppStore: ObservableObject {
             workshopIsGenerating = false
         }
 
+        let workshopPartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            workshopPartialHandler = { [weak self] partial in
+                guard let self, let messageID = streamingAssistantMessageID else { return }
+                self.updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: partial)
+            }
+        } else {
+            workshopPartialHandler = nil
+        }
+
         do {
-            let response = try await generateText(request)
-            appendWorkshopMessage(.init(role: .assistant, content: response), to: sessionID)
+            let response = try await generateText(
+                request,
+                onPartial: workshopPartialHandler
+            )
+
+            if shouldUseStreaming, let messageID = streamingAssistantMessageID {
+                updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: response)
+            } else {
+                appendWorkshopMessage(.init(role: .assistant, content: response), to: sessionID)
+            }
+
             workshopStatus = "Response generated."
             project.workshopSessions[sessionIndex].updatedAt = .now
+            saveProject()
+        } catch is CancellationError {
+            workshopStatus = "Request cancelled."
+
+            if shouldUseStreaming, let messageID = streamingAssistantMessageID {
+                removeWorkshopMessageIfEmpty(sessionID: sessionID, messageID: messageID)
+            }
+
             saveProject()
         } catch {
             workshopStatus = "Chat request failed."
             lastError = error.localizedDescription
-            appendWorkshopMessage(
-                .init(role: .assistant, content: "I hit an error: \(error.localizedDescription)"),
-                to: sessionID
-            )
+
+            let errorMessage = "I hit an error: \(error.localizedDescription)"
+            if shouldUseStreaming, let messageID = streamingAssistantMessageID {
+                updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: errorMessage)
+            } else {
+                appendWorkshopMessage(
+                    .init(role: .assistant, content: errorMessage),
+                    to: sessionID
+                )
+            }
             saveProject()
         }
     }
@@ -577,7 +813,7 @@ final class AppStore: ObservableObject {
         }
 
         isGenerating = true
-        generationStatus = "Generating..."
+        generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
 
         defer {
             isGenerating = false
@@ -607,9 +843,32 @@ final class AppStore: ObservableObject {
             maxTokens: project.settings.maxTokens
         )
 
+        let generationBase = makeGenerationAppendBase(for: scene.id)
+
+        let generationPartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            generationPartialHandler = { [weak self] partial in
+                guard let self, let base = generationBase else { return }
+                self.setGeneratedTextPreview(sceneID: scene.id, base: base, generated: partial)
+                self.generationStatus = "Streaming..."
+            }
+        } else {
+            generationPartialHandler = nil
+        }
+
         do {
-            let text = try await generateText(request)
-            appendGeneratedText(text)
+            let text = try await generateText(
+                request,
+                onPartial: generationPartialHandler
+            )
+
+            if shouldUseStreaming, let base = generationBase {
+                let normalized = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                setGeneratedTextPreview(sceneID: scene.id, base: base, generated: normalized)
+            } else {
+                appendGeneratedText(text)
+            }
+
             generationStatus = "Generated \(text.count) characters."
             beatInput = ""
             saveProject()
@@ -639,13 +898,45 @@ final class AppStore: ObservableObject {
         project.workshopSessions[index].updatedAt = .now
     }
 
-    private func buildWorkshopUserPrompt(sessionID: UUID) -> String {
+    private func updateWorkshopMessageContent(sessionID: UUID, messageID: UUID, content: String) {
+        guard let sessionIndex = workshopSessionIndex(for: sessionID),
+              let messageIndex = project.workshopSessions[sessionIndex].messages.firstIndex(where: { $0.id == messageID }) else {
+            return
+        }
+
+        project.workshopSessions[sessionIndex].messages[messageIndex].content = content
+        project.workshopSessions[sessionIndex].messages[messageIndex].createdAt = .now
+        project.workshopSessions[sessionIndex].updatedAt = .now
+    }
+
+    private func removeWorkshopMessageIfEmpty(sessionID: UUID, messageID: UUID) {
+        guard let sessionIndex = workshopSessionIndex(for: sessionID),
+              let messageIndex = project.workshopSessions[sessionIndex].messages.firstIndex(where: { $0.id == messageID }) else {
+            return
+        }
+
+        let content = project.workshopSessions[sessionIndex].messages[messageIndex].content
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if content.isEmpty {
+            project.workshopSessions[sessionIndex].messages.remove(at: messageIndex)
+            project.workshopSessions[sessionIndex].updatedAt = .now
+        }
+    }
+
+    private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> String {
         guard let sessionIndex = workshopSessionIndex(for: sessionID) else {
             return ""
         }
 
-        let session = project.workshopSessions[sessionIndex]
-        let transcript = session.messages
+        var messages = project.workshopSessions[sessionIndex].messages
+        if let pendingUserInput {
+            let trimmedPending = pendingUserInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedPending.isEmpty {
+                messages.append(WorkshopMessage(role: .user, content: trimmedPending))
+            }
+        }
+
+        let transcript = messages
             .suffix(14)
             .map { msg in
                 let prefix = msg.role == .user ? "User" : "Assistant"
@@ -680,12 +971,31 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func generateText(_ request: TextGenerationRequest) async throws -> String {
+    private func resolvedWorkshopSystemPrompt() -> String {
+        if let template = activeWorkshopPrompt?.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines),
+           !template.isEmpty {
+            return activeWorkshopPrompt!.systemTemplate
+        }
+        return "You are an experienced writing coach. Provide concise, practical guidance and concrete alternatives."
+    }
+
+    private var shouldUseStreaming: Bool {
+        project.settings.provider == .openAICompatible && project.settings.enableStreaming
+    }
+
+    private func generateText(
+        _ request: TextGenerationRequest,
+        onPartial: (@MainActor (String) -> Void)? = nil
+    ) async throws -> String {
         switch project.settings.provider {
         case .localMock:
             return try await mockService.generateText(request, settings: project.settings)
         case .openAICompatible:
-            return try await openAIService.generateText(request, settings: project.settings)
+            return try await openAIService.generateText(
+                request,
+                settings: project.settings,
+                onPartial: onPartial
+            )
         }
     }
 
@@ -732,6 +1042,27 @@ final class AppStore: ObservableObject {
 
         current += trimmedIncoming
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = current
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+    }
+
+    private func makeGenerationAppendBase(for sceneID: UUID) -> String? {
+        guard let location = sceneLocation(for: sceneID) else {
+            return nil
+        }
+
+        var current = project.chapters[location.chapterIndex].scenes[location.sceneIndex].content
+        if !current.isEmpty && !current.hasSuffix("\n") {
+            current += "\n\n"
+        }
+        return current
+    }
+
+    private func setGeneratedTextPreview(sceneID: UUID, base: String, generated: String) {
+        guard let location = sceneLocation(for: sceneID) else {
+            return
+        }
+
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = base + generated
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
     }
 
@@ -839,6 +1170,26 @@ final class AppStore: ObservableObject {
             try persistence.save(project)
         } catch {
             lastError = "Failed to save project: \(error.localizedDescription)"
+        }
+    }
+
+    private static func prettyJSONString(fromJSONObject jsonObject: Any) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys])
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    private func scheduleModelDiscovery(immediate: Bool = false) {
+        guard project.settings.provider == .openAICompatible else {
+            return
+        }
+
+        modelDiscoveryTask?.cancel()
+        modelDiscoveryTask = Task { [weak self] in
+            if !immediate {
+                try? await Task.sleep(nanoseconds: 650_000_000)
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshAvailableModels(showErrors: false)
         }
     }
 }
