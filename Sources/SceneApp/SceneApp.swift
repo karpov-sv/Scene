@@ -23,6 +23,7 @@ struct SceneApp: App {
                 .environmentObject(store)
                 .frame(minWidth: 1200, minHeight: 760)
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
         .windowResizability(.contentMinSize)
     }
 }

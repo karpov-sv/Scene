@@ -2,6 +2,13 @@ import SwiftUI
 import AppKit
 
 struct WorkshopChatView: View {
+    enum Layout {
+        case splitSidebar
+        case embeddedTrailingSessions
+    }
+
+    let layout: Layout
+
     @EnvironmentObject private var store: AppStore
     @State private var payloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var composerHeight: CGFloat = 0
@@ -57,6 +64,23 @@ struct WorkshopChatView: View {
     }
 
     var body: some View {
+        rootLayout
+            .sheet(item: $payloadPreview) { payloadPreview in
+                WorkshopPayloadPreviewSheet(preview: payloadPreview)
+            }
+    }
+
+    @ViewBuilder
+    private var rootLayout: some View {
+        switch layout {
+        case .splitSidebar:
+            splitLayout
+        case .embeddedTrailingSessions:
+            embeddedLayout
+        }
+    }
+
+    private var splitLayout: some View {
         NavigationSplitView {
             sessionsSidebar
                 .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 330)
@@ -64,9 +88,17 @@ struct WorkshopChatView: View {
             chatDetail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(item: $payloadPreview) { payloadPreview in
-            WorkshopPayloadPreviewSheet(preview: payloadPreview)
+    }
+
+    private var embeddedLayout: some View {
+        HSplitView {
+            chatDetail
+                .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+
+            sessionsSidebar
+                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sessionsSidebar: some View {
