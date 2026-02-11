@@ -18,12 +18,15 @@ struct SceneApp: App {
     @StateObject private var store = AppStore()
 
     var body: some SwiftUI.Scene {
-        WindowGroup("Scene") {
+        Window("Scene", id: "main-window") {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 1200, minHeight: 760)
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
     }
 }
