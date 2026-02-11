@@ -1,0 +1,33 @@
+name: Scene
+options:
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+targets:
+  SceneApp:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/SceneApp
+      - path: Resources
+        optional: true
+    settings:
+      base:
+        PRODUCT_NAME: SceneApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.karpov.SceneApp
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Scene
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+schemes:
+  SceneApp:
+    build:
+      targets:
+        SceneApp: all
+    run:
+      config: Debug
+    archive:
+      config: Release

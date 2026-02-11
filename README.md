@@ -12,13 +12,17 @@
 
 - macOS 14 or newer
 - Swift 6 toolchain (`swift --version`) or Xcode 15.4+
+- XcodeGen (`brew install xcodegen`) for the autonomous GUI build script
 
 ## Project Structure
 
 ```text
 Scene/
 ├─ Package.swift
+├─ project.yml
 ├─ README.md
+├─ scripts/
+│  └─ build-gui-app.sh
 ├─ Resources/
 └─ Sources/SceneApp/
    ├─ SceneApp.swift
@@ -84,6 +88,28 @@ Binary path:
 ```
 
 You can run this executable directly from Terminal.
+
+### Option 3: Autonomous `.app` build (XcodeGen + xcodebuild)
+
+Generate and build the macOS app bundle in one command:
+
+```bash
+cd /Users/karpov/compwork/Scene
+./scripts/build-gui-app.sh
+```
+
+Output bundle:
+
+```text
+dist/SceneApp.app
+```
+
+Script options:
+
+```bash
+./scripts/build-gui-app.sh --debug
+./scripts/build-gui-app.sh --clean --release
+```
 
 ## Data & Configuration
 
