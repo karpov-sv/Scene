@@ -279,6 +279,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var workshopSessions: [WorkshopSession]
     var selectedWorkshopSessionID: UUID?
     var selectedWorkshopPromptID: UUID?
+    var sceneContextCompendiumSelection: [String: [UUID]]
     var settings: GenerationSettings
     var updatedAt: Date
 
@@ -292,6 +293,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         workshopSessions: [WorkshopSession],
         selectedWorkshopSessionID: UUID?,
         selectedWorkshopPromptID: UUID?,
+        sceneContextCompendiumSelection: [String: [UUID]],
         settings: GenerationSettings,
         updatedAt: Date
     ) {
@@ -304,6 +306,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.workshopSessions = workshopSessions
         self.selectedWorkshopSessionID = selectedWorkshopSessionID
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
+        self.sceneContextCompendiumSelection = sceneContextCompendiumSelection
         self.settings = settings
         self.updatedAt = updatedAt
     }
@@ -318,6 +321,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case workshopSessions
         case selectedWorkshopSessionID
         case selectedWorkshopPromptID
+        case sceneContextCompendiumSelection
         case settings
         case updatedAt
     }
@@ -334,6 +338,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         workshopSessions = try container.decodeIfPresent([WorkshopSession].self, forKey: .workshopSessions) ?? []
         selectedWorkshopSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopSessionID)
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
+        sceneContextCompendiumSelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextCompendiumSelection) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
@@ -383,6 +388,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             workshopSessions: [workshopSession],
             selectedWorkshopSessionID: workshopSession.id,
             selectedWorkshopPromptID: defaultWorkshopPrompt.id,
+            sceneContextCompendiumSelection: [:],
             settings: .default,
             updatedAt: .now
         )

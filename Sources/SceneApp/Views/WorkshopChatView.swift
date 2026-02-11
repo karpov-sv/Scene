@@ -3,7 +3,6 @@ import AppKit
 
 struct WorkshopChatView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var showingPayloadPreview: Bool = false
     @State private var payloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var composerHeight: CGFloat = 0
     @State private var dragStartComposerHeight: CGFloat?
@@ -65,12 +64,8 @@ struct WorkshopChatView: View {
             chatDetail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingPayloadPreview, onDismiss: {
-            payloadPreview = nil
-        }) {
-            if let payloadPreview {
-                WorkshopPayloadPreviewSheet(preview: payloadPreview)
-            }
+        .sheet(item: $payloadPreview) { payloadPreview in
+            WorkshopPayloadPreviewSheet(preview: payloadPreview)
         }
     }
 
@@ -275,7 +270,6 @@ struct WorkshopChatView: View {
                     Button {
                         do {
                             payloadPreview = try store.makeWorkshopPayloadPreview()
-                            showingPayloadPreview = true
                         } catch {
                             store.lastError = error.localizedDescription
                         }

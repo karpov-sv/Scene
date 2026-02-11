@@ -3,7 +3,7 @@ import AppKit
 
 struct EditorView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var showingGenerationPayloadPreview: Bool = false
+    @State private var showingSceneContextSheet: Bool = false
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var generationPanelHeight: CGFloat = 0
     @State private var dragStartGenerationHeight: CGFloat?
@@ -35,6 +35,10 @@ struct EditorView: View {
         store.beatInputHistory
     }
 
+    private var selectedSceneContextCount: Int {
+        store.selectedSceneContextCompendiumIDs.count
+    }
+
     private var sceneTitleBinding: Binding<String> {
         Binding(
             get: { store.selectedScene?.title ?? "" },
@@ -64,12 +68,12 @@ struct EditorView: View {
                 ContentUnavailableView("No Scene Selected", systemImage: "text.document", description: Text("Select or create a scene to start writing."))
             }
         }
-        .sheet(isPresented: $showingGenerationPayloadPreview, onDismiss: {
-            generationPayloadPreview = nil
-        }) {
-            if let generationPayloadPreview {
-                GenerationPayloadPreviewSheet(preview: generationPayloadPreview)
-            }
+        .sheet(item: $generationPayloadPreview) { generationPayloadPreview in
+            GenerationPayloadPreviewSheet(preview: generationPayloadPreview)
+        }
+        .sheet(isPresented: $showingSceneContextSheet) {
+            SceneContextSheet()
+                .environmentObject(store)
         }
     }
 
@@ -141,6 +145,19 @@ struct EditorView: View {
                 .frame(maxWidth: 280)
 
                 Spacer(minLength: 0)
+
+                Button {
+                    showingSceneContextSheet = true
+                } label: {
+                    Label(
+                        selectedSceneContextCount > 0
+                            ? "Scene Context (\(selectedSceneContextCount))"
+                            : "Scene Context",
+                        systemImage: "books.vertical"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
             HStack(alignment: .top, spacing: 10) {
@@ -174,7 +191,6 @@ struct EditorView: View {
                     Button {
                         do {
                             generationPayloadPreview = try store.makeProsePayloadPreview()
-                            showingGenerationPayloadPreview = true
                         } catch {
                             store.lastError = error.localizedDescription
                         }
@@ -277,6 +293,146 @@ struct EditorView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+}
+
+private struct SceneContextSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchQuery: String = ""
+
+    private var selectedCount: Int {
+        store.selectedSceneContextCompendiumIDs.count
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Scene Context")
+                        .font(.title3.weight(.semibold))
+                    Text(sceneSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if selectedCount > 0 {
+                    Button("Clear") {
+                        store.clearCurrentSceneContextCompendiumSelection()
+                    }
+                }
+
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Search compendium entries", text: $searchQuery)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("\(selectedCount) entr\(selectedCount == 1 ? "y" : "ies") selected for this scene")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(CompendiumCategory.allCases) { category in
+                        let entries = filteredEntries(for: category)
+                        if !entries.isEmpty {
+                            GroupBox(category.label) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(entries) { entry in
+                                        Toggle(isOn: isSelectedBinding(entryID: entry.id)) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(entryTitle(entry))
+                                                    .lineLimit(1)
+                                                if !entry.tags.isEmpty {
+                                                    Text(entry.tags.joined(separator: ", "))
+                                                        .font(.caption)
+                                                        .foregroundStyle(.secondary)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                        }
+                                        .toggleStyle(.checkbox)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+
+                    if hasNoVisibleEntries {
+                        ContentUnavailableView(
+                            "No Matching Entries",
+                            systemImage: "books.vertical",
+                            description: Text("No compendium entries match the current filter.")
+                        )
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 720, minHeight: 560)
+    }
+
+    private var sceneSubtitle: String {
+        if let scene = store.selectedScene {
+            let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = trimmed.isEmpty ? "Untitled Scene" : trimmed
+            return "Select context entries for \(title)"
+        }
+        return "Select context entries for the current scene"
+    }
+
+    private var hasNoVisibleEntries: Bool {
+        CompendiumCategory.allCases.allSatisfy { filteredEntries(for: $0).isEmpty }
+    }
+
+    private func filteredEntries(for category: CompendiumCategory) -> [CompendiumEntry] {
+        let entries = store.entries(in: category)
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return entries }
+
+        return entries.filter { entry in
+            entry.title.lowercased().contains(query) ||
+                entry.body.lowercased().contains(query) ||
+                entry.tags.joined(separator: " ").lowercased().contains(query)
+        }
+    }
+
+    private func isSelectedBinding(entryID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { store.isCompendiumEntrySelectedForCurrentSceneContext(entryID) },
+            set: { isSelected in
+                let current = store.selectedSceneContextCompendiumIDs
+                if isSelected {
+                    if !current.contains(entryID) {
+                        store.setCompendiumContextIDsForCurrentScene(current + [entryID])
+                    }
+                } else {
+                    store.setCompendiumContextIDsForCurrentScene(current.filter { $0 != entryID })
+                }
+            }
+        )
+    }
+
+    private func entryTitle(_ entry: CompendiumEntry) -> String {
+        let trimmed = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Entry" : trimmed
     }
 }
 

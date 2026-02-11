@@ -36,6 +36,10 @@ struct CompendiumView: View {
         )
     }
 
+    private var selectedEntryCharacterCount: Int {
+        store.selectedCompendiumEntry?.body.count ?? 0
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -102,7 +106,7 @@ struct CompendiumView: View {
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
 
-                    Text("Entry Text")
+                    Text("Entry Text (\(selectedEntryCharacterCount) chars)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: entryBodyBinding)

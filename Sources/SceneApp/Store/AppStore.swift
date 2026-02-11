@@ -7,7 +7,8 @@ final class AppStore: ObservableObject {
         let sceneIndex: Int
     }
 
-    struct WorkshopPayloadPreview {
+    struct WorkshopPayloadPreview: Identifiable {
+        let id: UUID = UUID()
         let providerLabel: String
         let endpointURL: String?
         let method: String?
@@ -184,6 +185,14 @@ final class AppStore: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    var selectedSceneContextCompendiumIDs: [UUID] {
+        compendiumContextIDs(for: selectedSceneID)
+    }
+
+    var selectedSceneContextCompendiumEntries: [CompendiumEntry] {
+        compendiumEntries(forIDs: selectedSceneContextCompendiumIDs)
+    }
+
     // MARK: - Selection
 
     func selectChapter(_ chapterID: UUID) {
@@ -197,6 +206,32 @@ final class AppStore: ObservableObject {
     func selectScene(_ sceneID: UUID, chapterID: UUID) {
         selectedChapterID = chapterID
         selectedSceneID = sceneID
+    }
+
+    func isCompendiumEntrySelectedForCurrentSceneContext(_ entryID: UUID) -> Bool {
+        selectedSceneContextCompendiumIDs.contains(entryID)
+    }
+
+    func toggleCompendiumEntryForCurrentSceneContext(_ entryID: UUID) {
+        guard selectedSceneID != nil else { return }
+
+        var current = selectedSceneContextCompendiumIDs
+        if let index = current.firstIndex(of: entryID) {
+            current.remove(at: index)
+        } else {
+            current.append(entryID)
+        }
+
+        setCompendiumContextIDsForCurrentScene(current)
+    }
+
+    func clearCurrentSceneContextCompendiumSelection() {
+        setCompendiumContextIDsForCurrentScene([])
+    }
+
+    func setCompendiumContextIDsForCurrentScene(_ entryIDs: [UUID]) {
+        guard let selectedSceneID else { return }
+        setCompendiumContextIDs(entryIDs, for: selectedSceneID)
     }
 
     func selectCompendiumEntry(_ entryID: UUID?) {
@@ -414,6 +449,7 @@ final class AppStore: ObservableObject {
         for chapterIndex in project.chapters.indices {
             project.chapters[chapterIndex].scenes.removeAll { $0.id == sceneID }
         }
+        removeSceneContextSelection(for: sceneID)
 
         if !project.chapters.contains(where: { !$0.scenes.isEmpty }) {
             if project.chapters.isEmpty {
@@ -498,6 +534,7 @@ final class AppStore: ObservableObject {
     func deleteSelectedCompendiumEntry() {
         guard let selectedCompendiumID else { return }
         project.compendium.removeAll { $0.id == selectedCompendiumID }
+        removeCompendiumEntryFromSceneContextSelections(selectedCompendiumID)
         self.selectedCompendiumID = project.compendium.first?.id
         saveProject()
     }
@@ -585,7 +622,7 @@ final class AppStore: ObservableObject {
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
                 notes: [
-                    "Prompt includes beat input, current scene excerpt, and compendium context.",
+                    "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
                     "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
                     "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
                 ]
@@ -1044,7 +1081,7 @@ final class AppStore: ObservableObject {
     private func makeProseGenerationRequest(beat: String, scene: Scene) -> TextGenerationRequest {
         let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
         let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(limit: 8)
+        let compendiumContext = buildCompendiumContext(for: scene.id)
 
         let userPrompt = expandPrompt(
             template: activePrompt.userTemplate,
@@ -1154,7 +1191,7 @@ final class AppStore: ObservableObject {
 
         let compendiumContext: String
         if workshopUseCompendiumContext {
-            compendiumContext = buildCompendiumContext(limit: 10)
+            compendiumContext = buildCompendiumContext(for: selectedScene?.id)
         } else {
             compendiumContext = "Compendium context disabled."
         }
@@ -1200,20 +1237,94 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func buildCompendiumContext(limit: Int) -> String {
-        let excerpt = project.compendium
-            .prefix(limit)
-            .map { entry in
-                let body = String(entry.body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
-                let tags = entry.tags.isEmpty ? "" : " [tags: \(entry.tags.joined(separator: ", "))]"
-                return "- [\(entry.category.label)] \(entry.title)\(tags): \(body)"
-            }
+    private func buildCompendiumContext(for sceneID: UUID?) -> String {
+        let selectedEntryIDs = compendiumContextIDs(for: sceneID)
+        let selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
+        return formattedCompendiumContext(entries: selectedEntries)
+    }
+
+    private func formattedCompendiumContext(entries: [CompendiumEntry]) -> String {
+        let excerpt = entries.map { entry in
+            let body = String(entry.body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
+            let tags = entry.tags.isEmpty ? "" : " [tags: \(entry.tags.joined(separator: ", "))]"
+            return "- [\(entry.category.label)] \(entry.title)\(tags): \(body)"
+        }
 
         if excerpt.isEmpty {
-            return "No compendium context available."
+            return "No compendium context selected for this scene."
         }
 
         return excerpt.joined(separator: "\n")
+    }
+
+    private func compendiumContextIDs(for sceneID: UUID?) -> [UUID] {
+        guard let sceneID else { return [] }
+        return project.sceneContextCompendiumSelection[sceneID.uuidString] ?? []
+    }
+
+    private func setCompendiumContextIDs(_ entryIDs: [UUID], for sceneID: UUID) {
+        let validEntryIDs = Set(project.compendium.map(\.id))
+        var deduplicated: [UUID] = []
+        var seen = Set<UUID>()
+        for entryID in entryIDs where validEntryIDs.contains(entryID) {
+            if seen.insert(entryID).inserted {
+                deduplicated.append(entryID)
+            }
+        }
+
+        let key = sceneID.uuidString
+        if deduplicated.isEmpty {
+            project.sceneContextCompendiumSelection.removeValue(forKey: key)
+        } else {
+            project.sceneContextCompendiumSelection[key] = deduplicated
+        }
+        saveProject(debounced: true)
+    }
+
+    private func compendiumEntries(forIDs entryIDs: [UUID]) -> [CompendiumEntry] {
+        let map = Dictionary(uniqueKeysWithValues: project.compendium.map { ($0.id, $0) })
+        return entryIDs.compactMap { map[$0] }
+    }
+
+    private func removeSceneContextSelection(for sceneID: UUID) {
+        project.sceneContextCompendiumSelection.removeValue(forKey: sceneID.uuidString)
+    }
+
+    private func removeCompendiumEntryFromSceneContextSelections(_ entryID: UUID) {
+        let keys = project.sceneContextCompendiumSelection.keys
+        for key in keys {
+            guard var ids = project.sceneContextCompendiumSelection[key] else { continue }
+            ids.removeAll { $0 == entryID }
+            if ids.isEmpty {
+                project.sceneContextCompendiumSelection.removeValue(forKey: key)
+            } else {
+                project.sceneContextCompendiumSelection[key] = ids
+            }
+        }
+    }
+
+    private func sanitizeSceneContextSelections() {
+        let validSceneIDs = Set(
+            project.chapters
+                .flatMap(\.scenes)
+                .map(\.id.uuidString)
+        )
+        let validEntryIDs = Set(project.compendium.map(\.id))
+
+        var sanitized: [String: [UUID]] = [:]
+        for (sceneKey, ids) in project.sceneContextCompendiumSelection where validSceneIDs.contains(sceneKey) {
+            var unique: [UUID] = []
+            var seen = Set<UUID>()
+            for id in ids where validEntryIDs.contains(id) {
+                if seen.insert(id).inserted {
+                    unique.append(id)
+                }
+            }
+            if !unique.isEmpty {
+                sanitized[sceneKey] = unique
+            }
+        }
+        project.sceneContextCompendiumSelection = sanitized
     }
 
     private func expandPrompt(template: String, beat: String, scene: String, context: String, conversation: String) -> String {
@@ -1289,6 +1400,8 @@ final class AppStore: ObservableObject {
     }
 
     private func ensureValidSelections() {
+        sanitizeSceneContextSelections()
+
         if let selectedSceneID,
            sceneLocation(for: selectedSceneID) == nil {
             self.selectedSceneID = nil
