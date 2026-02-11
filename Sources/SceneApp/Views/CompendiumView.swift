@@ -47,12 +47,12 @@ struct CompendiumView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .padding([.horizontal, .top], 10)
+            .padding([.horizontal, .top], 12)
 
             List(selection: selectedEntryBinding) {
                 ForEach(filteredEntries) { entry in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title)
+                        Text(entryTitle(entry))
                             .lineLimit(1)
                         if !entry.tags.isEmpty {
                             Text(entry.tags.joined(separator: ", "))
@@ -70,7 +70,7 @@ struct CompendiumView: View {
                 Button {
                     store.addCompendiumEntry(category: selectedCategory)
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("New Entry", systemImage: "plus")
                 }
 
                 Button(role: .destructive) {
@@ -89,31 +89,21 @@ struct CompendiumView: View {
             if store.selectedCompendiumEntry != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Entry title", text: entryTitleBinding)
-                        .textFieldStyle(.roundedBorder)
 
                     TextField("Tags (comma separated)", text: entryTagsBinding)
-                        .textFieldStyle(.roundedBorder)
 
-                    TextEditor(text: entryBodyBinding)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(6)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                .padding(10)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "books.vertical")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("Select or add a compendium entry")
+                    Text("Entry Text")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    TextEditor(text: entryBodyBinding)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .padding(12)
+            } else {
+                ContentUnavailableView("No Entry Selected", systemImage: "books.vertical", description: Text("Select or add a compendium entry."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: selectedCategory) { _, _ in
             if let selected = store.selectedCompendiumEntry,
                selected.category != selectedCategory {
@@ -137,5 +127,10 @@ struct CompendiumView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
+    }
+
+    private func entryTitle(_ entry: CompendiumEntry) -> String {
+        let trimmed = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Entry" : trimmed
     }
 }

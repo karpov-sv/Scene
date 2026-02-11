@@ -31,56 +31,42 @@ struct WorkshopChatView: View {
     }
 
     var body: some View {
-        HSplitView {
-            sessionsPanel
-                .frame(minWidth: 240, idealWidth: 270, maxWidth: 330)
-
-            chatPanel
-                .frame(minWidth: 620)
+        NavigationSplitView {
+            sessionsSidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 330)
+        } detail: {
+            chatDetail
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationSplitViewStyle(.balanced)
     }
 
-    private var sessionsPanel: some View {
+    private var sessionsSidebar: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Conversations")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    store.createWorkshopSession()
-                } label: {
-                    Label("New", systemImage: "plus")
-                }
-                .labelStyle(.iconOnly)
-            }
-            .padding(12)
-
-            Divider()
-
             List(selection: sessionSelectionBinding) {
-                ForEach(store.workshopSessions) { session in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(session.name)
-                            .lineLimit(1)
-                        Text("\(session.messages.count) messages")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(Optional(session.id))
-                    .contextMenu {
-                        Button {
-                            store.clearWorkshopSessionMessages(session.id)
-                        } label: {
-                            Label("Clear Messages", systemImage: "trash.slash")
+                Section("Conversations") {
+                    ForEach(store.workshopSessions) { session in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(sessionTitle(session))
+                                .lineLimit(1)
+                            Text("\(session.messages.count) messages")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
+                        .tag(Optional(session.id))
+                        .contextMenu {
+                            Button {
+                                store.clearWorkshopSessionMessages(session.id)
+                            } label: {
+                                Label("Clear Messages", systemImage: "trash.slash")
+                            }
 
-                        Button(role: .destructive) {
-                            store.deleteWorkshopSession(session.id)
-                        } label: {
-                            Label("Delete Chat", systemImage: "trash")
+                            Button(role: .destructive) {
+                                store.deleteWorkshopSession(session.id)
+                            } label: {
+                                Label("Delete Chat", systemImage: "trash")
+                            }
+                            .disabled(!store.canDeleteWorkshopSession(session.id))
                         }
-                        .disabled(!store.canDeleteWorkshopSession(session.id))
                     }
                 }
             }
@@ -90,61 +76,62 @@ struct WorkshopChatView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    if let id = store.selectedWorkshopSessionID {
-                        store.clearWorkshopSessionMessages(id)
-                    }
+                    store.createWorkshopSession()
                 } label: {
-                    Label("Clear", systemImage: "trash.slash")
+                    Label("New Chat", systemImage: "plus")
                 }
-                .disabled(store.selectedWorkshopSessionID == nil)
 
-                Button(role: .destructive) {
-                    if let id = store.selectedWorkshopSessionID {
-                        store.deleteWorkshopSession(id)
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button {
+                        if let id = store.selectedWorkshopSessionID {
+                            store.clearWorkshopSessionMessages(id)
+                        }
+                    } label: {
+                        Label("Clear Messages", systemImage: "trash.slash")
                     }
+                    .disabled(store.selectedWorkshopSessionID == nil)
+
+                    Button(role: .destructive) {
+                        if let id = store.selectedWorkshopSessionID {
+                            store.deleteWorkshopSession(id)
+                        }
+                    } label: {
+                        Label("Delete Chat", systemImage: "trash")
+                    }
+                    .disabled(store.selectedWorkshopSessionID == nil || !(store.selectedWorkshopSessionID.map { store.canDeleteWorkshopSession($0) } ?? false))
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label("Actions", systemImage: "ellipsis.circle")
                 }
-                .disabled(store.selectedWorkshopSessionID == nil || !(store.selectedWorkshopSessionID.map { store.canDeleteWorkshopSession($0) } ?? false))
+                .menuStyle(.borderlessButton)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
+            .padding(12)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var chatPanel: some View {
+    private var chatDetail: some View {
         VStack(spacing: 0) {
             if store.selectedWorkshopSession != nil {
-                headerPanel
+                header
                 Divider()
-                messagesPanel
+                messagesList
                 Divider()
-                inputPanel
+                composer
             } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.secondary)
-                    Text("Create or select a chat session")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView("No Chat Selected", systemImage: "bubble.left.and.bubble.right", description: Text("Create or select a chat session."))
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
-    private var headerPanel: some View {
+    private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Session name", text: selectedSessionNameBinding)
-                .textFieldStyle(.roundedBorder)
                 .font(.headline)
 
             HStack(spacing: 12) {
-                Picker("Workshop Prompt", selection: selectedPromptBinding) {
+                Picker("Prompt", selection: selectedPromptBinding) {
                     Text("Default")
                         .tag(Optional<UUID>.none)
                     ForEach(store.workshopPrompts) { prompt in
@@ -153,12 +140,10 @@ struct WorkshopChatView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(maxWidth: 280)
+                .frame(maxWidth: 300)
 
                 Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
-                    .toggleStyle(.switch)
                 Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
-                    .toggleStyle(.switch)
 
                 Spacer(minLength: 0)
             }
@@ -172,95 +157,69 @@ struct WorkshopChatView: View {
         .padding(12)
     }
 
-    private var messagesPanel: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(store.selectedWorkshopSession?.messages ?? []) { message in
-                        messageBubble(message)
-                            .id(message.id)
+    private var messagesList: some View {
+        List {
+            ForEach(store.selectedWorkshopSession?.messages ?? []) { message in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: message.role == .assistant ? "sparkles" : "person.fill")
+                            .foregroundStyle(.secondary)
+                        Text(message.role == .assistant ? "Assistant" : "You")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
-                    if store.workshopIsGenerating {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Thinking...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                    }
+                    Text(message.content)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(12)
+                .padding(.vertical, 2)
+                .listRowSeparator(.visible)
             }
-            .onChange(of: store.selectedWorkshopSession?.messages.count ?? 0) { _, _ in
-                if let lastID = store.selectedWorkshopSession?.messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
+
+            if store.workshopIsGenerating {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Thinking...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
+        .listStyle(.plain)
     }
 
-    @ViewBuilder
-    private func messageBubble(_ message: WorkshopMessage) -> some View {
-        HStack {
-            if message.role == .assistant {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Assistant")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                Spacer(minLength: 48)
-            } else {
-                Spacer(minLength: 48)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("You")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .background(Color.accentColor.opacity(0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-            }
-        }
-    }
-
-    private var inputPanel: some View {
+    private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextEditor(text: $store.workshopInput)
-                .font(.body)
-                .frame(minHeight: 90)
-                .padding(6)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            HStack {
-                Text("Use this chat for brainstorming, revisions, and scene analysis.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: 0)
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Message workshop assistant", text: $store.workshopInput, axis: .vertical)
+                    .lineLimit(3 ... 8)
 
                 Button {
                     Task {
                         await store.sendWorkshopMessage()
                     }
                 } label: {
-                    Label(store.workshopIsGenerating ? "Sending..." : "Send", systemImage: "paperplane.fill")
+                    if store.workshopIsGenerating {
+                        Label("Sending...", systemImage: "paperplane")
+                    } else {
+                        Label("Send", systemImage: "paperplane.fill")
+                    }
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(store.workshopInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.workshopIsGenerating)
             }
+
+            Text("Use this chat for brainstorming, revisions, and scene analysis.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(12)
+    }
+
+    private func sessionTitle(_ session: WorkshopSession) -> String {
+        let trimmed = session.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Chat" : trimmed
     }
 }

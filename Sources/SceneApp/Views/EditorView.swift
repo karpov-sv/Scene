@@ -35,25 +35,14 @@ struct EditorView: View {
                     TextEditor(text: sceneContentBinding)
                         .font(.body)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(8)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
 
                     generationPanel
                 }
-                .padding(14)
+                .padding(16)
             } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "text.document")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.secondary)
-                    Text("Select or create a scene to start writing")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView("No Scene Selected", systemImage: "text.document", description: Text("Select or create a scene to start writing."))
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private var generationPanel: some View {
@@ -79,10 +68,7 @@ struct EditorView: View {
                 }
 
                 TextEditor(text: $store.beatInput)
-                    .frame(minHeight: 110)
-                    .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(minHeight: 120)
 
                 HStack {
                     if store.isGenerating {
@@ -102,13 +88,16 @@ struct EditorView: View {
                     } label: {
                         Label(store.isGenerating ? "Generating..." : "Generate Text", systemImage: "sparkles")
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(store.beatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isGenerating)
                 }
 
-                Text(store.generationStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !store.generationStatus.isEmpty {
+                    Text(store.generationStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         } label: {
             Text("Generate From Beat")

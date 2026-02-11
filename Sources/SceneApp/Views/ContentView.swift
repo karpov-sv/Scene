@@ -73,16 +73,16 @@ struct ContentView: View {
     }
 
     private var writingWorkspace: some View {
-        HSplitView {
+        NavigationSplitView {
             BinderSidebarView()
-                .frame(minWidth: 250, idealWidth: 300, maxWidth: 360)
-
+                .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
+        } content: {
             EditorView()
-                .frame(minWidth: 540)
-
+                .navigationSplitViewColumnWidth(min: 540, ideal: 700, max: 900)
+        } detail: {
             CompendiumView()
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
+                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationSplitViewStyle(.balanced)
     }
 }
