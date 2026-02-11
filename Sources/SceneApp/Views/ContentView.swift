@@ -65,34 +65,6 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .frame(width: 260)
         }
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            if selectedTab == .writing {
-                Button {
-                    store.addChapter()
-                } label: {
-                    Label("New Chapter", systemImage: "folder.badge.plus")
-                }
-
-                Button {
-                    store.addScene(to: store.selectedChapterID)
-                } label: {
-                    Label("New Scene", systemImage: "doc.badge.plus")
-                }
-            } else {
-                Button {
-                    store.createWorkshopSession()
-                } label: {
-                    Label("New Chat", systemImage: "plus.bubble")
-                }
-            }
-
-            Button {
-                store.showingSettings = true
-            } label: {
-                Label("Settings", systemImage: "gearshape")
-            }
-        }
     }
 
     private var workspacePanel: AnyView {

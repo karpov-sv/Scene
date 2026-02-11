@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BinderSidebarView: View {
     @EnvironmentObject private var store: AppStore
+    @State private var collapsedChapterIDs: Set<UUID> = []
 
     private var selectedSceneBinding: Binding<UUID?> {
         Binding(
@@ -28,64 +29,80 @@ struct BinderSidebarView: View {
             } else {
                 List(selection: selectedSceneBinding) {
                     ForEach(store.chapters) { chapter in
-                        Section {
+                        Section(isExpanded: chapterExpandedBinding(chapter.id)) {
                             ForEach(chapter.scenes) { scene in
                                 sceneRow(scene)
                                     .tag(Optional(scene.id))
+                                    .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 8))
                             }
                         } header: {
-                            chapterHeader(chapter)
+                            chapterRow(chapter)
+                                .contextMenu {
+                                    chapterActions(chapter)
+                                }
                         }
                     }
                 }
                 .listStyle(.sidebar)
             }
+
+            Divider()
+            footerActions
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Binder")
-                .font(.headline)
-            Text(store.project.title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
+        Text(projectTitle)
+            .font(.headline)
+            .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
     }
 
-    private func chapterHeader(_ chapter: Chapter) -> some View {
-        HStack(spacing: 8) {
+    private var footerActions: some View {
+        HStack(spacing: 14) {
             Button {
-                store.selectChapter(chapter.id)
+                store.addChapter()
             } label: {
-                Label(chapterTitle(chapter), systemImage: "folder")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-            }
-            .buttonStyle(.plain)
-
-            Spacer(minLength: 0)
-
-            Button {
-                store.addScene(to: chapter.id)
-            } label: {
-                Image(systemName: "plus")
+                Image(systemName: "folder.badge.plus")
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
-            .help("Add scene")
+            .help("New Chapter")
 
-            Menu {
-                chapterActions(chapter)
+            Button {
+                store.addScene(to: store.selectedChapterID)
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "doc.badge.plus")
             }
-            .menuStyle(.borderlessButton)
-            .controlSize(.small)
-            .help("Chapter actions")
+            .buttonStyle(.borderless)
+            .disabled(store.selectedChapterID == nil)
+            .help("New Scene")
+
+            Button {
+                store.showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Preferences")
+
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 14, weight: .medium))
+        .padding(12)
+    }
+
+    private func chapterRow(_ chapter: Chapter) -> some View {
+        HStack(spacing: 8) {
+            Label(chapterTitle(chapter), systemImage: "folder")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    store.selectChapter(chapter.id)
+                }
+
+            Spacer(minLength: 0)
         }
         .textCase(nil)
     }
@@ -93,7 +110,6 @@ struct BinderSidebarView: View {
     private func sceneRow(_ scene: Scene) -> some View {
         Label(sceneTitle(scene), systemImage: "doc.text")
             .lineLimit(1)
-            .padding(.leading, 16)
             .contextMenu {
                 sceneActions(scene)
             }
@@ -159,5 +175,23 @@ struct BinderSidebarView: View {
     private func sceneTitle(_ scene: Scene) -> String {
         let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Scene" : trimmed
+    }
+
+    private var projectTitle: String {
+        let trimmed = store.project.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Project" : trimmed
+    }
+
+    private func chapterExpandedBinding(_ chapterID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedChapterIDs.contains(chapterID) },
+            set: { isExpanded in
+                if isExpanded {
+                    collapsedChapterIDs.remove(chapterID)
+                } else {
+                    collapsedChapterIDs.insert(chapterID)
+                }
+            }
+        )
     }
 }
