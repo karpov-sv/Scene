@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct CompendiumView: View {
     @EnvironmentObject private var store: AppStore
@@ -98,21 +99,34 @@ struct CompendiumView: View {
 
             if store.selectedCompendiumEntry != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("Entry title", text: entryTitleBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Entry title", text: entryTitleBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
 
-                    TextField("Tags (comma separated)", text: entryTagsBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
+                        TextField("Tags (comma separated)", text: entryTagsBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
 
-                    Text("Entry Text (\(selectedEntryCharacterCount) chars)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text("Entry Text (\(selectedEntryCharacterCount) chars)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+
                     TextEditor(text: entryBodyBinding)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .overlay(
+                            Rectangle()
+                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(10)
+                .padding(.bottom, 0)
             } else {
                 ContentUnavailableView("No Entry Selected", systemImage: "books.vertical", description: Text("Select or add a compendium entry."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

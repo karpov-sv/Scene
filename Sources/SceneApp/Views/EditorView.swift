@@ -15,16 +15,16 @@ struct EditorView: View {
     private let generationResizeHandleHeight: CGFloat = 10
     private let sceneEditorMinimumHeight: CGFloat = 220
 
-    private var generationActionColumnHeight: CGFloat {
-        (generationButtonHeight * 3) + (generationButtonSpacing * 2) + 16
+    private var generationActionColumnContentHeight: CGFloat {
+        (generationButtonHeight * 3) + (generationButtonSpacing * 2)
     }
 
     private var generationInputMinimumHeight: CGFloat {
-        generationActionColumnHeight
+        generationActionColumnContentHeight
     }
 
     private var generationPanelMinimumHeight: CGFloat {
-        generationActionColumnHeight + 84
+        generationActionColumnContentHeight + 84
     }
 
     private var generationPanelInitialHeight: CGFloat {
@@ -91,7 +91,7 @@ struct EditorView: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.weight(.semibold))
         }
-        .padding(16)
+        .padding(12)
     }
 
     private var writingSplit: some View {
@@ -118,8 +118,6 @@ struct EditorView: View {
         TextEditor(text: sceneContentBinding)
             .font(.body)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
     }
 
     private var generationPanel: some View {
@@ -127,13 +125,10 @@ struct EditorView: View {
             Text("Generate From Beat")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .padding(.leading, 8)
 
             HStack {
-                Text("Prompt")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Picker("Prompt", selection: selectedPromptBinding) {
+                Picker("Prompt Template", selection: selectedPromptBinding) {
                     Text("Default")
                         .tag(Optional<UUID>.none)
                     ForEach(store.prosePrompts) { prompt in
@@ -142,7 +137,9 @@ struct EditorView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .labelsHidden()
                 .frame(maxWidth: 280)
+                .padding(.leading, 8)
 
                 Spacer(minLength: 0)
 
@@ -157,7 +154,8 @@ struct EditorView: View {
                     )
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
+                .padding(.trailing, 8)
             }
 
             HStack(alignment: .top, spacing: 10) {
@@ -238,11 +236,15 @@ struct EditorView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
-                    .padding(.bottom, 6)
             }
+
+            Text("Press Enter to send. Press Cmd+Enter for a newline.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(12)
     }
 
     private func maximumGenerationHeight(in totalHeight: CGFloat) -> CGFloat {
