@@ -185,8 +185,7 @@ struct WorkshopChatView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Text(message.content)
-                        .textSelection(.enabled)
+                    WorkshopMessageText(message: message)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.vertical, 2)
@@ -297,6 +296,28 @@ struct WorkshopChatView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+}
+
+private struct WorkshopMessageText: View {
+    let message: WorkshopMessage
+
+    var body: some View {
+        Group {
+            if message.role == .assistant, let rendered = renderedAssistantMarkdown(message.content) {
+                Text(rendered)
+            } else {
+                Text(message.content)
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    private func renderedAssistantMarkdown(_ content: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        return try? AttributedString(markdown: content, options: options)
     }
 }
 
