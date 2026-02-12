@@ -237,11 +237,14 @@ final class ProjectPersistence {
                 throw ProjectPersistenceError.duplicateIdentifier("scene \(record.id.uuidString)")
             }
 
-            let content = try readText(at: projectURL.appendingPathComponent(record.contentPath, isDirectory: false))
+            let (content, contentRTFData) = try readSceneContent(
+                at: projectURL.appendingPathComponent(record.contentPath, isDirectory: false)
+            )
             sceneByID[record.id] = Scene(
                 id: record.id,
                 title: record.title,
                 content: content,
+                contentRTFData: contentRTFData,
                 updatedAt: record.updatedAt
             )
         }
@@ -347,10 +350,14 @@ final class ProjectPersistence {
                     throw ProjectPersistenceError.duplicateIdentifier("scene \(scene.id.uuidString)")
                 }
 
-                let filename = "\(scene.id.uuidString).md"
+                let filename = "\(scene.id.uuidString).rtf"
                 let contentPath = "\(Layout.scenesFolder)/\(filename)"
                 let contentURL = scenesFolder.appendingPathComponent(filename, isDirectory: false)
-                try writeText(scene.content, to: contentURL)
+                try writeSceneContent(
+                    text: scene.content,
+                    richTextData: scene.contentRTFData,
+                    to: contentURL
+                )
 
                 sceneRecords.append(
                     SceneRecord(
@@ -474,5 +481,41 @@ final class ProjectPersistence {
     private func writeText(_ text: String, to url: URL) throws {
         let data = Data(text.utf8)
         try data.write(to: url, options: .atomic)
+    }
+
+    private func readSceneContent(at url: URL) throws -> (String, Data?) {
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw ProjectPersistenceError.missingReference(url.lastPathComponent)
+        }
+
+        let data = try Data(contentsOf: url)
+        if let attributed = try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+        ) {
+            return (attributed.string, data)
+        }
+
+        if let text = String(data: data, encoding: .utf8) {
+            return (text, nil)
+        }
+
+        throw ProjectPersistenceError.invalidProjectLocation
+    }
+
+    private func writeSceneContent(text: String, richTextData: Data?, to url: URL) throws {
+        if let richTextData {
+            try richTextData.write(to: url, options: .atomic)
+            return
+        }
+
+        let attributed = NSAttributedString(string: text)
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        let rtfData = try attributed.data(
+            from: fullRange,
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+        try rtfData.write(to: url, options: .atomic)
     }
 }

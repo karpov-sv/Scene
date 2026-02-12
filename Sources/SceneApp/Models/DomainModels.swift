@@ -54,12 +54,20 @@ struct Scene: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
     var content: String
+    var contentRTFData: Data?
     var updatedAt: Date
 
-    init(id: UUID = UUID(), title: String, content: String = "", updatedAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        title: String,
+        content: String = "",
+        contentRTFData: Data? = nil,
+        updatedAt: Date = .now
+    ) {
         self.id = id
         self.title = title
         self.content = content
+        self.contentRTFData = contentRTFData
         self.updatedAt = updatedAt
     }
 }

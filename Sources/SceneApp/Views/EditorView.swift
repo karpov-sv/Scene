@@ -1,6 +1,17 @@
 import SwiftUI
 import AppKit
 
+private struct SceneEditorCommand: Equatable {
+    enum Action: Equatable {
+        case toggleBoldface
+        case toggleItalics
+        case toggleUnderline
+    }
+
+    let id: UUID = UUID()
+    let action: Action
+}
+
 struct EditorView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingSceneContextSheet: Bool = false
@@ -8,6 +19,7 @@ struct EditorView: View {
     @State private var generationPanelHeight: CGFloat = 0
     @State private var dragStartGenerationHeight: CGFloat?
     @State private var dragStartPointerY: CGFloat?
+    @State private var sceneEditorCommand: SceneEditorCommand?
 
     private let generationButtonWidth: CGFloat = 150
     private let generationButtonHeight: CGFloat = 30
@@ -43,13 +55,6 @@ struct EditorView: View {
         Binding(
             get: { store.selectedScene?.title ?? "" },
             set: { store.updateSelectedSceneTitle($0) }
-        )
-    }
-
-    private var sceneContentBinding: Binding<String> {
-        Binding(
-            get: { store.selectedScene?.content ?? "" },
-            set: { store.updateSelectedSceneContent($0) }
         )
     }
 
@@ -90,6 +95,37 @@ struct EditorView: View {
             TextField("Scene title", text: sceneTitleBinding)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.weight(.semibold))
+
+            HStack(spacing: 8) {
+                Button {
+                    sceneEditorCommand = SceneEditorCommand(action: .toggleBoldface)
+                } label: {
+                    Image(systemName: "bold")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Bold (Cmd+B)")
+
+                Button {
+                    sceneEditorCommand = SceneEditorCommand(action: .toggleItalics)
+                } label: {
+                    Image(systemName: "italic")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Italic (Cmd+I)")
+
+                Button {
+                    sceneEditorCommand = SceneEditorCommand(action: .toggleUnderline)
+                } label: {
+                    Image(systemName: "underline")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Underline (Cmd+U)")
+
+                Spacer(minLength: 0)
+            }
         }
         .padding(12)
     }
@@ -115,8 +151,14 @@ struct EditorView: View {
     }
 
     private var sceneEditor: some View {
-        TextEditor(text: sceneContentBinding)
-            .font(.body)
+        SceneRichTextEditorView(
+            sceneID: store.selectedScene?.id,
+            plainText: store.selectedScene?.content ?? "",
+            richTextData: store.selectedScene?.contentRTFData,
+            command: sceneEditorCommand
+        ) { plainText, richTextData in
+            store.updateSelectedSceneContent(plainText, richTextData: richTextData)
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -296,6 +338,304 @@ struct EditorView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+}
+
+private struct SceneRichTextEditorView: NSViewRepresentable {
+    let sceneID: UUID?
+    let plainText: String
+    let richTextData: Data?
+    let command: SceneEditorCommand?
+    let onChange: (String, Data?) -> Void
+
+    private final class SceneEditorTextView: NSTextView {
+        var onFormattingShortcut: ((SceneEditorCommand.Action) -> Void)?
+
+        override func keyDown(with event: NSEvent) {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == [.command],
+               let shortcut = event.charactersIgnoringModifiers?.lowercased() {
+                switch shortcut {
+                case "b":
+                    onFormattingShortcut?(.toggleBoldface)
+                    return
+                case "i":
+                    onFormattingShortcut?(.toggleItalics)
+                    return
+                case "u":
+                    onFormattingShortcut?(.toggleUnderline)
+                    return
+                default:
+                    break
+                }
+            }
+            super.keyDown(with: event)
+        }
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.scrollerInsets = NSEdgeInsets()
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = NSColor.textBackgroundColor
+
+        let textView = SceneEditorTextView()
+        textView.delegate = context.coordinator
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.usesFindBar = true
+        textView.allowsUndo = true
+        textView.font = NSFont.preferredFont(forTextStyle: .body)
+        textView.textContainerInset = NSSize(width: 8, height: 10)
+        textView.drawsBackground = true
+        textView.backgroundColor = NSColor.textBackgroundColor
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.onFormattingShortcut = { action in
+            context.coordinator.applyFormattingShortcut(action, to: textView)
+        }
+
+        if let textContainer = textView.textContainer {
+            textContainer.widthTracksTextView = true
+            textContainer.heightTracksTextView = false
+            textContainer.lineBreakMode = .byWordWrapping
+            textContainer.lineFragmentPadding = 0
+        }
+
+        context.coordinator.applyContent(
+            to: textView,
+            sceneID: sceneID,
+            plainText: plainText,
+            richTextData: richTextData,
+            force: true
+        )
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        context.coordinator.applyContent(
+            to: textView,
+            sceneID: sceneID,
+            plainText: plainText,
+            richTextData: richTextData,
+            force: false
+        )
+        context.coordinator.applyCommand(command, to: textView)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChange: onChange)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        private let onChange: (String, Data?) -> Void
+        private var isApplyingProgrammaticChange: Bool = false
+        private var lastSceneID: UUID?
+        private var lastHandledCommandID: UUID?
+
+        init(onChange: @escaping (String, Data?) -> Void) {
+            self.onChange = onChange
+        }
+
+        func applyContent(
+            to textView: NSTextView,
+            sceneID: UUID?,
+            plainText: String,
+            richTextData: Data?,
+            force: Bool
+        ) {
+            if isApplyingProgrammaticChange {
+                return
+            }
+
+            let sceneChanged = lastSceneID != sceneID
+            let textChanged = textView.string != plainText
+            guard force || sceneChanged || textChanged else {
+                return
+            }
+
+            let attributed = Self.makeAttributedContent(plainText: plainText, richTextData: richTextData)
+            isApplyingProgrammaticChange = true
+            textView.textStorage?.setAttributedString(attributed)
+            textView.setSelectedRange(NSRange(location: attributed.length, length: 0))
+            isApplyingProgrammaticChange = false
+            lastSceneID = sceneID
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard !isApplyingProgrammaticChange else { return }
+            guard let textView = notification.object as? NSTextView else { return }
+            publishChange(from: textView)
+        }
+
+        func applyCommand(_ command: SceneEditorCommand?, to textView: NSTextView) {
+            guard let command else { return }
+            guard lastHandledCommandID != command.id else { return }
+
+            lastHandledCommandID = command.id
+            textView.window?.makeFirstResponder(textView)
+            applyFormatting(command.action, to: textView)
+            publishChange(from: textView)
+        }
+
+        func applyFormattingShortcut(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
+            applyFormatting(action, to: textView)
+            publishChange(from: textView)
+        }
+
+        private func publishChange(from textView: NSTextView) {
+            let plainText = textView.string
+            let fullRange = NSRange(location: 0, length: textView.attributedString().length)
+            let richTextData = try? textView.attributedString().data(
+                from: fullRange,
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+            )
+            onChange(plainText, richTextData)
+        }
+
+        private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
+            switch action {
+            case .toggleBoldface:
+                toggleFontTrait(.boldFontMask, in: textView)
+            case .toggleItalics:
+                toggleFontTrait(.italicFontMask, in: textView)
+            case .toggleUnderline:
+                toggleUnderline(in: textView)
+            }
+        }
+
+        private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) {
+            let selectedRange = textView.selectedRange()
+            let fallbackFont = NSFont.preferredFont(forTextStyle: .body)
+            let currentTypingFont = (textView.typingAttributes[.font] as? NSFont) ?? textView.font ?? fallbackFont
+            let shouldEnableTrait = !selectionHasFontTrait(trait, in: textView)
+
+            if selectedRange.length == 0 {
+                let updatedFont = convertedFont(currentTypingFont, toggling: trait, enable: shouldEnableTrait) ?? currentTypingFont
+                var typingAttributes = textView.typingAttributes
+                typingAttributes[.font] = updatedFont
+                textView.typingAttributes = typingAttributes
+                return
+            }
+
+            guard let textStorage = textView.textStorage else { return }
+            textStorage.beginEditing()
+            textStorage.enumerateAttribute(.font, in: selectedRange, options: []) { value, range, _ in
+                let currentFont = (value as? NSFont) ?? currentTypingFont
+                let updatedFont = convertedFont(currentFont, toggling: trait, enable: shouldEnableTrait) ?? currentFont
+                textStorage.addAttribute(.font, value: updatedFont, range: range)
+            }
+            textStorage.endEditing()
+        }
+
+        private func selectionHasFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) -> Bool {
+            let selectedRange = textView.selectedRange()
+            let fallbackFont = NSFont.preferredFont(forTextStyle: .body)
+            let typingFont = (textView.typingAttributes[.font] as? NSFont) ?? textView.font ?? fallbackFont
+
+            if selectedRange.length == 0 {
+                return NSFontManager.shared.traits(of: typingFont).contains(trait)
+            }
+
+            guard let textStorage = textView.textStorage else { return false }
+            var allHaveTrait = true
+            textStorage.enumerateAttribute(.font, in: selectedRange, options: []) { value, _, stop in
+                let font = (value as? NSFont) ?? typingFont
+                if !NSFontManager.shared.traits(of: font).contains(trait) {
+                    allHaveTrait = false
+                    stop.pointee = true
+                }
+            }
+            return allHaveTrait
+        }
+
+        private func convertedFont(_ font: NSFont, toggling trait: NSFontTraitMask, enable: Bool) -> NSFont? {
+            if enable {
+                return NSFontManager.shared.convert(font, toHaveTrait: trait)
+            }
+            return NSFontManager.shared.convert(font, toNotHaveTrait: trait)
+        }
+
+        private func toggleUnderline(in textView: NSTextView) {
+            let selectedRange = textView.selectedRange()
+            let shouldEnableUnderline = !selectionHasUnderline(in: textView)
+            let underlineValue = NSUnderlineStyle.single.rawValue
+
+            if selectedRange.length == 0 {
+                var typingAttributes = textView.typingAttributes
+                if shouldEnableUnderline {
+                    typingAttributes[.underlineStyle] = underlineValue
+                } else {
+                    typingAttributes.removeValue(forKey: .underlineStyle)
+                }
+                textView.typingAttributes = typingAttributes
+                return
+            }
+
+            guard let textStorage = textView.textStorage else { return }
+            if shouldEnableUnderline {
+                textStorage.addAttribute(.underlineStyle, value: underlineValue, range: selectedRange)
+            } else {
+                textStorage.removeAttribute(.underlineStyle, range: selectedRange)
+            }
+        }
+
+        private func selectionHasUnderline(in textView: NSTextView) -> Bool {
+            let selectedRange = textView.selectedRange()
+            let typingValue = textView.typingAttributes[.underlineStyle] as? Int ?? 0
+
+            if selectedRange.length == 0 {
+                return typingValue != 0
+            }
+
+            guard let textStorage = textView.textStorage else { return false }
+            var allUnderlined = true
+            textStorage.enumerateAttribute(.underlineStyle, in: selectedRange, options: []) { value, _, stop in
+                let styleValue: Int
+                if let intValue = value as? Int {
+                    styleValue = intValue
+                } else if let numberValue = value as? NSNumber {
+                    styleValue = numberValue.intValue
+                } else {
+                    styleValue = 0
+                }
+
+                if styleValue == 0 {
+                    allUnderlined = false
+                    stop.pointee = true
+                }
+            }
+            return allUnderlined
+        }
+
+        private static func makeAttributedContent(plainText: String, richTextData: Data?) -> NSAttributedString {
+            if let richTextData,
+               let attributed = try? NSAttributedString(
+                data: richTextData,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+               ) {
+                return attributed
+            }
+
+            return NSAttributedString(
+                string: plainText,
+                attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
+            )
+        }
     }
 }
 

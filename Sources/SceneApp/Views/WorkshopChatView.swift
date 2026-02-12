@@ -302,6 +302,7 @@ struct WorkshopChatView: View {
                         .id(messagesBottomAnchorID)
                 }
             }
+            .background(Color(nsColor: .textBackgroundColor))
             .onAppear {
                 shouldStickToBottom = true
                 DispatchQueue.main.async {

@@ -580,12 +580,17 @@ final class AppStore: ObservableObject {
     }
 
     func updateSelectedSceneContent(_ content: String) {
+        updateSelectedSceneContent(content, richTextData: nil)
+    }
+
+    func updateSelectedSceneContent(_ content: String, richTextData: Data?) {
         guard let selectedSceneID,
               let location = sceneLocation(for: selectedSceneID) else {
             return
         }
 
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = content
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
         saveProject(debounced: true)
@@ -1685,6 +1690,7 @@ final class AppStore: ObservableObject {
 
         current += trimmedIncoming
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = current
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = nil
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
     }
 
@@ -1706,6 +1712,7 @@ final class AppStore: ObservableObject {
         }
 
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = base + generated
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = nil
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
     }
 
