@@ -34,6 +34,7 @@ final class ProjectPersistence {
     private static let manifestFileName = "manifest.json"
     private static let schemaVersion = 1
     private static let lastOpenedProjectPathKey = "SceneApp.lastOpenedProjectPath"
+    private static let lastOpenedProjectPathsKey = "SceneApp.lastOpenedProjectPaths"
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -42,7 +43,7 @@ final class ProjectPersistence {
 
     init(
         fileManager: FileManager = .default,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = UserDefaults(suiteName: "com.karpov.SceneApp") ?? .standard
     ) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
@@ -147,12 +148,68 @@ final class ProjectPersistence {
         return url
     }
 
+    func loadLastOpenedProjectURLs() -> [URL] {
+        guard let paths = userDefaults.array(forKey: Self.lastOpenedProjectPathsKey) as? [String] else {
+            return []
+        }
+
+        var seen = Set<String>()
+        var validURLs: [URL] = []
+
+        for path in paths {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            guard seen.insert(url.path).inserted else { continue }
+
+            let manifestURL = url.appendingPathComponent(Self.manifestFileName)
+            guard fileManager.fileExists(atPath: manifestURL.path) else { continue }
+
+            validURLs.append(url)
+        }
+
+        if validURLs.isEmpty {
+            userDefaults.removeObject(forKey: Self.lastOpenedProjectPathsKey)
+            return []
+        }
+
+        if validURLs.map(\.path) != paths {
+            saveLastOpenedProjectURLs(validURLs)
+        }
+
+        return validURLs
+    }
+
     func saveLastOpenedProjectURL(_ projectURL: URL) {
-        userDefaults.set(projectURL.standardizedFileURL.path, forKey: Self.lastOpenedProjectPathKey)
+        let normalizedURL = projectURL.standardizedFileURL
+        var urls = loadLastOpenedProjectURLs()
+        urls.removeAll { $0.standardizedFileURL == normalizedURL }
+        urls.insert(normalizedURL, at: 0)
+
+        if urls.count > 24 {
+            urls.removeSubrange(24..<urls.count)
+        }
+
+        saveLastOpenedProjectURLs(urls)
+    }
+
+    func saveLastOpenedProjectURLs(_ projectURLs: [URL]) {
+        var seen = Set<String>()
+        let normalizedPaths = projectURLs
+            .map(\.standardizedFileURL)
+            .filter { seen.insert($0.path).inserted }
+            .map(\.path)
+
+        if normalizedPaths.isEmpty {
+            clearLastOpenedProjectURL()
+            return
+        }
+
+        userDefaults.set(normalizedPaths, forKey: Self.lastOpenedProjectPathsKey)
+        userDefaults.set(normalizedPaths[0], forKey: Self.lastOpenedProjectPathKey)
     }
 
     func clearLastOpenedProjectURL() {
         userDefaults.removeObject(forKey: Self.lastOpenedProjectPathKey)
+        userDefaults.removeObject(forKey: Self.lastOpenedProjectPathsKey)
     }
 
     func loadProject(from fileWrapper: FileWrapper) throws -> StoryProject {

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -466,7 +467,13 @@ final class AppStore: ObservableObject {
     }
 
     func updateProjectURL(_ projectURL: URL?) {
-        currentProjectURL = projectURL?.standardizedFileURL
+        let normalizedURL = projectURL?.standardizedFileURL
+        currentProjectURL = normalizedURL
+
+        if isDocumentBacked, let normalizedURL {
+            persistence.saveLastOpenedProjectURL(normalizedURL)
+            NSDocumentController.shared.noteNewRecentDocumentURL(normalizedURL)
+        }
     }
 
     func replaceProjectFromDocument(_ project: StoryProject) {
