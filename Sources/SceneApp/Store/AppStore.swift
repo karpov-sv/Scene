@@ -581,6 +581,12 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateAutosaveEnabled(_ enabled: Bool) {
+        guard project.autosaveEnabled != enabled else { return }
+        project.autosaveEnabled = enabled
+        saveProject(forceWrite: true)
+    }
+
     func updateProvider(_ provider: AIProvider) {
         let previousProvider = project.settings.provider
         project.settings.provider = provider
@@ -1850,6 +1856,7 @@ final class AppStore: ObservableObject {
         if isDocumentBacked {
             project.updatedAt = .now
             documentChangeHandler?(project)
+            saveCurrentDocumentToDisk()
             return
         }
 
@@ -2659,9 +2666,10 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func saveProject(debounced: Bool = false) {
+    private func saveProject(debounced: Bool = false, forceWrite: Bool = false) {
         guard isProjectOpen else { return }
         project.updatedAt = .now
+        let shouldWriteToDisk = project.autosaveEnabled || forceWrite
 
         if isDocumentBacked {
             if debounced {
@@ -2670,12 +2678,23 @@ final class AppStore: ObservableObject {
                     try? await Task.sleep(nanoseconds: 350_000_000)
                     guard let self, !Task.isCancelled else { return }
                     self.documentChangeHandler?(self.project)
+                    if shouldWriteToDisk {
+                        self.saveCurrentDocumentToDisk()
+                    }
                 }
                 return
             }
 
             autosaveTask?.cancel()
             documentChangeHandler?(project)
+            if shouldWriteToDisk {
+                saveCurrentDocumentToDisk()
+            }
+            return
+        }
+
+        guard shouldWriteToDisk else {
+            autosaveTask?.cancel()
             return
         }
 
@@ -2700,6 +2719,17 @@ final class AppStore: ObservableObject {
             self.currentProjectURL = try persistence.saveProject(project, at: currentProjectURL)
         } catch {
             lastError = "Failed to save project: \(error.localizedDescription)"
+        }
+    }
+
+    private func saveCurrentDocumentToDisk() {
+        guard isDocumentBacked, let currentProjectURL else { return }
+        let standardizedURL = currentProjectURL.standardizedFileURL
+
+        if let document = NSDocumentController.shared.documents.first(where: {
+            $0.fileURL?.standardizedFileURL == standardizedURL
+        }) {
+            document.save(nil)
         }
     }
 

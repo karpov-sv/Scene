@@ -120,6 +120,7 @@ Script options:
   - `compendium/*.md` (entry text)
   - `workshop/*.json` (chat messages)
 - The app restores the last opened project on restart.
+- Project Settings -> General includes `Autosave project changes` (enabled by default).
 - Supported providers: `OpenAI (ChatGPT)`, `Anthropic (Claude)`, `OpenRouter`, `LM Studio (Local)`, and `OpenAI-Compatible (Custom)`.
 - Configure provider settings in Project Settings:
   - endpoint URL (auto-populated with provider default)

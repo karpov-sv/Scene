@@ -26,6 +26,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var autosaveEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.autosaveEnabled },
+            set: { store.updateAutosaveEnabled($0) }
+        )
+    }
+
     private var endpointBinding: Binding<String> {
         Binding(
             get: { store.project.settings.endpoint },
@@ -166,6 +173,8 @@ struct SettingsSheetView: View {
 
                     TextField("Project title", text: projectTitleBinding)
                         .textFieldStyle(.roundedBorder)
+
+                    Toggle("Autosave project changes", isOn: autosaveEnabledBinding)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

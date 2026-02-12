@@ -397,6 +397,7 @@ struct GenerationSettings: Codable, Equatable {
 struct StoryProject: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
+    var autosaveEnabled: Bool
     var chapters: [Chapter]
     var compendium: [CompendiumEntry]
     var prompts: [PromptTemplate]
@@ -415,6 +416,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     init(
         id: UUID,
         title: String,
+        autosaveEnabled: Bool,
         chapters: [Chapter],
         compendium: [CompendiumEntry],
         prompts: [PromptTemplate],
@@ -432,6 +434,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.title = title
+        self.autosaveEnabled = autosaveEnabled
         self.chapters = chapters
         self.compendium = compendium
         self.prompts = prompts
@@ -451,6 +454,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case autosaveEnabled
         case chapters
         case compendium
         case prompts
@@ -472,6 +476,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
 
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
+        autosaveEnabled = try container.decodeIfPresent(Bool.self, forKey: .autosaveEnabled) ?? true
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         compendium = try container.decode([CompendiumEntry].self, forKey: .compendium)
         prompts = try container.decode([PromptTemplate].self, forKey: .prompts)
@@ -561,6 +566,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         return StoryProject(
             id: UUID(),
             title: "Untitled Project",
+            autosaveEnabled: true,
             chapters: [firstChapter],
             compendium: compendium,
             prompts: [defaultPrompt, defaultRewritePrompt, defaultSummaryPrompt, defaultWorkshopPrompt],

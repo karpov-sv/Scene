@@ -232,6 +232,7 @@ final class ProjectPersistence {
         var schemaVersion: Int
         var id: UUID
         var title: String
+        var autosaveEnabled: Bool?
         var updatedAt: Date
         var selectedProsePromptID: UUID?
         var selectedRewritePromptID: UUID?
@@ -473,6 +474,7 @@ final class ProjectPersistence {
         return StoryProject(
             id: manifest.id,
             title: manifest.title,
+            autosaveEnabled: manifest.autosaveEnabled ?? true,
             chapters: chapters,
             compendium: compendium,
             prompts: prompts,
@@ -600,6 +602,7 @@ final class ProjectPersistence {
             schemaVersion: Self.schemaVersion,
             id: project.id,
             title: project.title,
+            autosaveEnabled: project.autosaveEnabled,
             updatedAt: project.updatedAt,
             selectedProsePromptID: project.selectedProsePromptID,
             selectedRewritePromptID: project.selectedRewritePromptID,

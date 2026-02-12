@@ -12,6 +12,7 @@ extension UTType {
 @preconcurrency
 final class SceneProjectDocument: ReferenceFileDocument {
     static var readableContentTypes: [UTType] { [.sceneProject] }
+    static var autosavesInPlace: Bool { false }
 
     @Published var project: StoryProject
 
