@@ -137,6 +137,15 @@ final class AppStore: ObservableObject {
         return project.chapters[location.chapterIndex].scenes[location.sceneIndex]
     }
 
+    var selectedChapter: Chapter? {
+        guard isProjectOpen else { return nil }
+        guard let selectedChapterID,
+              let chapterIndex = chapterIndex(for: selectedChapterID) else {
+            return nil
+        }
+        return project.chapters[chapterIndex]
+    }
+
     var selectedCompendiumEntry: CompendiumEntry? {
         guard isProjectOpen else { return nil }
         guard let selectedCompendiumID, let index = compendiumIndex(for: selectedCompendiumID) else {
@@ -636,6 +645,13 @@ final class AppStore: ObservableObject {
         updateSceneSummary(sceneID: selectedSceneID, summary: summary, debounced: true)
     }
 
+    func updateSelectedChapterSummary(_ summary: String) {
+        guard let selectedChapterID else {
+            return
+        }
+        updateChapterSummary(chapterID: selectedChapterID, summary: summary, debounced: true)
+    }
+
     private func updateSceneSummary(sceneID: UUID, summary: String, debounced: Bool) {
         guard let location = sceneLocation(for: sceneID) else {
             return
@@ -644,6 +660,16 @@ final class AppStore: ObservableObject {
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].summary = summary
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
+        saveProject(debounced: debounced)
+    }
+
+    private func updateChapterSummary(chapterID: UUID, summary: String, debounced: Bool) {
+        guard let chapterIndex = chapterIndex(for: chapterID) else {
+            return
+        }
+
+        project.chapters[chapterIndex].summary = summary
+        project.chapters[chapterIndex].updatedAt = .now
         saveProject(debounced: debounced)
     }
 
@@ -825,6 +851,35 @@ final class AppStore: ObservableObject {
         }
 
         updateSceneSummary(sceneID: sceneID, summary: normalizedSummary, debounced: false)
+        return normalizedSummary
+    }
+
+    func summarizeSelectedChapter() async throws -> String {
+        guard let chapter = selectedChapter else {
+            throw AIServiceError.badResponse("Select a chapter first.")
+        }
+
+        let chapterID = chapter.id
+        let request = makeChapterSummaryRequest(chapter: chapter)
+        updateChapterSummary(chapterID: chapterID, summary: "", debounced: true)
+
+        let summaryPartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            summaryPartialHandler = { [weak self] partial in
+                guard let self else { return }
+                self.updateChapterSummary(chapterID: chapterID, summary: partial, debounced: true)
+            }
+        } else {
+            summaryPartialHandler = nil
+        }
+
+        let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
+        let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSummary.isEmpty else {
+            throw AIServiceError.badResponse("Summary result was empty.")
+        }
+
+        updateChapterSummary(chapterID: chapterID, summary: normalizedSummary, debounced: false)
         return normalizedSummary
     }
 
@@ -1444,6 +1499,36 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func makeChapterSummaryRequest(chapter: Chapter) -> TextGenerationRequest {
+        let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
+        let sceneSummaryContext = buildChapterSceneSummaryContext(chapter: chapter)
+        let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chapterContext = """
+        Chapter: \(chapterTitle.isEmpty ? "Untitled Chapter" : chapterTitle)
+        Scene count: \(chapter.scenes.count)
+        """
+
+        let userPrompt = expandPrompt(
+            template: prompt.userTemplate,
+            beat: "",
+            scene: sceneSummaryContext,
+            context: chapterContext,
+            conversation: ""
+        )
+
+        let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? project.settings.defaultSystemPrompt
+            : prompt.systemTemplate
+
+        return TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: project.settings.model,
+            temperature: project.settings.temperature,
+            maxTokens: project.settings.maxTokens
+        )
+    }
+
     private func rememberBeatInputHistory(_ value: String) {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
@@ -1789,6 +1874,26 @@ final class AppStore: ObservableObject {
         return excerpt.joined(separator: "\n")
     }
 
+    private func buildChapterSceneSummaryContext(chapter: Chapter) -> String {
+        let excerpt = chapter.scenes.enumerated().map { index, scene in
+            let title = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Scene"
+                : scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let summary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if summary.isEmpty {
+                return "\(index + 1). \(title): [No scene summary yet]"
+            }
+
+            return "\(index + 1). \(title): \(String(summary.prefix(900)))"
+        }
+
+        if excerpt.isEmpty {
+            return "No scenes available in this chapter."
+        }
+        return excerpt.joined(separator: "\n")
+    }
+
     private func compendiumContextIDs(for sceneID: UUID?) -> [UUID] {
         guard let sceneID else { return [] }
         return project.sceneContextCompendiumSelection[sceneID.uuidString] ?? []
@@ -1919,6 +2024,10 @@ final class AppStore: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func chapterIndex(for chapterID: UUID) -> Int? {
+        project.chapters.firstIndex(where: { $0.id == chapterID })
     }
 
     private func compendiumIndex(for entryID: UUID) -> Int? {

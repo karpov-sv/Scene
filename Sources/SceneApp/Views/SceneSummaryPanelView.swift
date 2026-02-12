@@ -2,7 +2,12 @@ import SwiftUI
 
 struct SceneSummaryPanelView: View {
     @EnvironmentObject private var store: AppStore
+    @Binding private var scope: SummaryScope
     @State private var isSummarizing: Bool = false
+
+    init(scope: Binding<SummaryScope>) {
+        self._scope = scope
+    }
 
     private var selectedSummaryPromptBinding: Binding<UUID?> {
         Binding(
@@ -11,15 +16,68 @@ struct SceneSummaryPanelView: View {
         )
     }
 
-    private var sceneSummaryBinding: Binding<String> {
+    private var summaryBinding: Binding<String> {
         Binding(
-            get: { store.selectedScene?.summary ?? "" },
-            set: { store.updateSelectedSceneSummary($0) }
+            get: {
+                switch scope {
+                case .scene:
+                    return store.selectedScene?.summary ?? ""
+                case .chapter:
+                    return store.selectedChapter?.summary ?? ""
+                }
+            },
+            set: { value in
+                switch scope {
+                case .scene:
+                    store.updateSelectedSceneSummary(value)
+                case .chapter:
+                    store.updateSelectedChapterSummary(value)
+                }
+            }
         )
     }
 
     private var summaryCharacterCount: Int {
-        store.selectedScene?.summary.count ?? 0
+        switch scope {
+        case .scene:
+            return store.selectedScene?.summary.count ?? 0
+        case .chapter:
+            return store.selectedChapter?.summary.count ?? 0
+        }
+    }
+
+    private var summaryTitle: String {
+        switch scope {
+        case .scene:
+            return "Scene Summary"
+        case .chapter:
+            return "Chapter Summary"
+        }
+    }
+
+    private var summaryDescription: String {
+        switch scope {
+        case .scene:
+            return "Generate and edit a persistent summary for the selected scene."
+        case .chapter:
+            return "Generate and edit a persistent summary for the selected chapter."
+        }
+    }
+
+    private var canSummarizeCurrentScope: Bool {
+        switch scope {
+        case .scene:
+            return store.selectedScene != nil
+        case .chapter:
+            return store.selectedChapter != nil
+        }
+    }
+
+    private var canClearCurrentScope: Bool {
+        guard canSummarizeCurrentScope, !isSummarizing else {
+            return false
+        }
+        return !summaryBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -27,54 +85,74 @@ struct SceneSummaryPanelView: View {
             header
             Divider()
 
-            HStack(spacing: 10) {
-                Picker("Summary Template", selection: selectedSummaryPromptBinding) {
-                    ForEach(store.summaryPrompts) { prompt in
-                        Text(prompt.title)
-                            .tag(Optional(prompt.id))
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(maxWidth: 260)
-                .disabled(store.summaryPrompts.isEmpty || isSummarizing)
-
-                Spacer(minLength: 0)
-
-                Button {
-                    summarizeScene()
-                } label: {
-                    Group {
-                        if isSummarizing {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text("Summarizing")
-                            }
-                        } else {
-                            Label("Summarize", systemImage: "text.insert")
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Picker("Summary Scope", selection: $scope) {
+                        ForEach(SummaryScope.allCases) { value in
+                            Text(value.title).tag(value)
                         }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
+
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    isSummarizing
-                    || store.selectedScene == nil
-                    || store.activeSummaryPrompt == nil
-                )
+
+                HStack(spacing: 10) {
+                    Picker("Summary Template", selection: selectedSummaryPromptBinding) {
+                        ForEach(store.summaryPrompts) { prompt in
+                            Text(prompt.title)
+                                .tag(Optional(prompt.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+                    .disabled(store.summaryPrompts.isEmpty || isSummarizing)
+
+                    Spacer(minLength: 0)
+
+                    Button("Clear") {
+                        clearCurrentScope()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!canClearCurrentScope)
+
+                    Button {
+                        summarizeCurrentScope()
+                    } label: {
+                        Group {
+                            if isSummarizing {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Summarizing \(scope.title)")
+                                }
+                            } else {
+                                Label("Summarize", systemImage: "text.insert")
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        isSummarizing
+                        || !canSummarizeCurrentScope
+                        || store.activeSummaryPrompt == nil
+                    )
+                }
             }
             .padding(12)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Scene Summary (\(summaryCharacterCount) chars)")
+                Text("\(summaryTitle) (\(summaryCharacterCount) chars)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
 
-                TextEditor(text: sceneSummaryBinding)
+                TextEditor(text: summaryBinding)
                     .font(.body)
                     .scrollContentBackground(.hidden)
                     .padding(8)
@@ -91,9 +169,9 @@ struct SceneSummaryPanelView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Scene Summary")
+            Text("Summary")
                 .font(.headline)
-            Text("Generate and edit a persistent summary for the selected scene.")
+            Text(summaryDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -101,23 +179,38 @@ struct SceneSummaryPanelView: View {
         .padding(12)
     }
 
-    private func summarizeScene() {
+    private func summarizeCurrentScope() {
         guard !isSummarizing else { return }
-        guard store.selectedScene != nil else { return }
+        guard canSummarizeCurrentScope else { return }
 
         isSummarizing = true
+        let targetScope = scope
         Task { @MainActor in
             defer {
                 isSummarizing = false
             }
 
             do {
-                _ = try await store.summarizeSelectedScene()
+                switch targetScope {
+                case .scene:
+                    _ = try await store.summarizeSelectedScene()
+                case .chapter:
+                    _ = try await store.summarizeSelectedChapter()
+                }
             } catch is CancellationError {
                 return
             } catch {
                 store.lastError = error.localizedDescription
             }
+        }
+    }
+
+    private func clearCurrentScope() {
+        switch scope {
+        case .scene:
+            store.updateSelectedSceneSummary("")
+        case .chapter:
+            store.updateSelectedChapterSummary("")
         }
     }
 }

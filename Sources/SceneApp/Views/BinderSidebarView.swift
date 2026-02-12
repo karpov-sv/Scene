@@ -3,6 +3,16 @@ import SwiftUI
 struct BinderSidebarView: View {
     @EnvironmentObject private var store: AppStore
     @State private var collapsedChapterIDs: Set<UUID> = []
+    let onOpenSceneSummary: ((UUID, UUID) -> Void)?
+    let onOpenChapterSummary: ((UUID) -> Void)?
+
+    init(
+        onOpenSceneSummary: ((UUID, UUID) -> Void)? = nil,
+        onOpenChapterSummary: ((UUID) -> Void)? = nil
+    ) {
+        self.onOpenSceneSummary = onOpenSceneSummary
+        self.onOpenChapterSummary = onOpenChapterSummary
+    }
 
     private var selectedSceneBinding: Binding<UUID?> {
         Binding(
@@ -31,7 +41,7 @@ struct BinderSidebarView: View {
                     ForEach(store.chapters) { chapter in
                         Section(isExpanded: chapterExpandedBinding(chapter.id)) {
                             ForEach(chapter.scenes) { scene in
-                                sceneRow(scene)
+                                sceneRow(scene, chapterID: chapter.id)
                                     .tag(Optional(scene.id))
                                     .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 8))
                             }
@@ -107,11 +117,11 @@ struct BinderSidebarView: View {
         .textCase(nil)
     }
 
-    private func sceneRow(_ scene: Scene) -> some View {
+    private func sceneRow(_ scene: Scene, chapterID: UUID) -> some View {
         Label(sceneTitle(scene), systemImage: "doc.text")
             .lineLimit(1)
             .contextMenu {
-                sceneActions(scene)
+                sceneActions(scene, chapterID: chapterID)
             }
     }
 
@@ -121,6 +131,12 @@ struct BinderSidebarView: View {
             store.addScene(to: chapter.id)
         } label: {
             Label("Add Scene", systemImage: "plus")
+        }
+
+        Button {
+            onOpenChapterSummary?(chapter.id)
+        } label: {
+            Label("Open Chapter Summary", systemImage: "text.alignleft")
         }
 
         Button {
@@ -145,7 +161,13 @@ struct BinderSidebarView: View {
     }
 
     @ViewBuilder
-    private func sceneActions(_ scene: Scene) -> some View {
+    private func sceneActions(_ scene: Scene, chapterID: UUID) -> some View {
+        Button {
+            onOpenSceneSummary?(scene.id, chapterID)
+        } label: {
+            Label("Open Scene Summary", systemImage: "text.alignleft")
+        }
+
         Button {
             store.moveSceneUp(scene.id)
         } label: {

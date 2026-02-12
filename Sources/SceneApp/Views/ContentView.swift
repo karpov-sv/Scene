@@ -26,6 +26,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedTab: WorkspaceTab = .writing
     @State private var writingSidePanel: WritingSidePanel = .compendium
+    @State private var summaryScope: SummaryScope = .scene
     @State private var isConversationsVisible: Bool = true
 
     private var hasErrorBinding: Binding<Bool> {
@@ -61,7 +62,20 @@ struct ContentView: View {
 
     private var workspaceRoot: some View {
         NavigationSplitView {
-            BinderSidebarView()
+            BinderSidebarView(
+                onOpenSceneSummary: { sceneID, chapterID in
+                    store.selectScene(sceneID, chapterID: chapterID)
+                    summaryScope = .scene
+                    selectedTab = .writing
+                    writingSidePanel = .summary
+                },
+                onOpenChapterSummary: { chapterID in
+                    store.selectChapter(chapterID)
+                    summaryScope = .chapter
+                    selectedTab = .writing
+                    writingSidePanel = .summary
+                }
+            )
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
         } detail: {
             workspacePanel
@@ -133,7 +147,7 @@ struct ContentView: View {
                 )
             case .summary:
                 sidePanel = AnyView(
-                    SceneSummaryPanelView()
+                    SceneSummaryPanelView(scope: $summaryScope)
                         .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
                 )
             case .none:

@@ -179,6 +179,32 @@ final class ProjectPersistence {
         var title: String
         var updatedAt: Date
         var sceneIDs: [UUID]
+        var summary: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case title
+            case updatedAt
+            case sceneIDs
+            case summary
+        }
+
+        init(id: UUID, title: String, updatedAt: Date, sceneIDs: [UUID], summary: String) {
+            self.id = id
+            self.title = title
+            self.updatedAt = updatedAt
+            self.sceneIDs = sceneIDs
+            self.summary = summary
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            title = try container.decode(String.self, forKey: .title)
+            updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+            sceneIDs = try container.decode([UUID].self, forKey: .sceneIDs)
+            summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        }
     }
 
     private struct SceneRecord: Codable {
@@ -290,6 +316,7 @@ final class ProjectPersistence {
                 id: record.id,
                 title: record.title,
                 scenes: scenes,
+                summary: record.summary,
                 updatedAt: record.updatedAt
             )
         }
@@ -463,7 +490,8 @@ final class ProjectPersistence {
                 id: chapter.id,
                 title: chapter.title,
                 updatedAt: chapter.updatedAt,
-                sceneIDs: chapter.scenes.map(\.id)
+                sceneIDs: chapter.scenes.map(\.id),
+                summary: chapter.summary
             )
         }
 

@@ -34,6 +34,22 @@ enum PromptCategory: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum SummaryScope: String, Codable, CaseIterable, Identifiable {
+    case scene
+    case chapter
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .scene:
+            return "Scene"
+        case .chapter:
+            return "Chapter"
+        }
+    }
+}
+
 enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case localMock
     case openAICompatible
@@ -79,13 +95,38 @@ struct Chapter: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
     var scenes: [Scene]
+    var summary: String
     var updatedAt: Date
 
-    init(id: UUID = UUID(), title: String, scenes: [Scene] = [], updatedAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        title: String,
+        scenes: [Scene] = [],
+        summary: String = "",
+        updatedAt: Date = .now
+    ) {
         self.id = id
         self.title = title
         self.scenes = scenes
+        self.summary = summary
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case scenes
+        case summary
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        scenes = try container.decode([Scene].self, forKey: .scenes)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 }
 
