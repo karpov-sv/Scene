@@ -113,6 +113,11 @@ final class AppStore: ObservableObject {
         return project.prompts.filter { $0.category == .rewrite }
     }
 
+    var summaryPrompts: [PromptTemplate] {
+        guard isProjectOpen else { return [] }
+        return project.prompts.filter { $0.category == .summary }
+    }
+
     var workshopPrompts: [PromptTemplate] {
         guard isProjectOpen else { return [] }
         return project.prompts.filter { $0.category == .workshop }
@@ -173,6 +178,15 @@ final class AppStore: ObservableObject {
             return project.prompts[index]
         }
         return rewritePrompts.first
+    }
+
+    var activeSummaryPrompt: PromptTemplate? {
+        guard isProjectOpen else { return nil }
+        if let selectedID = project.selectedSummaryPromptID,
+           let index = promptIndex(for: selectedID) {
+            return project.prompts[index]
+        }
+        return summaryPrompts.first
     }
 
     var workshopInputHistory: [String] {
@@ -610,6 +624,18 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateSelectedSceneSummary(_ summary: String) {
+        guard let selectedSceneID,
+              let location = sceneLocation(for: selectedSceneID) else {
+            return
+        }
+
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].summary = summary
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+        project.chapters[location.chapterIndex].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
     // MARK: - Compendium
 
     func addCompendiumEntry(category: CompendiumCategory) {
@@ -759,6 +785,22 @@ final class AppStore: ObservableObject {
         }
 
         return normalizedRewrite
+    }
+
+    func summarizeSelectedScene() async throws -> String {
+        guard let scene = selectedScene else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        let request = makeSummaryRequest(scene: scene)
+        let rawSummary = try await generateText(request)
+        let normalizedSummary = rawSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSummary.isEmpty else {
+            throw AIServiceError.badResponse("Summary result was empty.")
+        }
+
+        updateSelectedSceneSummary(normalizedSummary)
+        return normalizedSummary
     }
 
     // MARK: - Workshop
@@ -1062,6 +1104,11 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func setSelectedSummaryPrompt(_ id: UUID?) {
+        project.selectedSummaryPromptID = id
+        saveProject(debounced: true)
+    }
+
     func setSelectedWorkshopPrompt(_ id: UUID?) {
         project.selectedWorkshopPromptID = id
         saveProject(debounced: true)
@@ -1086,10 +1133,10 @@ final class AppStore: ObservableObject {
             project.selectedProsePromptID = prompt.id
         case .rewrite:
             project.selectedRewritePromptID = prompt.id
+        case .summary:
+            project.selectedSummaryPromptID = prompt.id
         case .workshop:
             project.selectedWorkshopPromptID = prompt.id
-        case .summary:
-            break
         }
 
         saveProject()
@@ -1119,12 +1166,14 @@ final class AppStore: ObservableObject {
             if project.selectedRewritePromptID == promptID {
                 project.selectedRewritePromptID = prompts(in: .rewrite).first?.id
             }
+        case .summary:
+            if project.selectedSummaryPromptID == promptID {
+                project.selectedSummaryPromptID = prompts(in: .summary).first?.id
+            }
         case .workshop:
             if project.selectedWorkshopPromptID == promptID {
                 project.selectedWorkshopPromptID = prompts(in: .workshop).first?.id
             }
-        case .summary:
-            break
         }
 
         saveProject()
@@ -1338,6 +1387,32 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func makeSummaryRequest(scene: Scene) -> TextGenerationRequest {
+        let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
+        let sceneContext = String(scene.content.suffix(4500))
+        let compendiumContext = buildCompendiumContext(for: scene.id)
+
+        let userPrompt = expandPrompt(
+            template: prompt.userTemplate,
+            beat: "",
+            scene: sceneContext,
+            context: compendiumContext,
+            conversation: ""
+        )
+
+        let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? project.settings.defaultSystemPrompt
+            : prompt.systemTemplate
+
+        return TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: project.settings.model,
+            temperature: project.settings.temperature,
+            maxTokens: project.settings.maxTokens
+        )
+    }
+
     private func rememberBeatInputHistory(_ value: String) {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
@@ -1450,6 +1525,14 @@ final class AppStore: ObservableObject {
             project.prompts.append(rewritePrompt)
             if project.selectedRewritePromptID == nil {
                 project.selectedRewritePromptID = rewritePrompt.id
+            }
+        }
+
+        if !project.prompts.contains(where: { $0.category == .summary }) {
+            let summaryPrompt = defaultPromptTemplate(for: .summary)
+            project.prompts.append(summaryPrompt)
+            if project.selectedSummaryPromptID == nil {
+                project.selectedSummaryPromptID = summaryPrompt.id
             }
         }
 
@@ -1860,6 +1943,13 @@ final class AppStore: ObservableObject {
             project.selectedRewritePromptID = rewritePrompts.first?.id
         } else if project.selectedRewritePromptID == nil {
             project.selectedRewritePromptID = rewritePrompts.first?.id
+        }
+
+        if let selectedSummaryPromptID = project.selectedSummaryPromptID,
+           promptIndex(for: selectedSummaryPromptID) == nil {
+            project.selectedSummaryPromptID = summaryPrompts.first?.id
+        } else if project.selectedSummaryPromptID == nil {
+            project.selectedSummaryPromptID = summaryPrompts.first?.id
         }
 
         if let selectedWorkshopPromptID = project.selectedWorkshopPromptID,

@@ -162,6 +162,7 @@ final class ProjectPersistence {
         var updatedAt: Date
         var selectedProsePromptID: UUID?
         var selectedRewritePromptID: UUID?
+        var selectedSummaryPromptID: UUID?
         var selectedWorkshopSessionID: UUID?
         var selectedWorkshopPromptID: UUID?
         var sceneContextCompendiumSelection: [String: [UUID]]
@@ -185,6 +186,32 @@ final class ProjectPersistence {
         var title: String
         var updatedAt: Date
         var contentPath: String
+        var summary: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case title
+            case updatedAt
+            case contentPath
+            case summary
+        }
+
+        init(id: UUID, title: String, updatedAt: Date, contentPath: String, summary: String) {
+            self.id = id
+            self.title = title
+            self.updatedAt = updatedAt
+            self.contentPath = contentPath
+            self.summary = summary
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            title = try container.decode(String.self, forKey: .title)
+            updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+            contentPath = try container.decode(String.self, forKey: .contentPath)
+            summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        }
     }
 
     private struct CompendiumRecord: Codable {
@@ -246,6 +273,7 @@ final class ProjectPersistence {
                 title: record.title,
                 content: content,
                 contentRTFData: contentRTFData,
+                summary: record.summary,
                 updatedAt: record.updatedAt
             )
         }
@@ -324,6 +352,7 @@ final class ProjectPersistence {
             prompts: prompts,
             selectedProsePromptID: manifest.selectedProsePromptID,
             selectedRewritePromptID: manifest.selectedRewritePromptID,
+            selectedSummaryPromptID: manifest.selectedSummaryPromptID,
             workshopSessions: workshopSessions,
             selectedWorkshopSessionID: manifest.selectedWorkshopSessionID,
             selectedWorkshopPromptID: manifest.selectedWorkshopPromptID,
@@ -366,7 +395,8 @@ final class ProjectPersistence {
                         id: scene.id,
                         title: scene.title,
                         updatedAt: scene.updatedAt,
-                        contentPath: contentPath
+                        contentPath: contentPath,
+                        summary: scene.summary
                     )
                 )
             }
@@ -444,6 +474,7 @@ final class ProjectPersistence {
             updatedAt: project.updatedAt,
             selectedProsePromptID: project.selectedProsePromptID,
             selectedRewritePromptID: project.selectedRewritePromptID,
+            selectedSummaryPromptID: project.selectedSummaryPromptID,
             selectedWorkshopSessionID: project.selectedWorkshopSessionID,
             selectedWorkshopPromptID: project.selectedWorkshopPromptID,
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,

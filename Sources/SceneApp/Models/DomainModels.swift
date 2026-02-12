@@ -55,6 +55,7 @@ struct Scene: Codable, Identifiable, Equatable {
     var title: String
     var content: String
     var contentRTFData: Data?
+    var summary: String
     var updatedAt: Date
 
     init(
@@ -62,12 +63,14 @@ struct Scene: Codable, Identifiable, Equatable {
         title: String,
         content: String = "",
         contentRTFData: Data? = nil,
+        summary: String = "",
         updatedAt: Date = .now
     ) {
         self.id = id
         self.title = title
         self.content = content
         self.contentRTFData = contentRTFData
+        self.summary = summary
         self.updatedAt = updatedAt
     }
 }
@@ -293,6 +296,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var prompts: [PromptTemplate]
     var selectedProsePromptID: UUID?
     var selectedRewritePromptID: UUID?
+    var selectedSummaryPromptID: UUID?
     var workshopSessions: [WorkshopSession]
     var selectedWorkshopSessionID: UUID?
     var selectedWorkshopPromptID: UUID?
@@ -308,6 +312,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         prompts: [PromptTemplate],
         selectedProsePromptID: UUID?,
         selectedRewritePromptID: UUID?,
+        selectedSummaryPromptID: UUID?,
         workshopSessions: [WorkshopSession],
         selectedWorkshopSessionID: UUID?,
         selectedWorkshopPromptID: UUID?,
@@ -322,6 +327,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.prompts = prompts
         self.selectedProsePromptID = selectedProsePromptID
         self.selectedRewritePromptID = selectedRewritePromptID
+        self.selectedSummaryPromptID = selectedSummaryPromptID
         self.workshopSessions = workshopSessions
         self.selectedWorkshopSessionID = selectedWorkshopSessionID
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
@@ -338,6 +344,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case prompts
         case selectedProsePromptID
         case selectedRewritePromptID
+        case selectedSummaryPromptID
         case workshopSessions
         case selectedWorkshopSessionID
         case selectedWorkshopPromptID
@@ -356,6 +363,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         prompts = try container.decode([PromptTemplate].self, forKey: .prompts)
         selectedProsePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedProsePromptID)
         selectedRewritePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedRewritePromptID)
+        selectedSummaryPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedSummaryPromptID)
         workshopSessions = try container.decodeIfPresent([WorkshopSession].self, forKey: .workshopSessions) ?? []
         selectedWorkshopSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopSessionID)
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
@@ -406,6 +414,22 @@ struct StoryProject: Codable, Identifiable, Equatable {
             """,
             systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
         )
+        let defaultSummaryPrompt = PromptTemplate(
+            category: .summary,
+            title: "Summary",
+            userTemplate: """
+            Summarize this scene with focus on key events, intent, character motivation, and unresolved threads.
+
+            CURRENT SCENE:
+            {scene}
+
+            CONTEXT:
+            {context}
+
+            Return only the summary text.
+            """,
+            systemTemplate: "You summarize fiction drafts with accurate details and continuity awareness."
+        )
         let defaultWorkshopPrompt = PromptTemplate.defaultWorkshopTemplate
 
         let workshopSession = WorkshopSession(
@@ -423,9 +447,10 @@ struct StoryProject: Codable, Identifiable, Equatable {
             title: "Untitled Project",
             chapters: [firstChapter],
             compendium: compendium,
-            prompts: [defaultPrompt, defaultRewritePrompt, defaultWorkshopPrompt],
+            prompts: [defaultPrompt, defaultRewritePrompt, defaultSummaryPrompt, defaultWorkshopPrompt],
             selectedProsePromptID: defaultPrompt.id,
             selectedRewritePromptID: defaultRewritePrompt.id,
+            selectedSummaryPromptID: defaultSummaryPrompt.id,
             workshopSessions: [workshopSession],
             selectedWorkshopSessionID: workshopSession.id,
             selectedWorkshopPromptID: defaultWorkshopPrompt.id,

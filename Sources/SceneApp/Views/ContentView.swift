@@ -17,9 +17,15 @@ struct ContentView: View {
         }
     }
 
+    private enum WritingSidePanel {
+        case none
+        case compendium
+        case summary
+    }
+
     @EnvironmentObject private var store: AppStore
     @State private var selectedTab: WorkspaceTab = .writing
-    @State private var isCompendiumVisible: Bool = true
+    @State private var writingSidePanel: WritingSidePanel = .compendium
     @State private var isConversationsVisible: Bool = true
 
     private var hasErrorBinding: Binding<Bool> {
@@ -78,24 +84,60 @@ struct ContentView: View {
                 .frame(width: 260)
             }
 
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    toggleTrailingPanelVisibility()
-                } label: {
-                    Image(systemName: selectedTab == .writing ? "books.vertical" : "list.bullet")
+            if selectedTab == .writing {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        toggleCompendiumPanel()
+                    } label: {
+                        Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
+                    }
+                    .foregroundStyle(writingSidePanel == .compendium ? Color.accentColor : Color.primary)
+                    .help(compendiumToggleHelpText)
+
+                    Button {
+                        toggleSummaryPanel()
+                    } label: {
+                        Image(systemName: "text.alignleft")
+                    }
+                    .foregroundStyle(writingSidePanel == .summary ? Color.accentColor : Color.primary)
+                    .help(summaryToggleHelpText)
                 }
-                .help(toggleTrailingPanelHelpText)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        isConversationsVisible.toggle()
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .help(conversationsToggleHelpText)
+                }
             }
         }
     }
 
     private var workspacePanel: AnyView {
         if selectedTab == .writing {
-            if !isCompendiumVisible {
+            if writingSidePanel == .none {
                 return AnyView(
                     EditorView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 )
+            }
+
+            let sidePanel: AnyView
+            switch writingSidePanel {
+            case .compendium:
+                sidePanel = AnyView(
+                    CompendiumView()
+                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
+                )
+            case .summary:
+                sidePanel = AnyView(
+                    SceneSummaryPanelView()
+                        .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
+                )
+            case .none:
+                sidePanel = AnyView(EmptyView())
             }
 
             return AnyView(
@@ -103,8 +145,7 @@ struct ContentView: View {
                     EditorView()
                         .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
 
-                    CompendiumView()
-                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
+                    sidePanel
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             )
@@ -170,18 +211,23 @@ struct ContentView: View {
         }
     }
 
-    private var toggleTrailingPanelHelpText: String {
-        if selectedTab == .writing {
-            return isCompendiumVisible ? "Hide Compendium" : "Show Compendium"
-        }
-        return isConversationsVisible ? "Hide Conversations" : "Show Conversations"
+    private var compendiumToggleHelpText: String {
+        writingSidePanel == .compendium ? "Hide Compendium" : "Show Compendium"
     }
 
-    private func toggleTrailingPanelVisibility() {
-        if selectedTab == .writing {
-            isCompendiumVisible.toggle()
-        } else {
-            isConversationsVisible.toggle()
-        }
+    private var summaryToggleHelpText: String {
+        writingSidePanel == .summary ? "Hide Summary" : "Show Summary"
+    }
+
+    private var conversationsToggleHelpText: String {
+        isConversationsVisible ? "Hide Conversations" : "Show Conversations"
+    }
+
+    private func toggleCompendiumPanel() {
+        writingSidePanel = writingSidePanel == .compendium ? .none : .compendium
+    }
+
+    private func toggleSummaryPanel() {
+        writingSidePanel = writingSidePanel == .summary ? .none : .summary
     }
 }
