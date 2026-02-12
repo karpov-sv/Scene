@@ -37,6 +37,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var beatInputHistory: [String] = []
     @Published var isGenerating: Bool = false
     @Published var generationStatus: String = ""
+    @Published private(set) var proseLiveUsage: TokenUsage?
     @Published var lastError: String?
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
@@ -233,6 +234,10 @@ final class AppStore: ObservableObject {
             return workshopLiveUsage
         }
         return selectedWorkshopSession?.messages.reversed().compactMap(\.usage).first
+    }
+
+    var inlineProseUsage: TokenUsage? {
+        proseLiveUsage
     }
 
     func entries(in category: CompendiumCategory) -> [CompendiumEntry] {
@@ -715,6 +720,7 @@ final class AppStore: ObservableObject {
 
     func cancelBeatGeneration() {
         proseRequestTask?.cancel()
+        proseLiveUsage = nil
         generationStatus = "Cancelling..."
     }
 
@@ -1292,6 +1298,7 @@ final class AppStore: ObservableObject {
 
         isGenerating = true
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
+        proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
 
         defer {
             isGenerating = false
@@ -1305,16 +1312,18 @@ final class AppStore: ObservableObject {
                 guard let self, let base = generationBase else { return }
                 self.setGeneratedTextPreview(sceneID: scene.id, base: base, generated: partial)
                 self.generationStatus = "Streaming..."
+                self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
             }
         } else {
             generationPartialHandler = nil
         }
 
         do {
-            let text = try await generateText(
+            let result = try await generateTextResult(
                 request,
                 onPartial: generationPartialHandler
             )
+            let text = result.text
 
             if shouldUseStreaming, let base = generationBase {
                 let normalized = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -1323,13 +1332,16 @@ final class AppStore: ObservableObject {
                 appendGeneratedText(text)
             }
 
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: text)
             generationStatus = "Generated \(text.count) characters."
             beatInput = ""
             saveProject()
         } catch is CancellationError {
+            proseLiveUsage = nil
             generationStatus = "Generation cancelled."
             saveProject()
         } catch {
+            proseLiveUsage = nil
             lastError = error.localizedDescription
             generationStatus = "Generation failed."
         }
@@ -1446,6 +1458,7 @@ final class AppStore: ObservableObject {
         workshopStatus = ""
         isGenerating = false
         workshopIsGenerating = false
+        proseLiveUsage = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -1489,6 +1502,7 @@ final class AppStore: ObservableObject {
         workshopStatus = ""
         isGenerating = false
         workshopIsGenerating = false
+        proseLiveUsage = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false

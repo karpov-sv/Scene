@@ -836,7 +836,7 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.font = NSFont.preferredFont(forTextStyle: .body)
-        textView.textContainerInset = .zero
+        textView.textContainerInset = NSSize(width: 6, height: 6)
         textView.drawsBackground = true
         textView.backgroundColor = NSColor.textBackgroundColor
         textView.isVerticallyResizable = true
