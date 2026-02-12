@@ -213,6 +213,7 @@ struct EditorView: View {
             plainText: store.selectedScene?.content ?? "",
             richTextData: store.selectedScene?.contentRTFData,
             command: sceneEditorCommand,
+            shouldAutoScrollExternalUpdates: store.isGenerating,
             onSelectionChange: { selection in
                 editorSelection = selection
             }
@@ -445,6 +446,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let plainText: String
     let richTextData: Data?
     let command: SceneEditorCommand?
+    let shouldAutoScrollExternalUpdates: Bool
     let onSelectionChange: (SceneEditorSelection) -> Void
     let onChange: (String, Data?) -> Void
 
@@ -516,6 +518,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: sceneID,
             plainText: plainText,
             richTextData: richTextData,
+            shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
             force: true
         )
 
@@ -530,6 +533,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: sceneID,
             plainText: plainText,
             richTextData: richTextData,
+            shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
             force: false
         )
         context.coordinator.applyCommand(command, to: textView)
@@ -557,6 +561,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: UUID?,
             plainText: String,
             richTextData: Data?,
+            shouldAutoScrollExternalUpdates: Bool,
             force: Bool
         ) {
             if isApplyingProgrammaticChange {
@@ -575,7 +580,24 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 textView.textStorage?.setAttributedString(attributed)
                 textView.setSelectedRange(NSRange(location: attributed.length, length: 0))
             } else if textChanged {
-                applyExternalTextDelta(to: textView, newText: plainText)
+                let scrollView = textView.enclosingScrollView
+                let previousOrigin = scrollView?.contentView.bounds.origin
+                let wasAtBottom = scrollView.map(isAtBottom(_:)) ?? false
+                let shouldScrollToBottom = shouldAutoScrollExternalUpdates && wasAtBottom
+
+                applyExternalTextDelta(
+                    to: textView,
+                    newText: plainText,
+                    moveCaretToEnd: shouldScrollToBottom
+                )
+
+                if let scrollView {
+                    if shouldScrollToBottom {
+                        scrollToBottom(scrollView)
+                    } else if let previousOrigin {
+                        restoreScrollOrigin(scrollView, previousOrigin)
+                    }
+                }
             }
             isApplyingProgrammaticChange = false
             lastSceneID = sceneID
@@ -705,8 +727,13 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             textView.didChangeText()
         }
 
-        private func applyExternalTextDelta(to textView: NSTextView, newText: String) {
+        private func applyExternalTextDelta(
+            to textView: NSTextView,
+            newText: String,
+            moveCaretToEnd: Bool
+        ) {
             guard let textStorage = textView.textStorage else { return }
+            let previousSelection = clampedRangeForStorage(textView.selectedRange(), textView: textView)
 
             let currentString = textView.string as NSString
             let targetString = newText as NSString
@@ -754,9 +781,91 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             textStorage.replaceCharacters(in: replacedRange, with: replacementAttributedText)
             textStorage.endEditing()
 
-            let selectionLocation = replacedRange.location + replacementAttributedText.length
-            textView.setSelectedRange(NSRange(location: selectionLocation, length: 0))
+            if moveCaretToEnd {
+                let selectionLocation = replacedRange.location + replacementAttributedText.length
+                textView.setSelectedRange(NSRange(location: selectionLocation, length: 0))
+            } else {
+                let adjustedSelection = adjustedSelectionRange(
+                    previousSelection,
+                    replacedRange: replacedRange,
+                    replacementLength: replacementAttributedText.length,
+                    finalLength: textStorage.length
+                )
+                textView.setSelectedRange(adjustedSelection)
+            }
             textView.didChangeText()
+        }
+
+        private func adjustedSelectionRange(
+            _ originalSelection: NSRange,
+            replacedRange: NSRange,
+            replacementLength: Int,
+            finalLength: Int
+        ) -> NSRange {
+            let originalStart = originalSelection.location
+            let originalEnd = originalSelection.location + originalSelection.length
+            let replacedStart = replacedRange.location
+            let replacedEnd = replacedRange.location + replacedRange.length
+            let delta = replacementLength - replacedRange.length
+
+            func transformIndex(_ index: Int) -> Int {
+                if index <= replacedStart {
+                    return index
+                }
+                if index >= replacedEnd {
+                    return index + delta
+                }
+                return replacedStart + replacementLength
+            }
+
+            let transformedStart = transformIndex(originalStart)
+            let transformedEnd = transformIndex(originalEnd)
+
+            let clampedStart = max(0, min(transformedStart, finalLength))
+            let clampedEnd = max(clampedStart, min(transformedEnd, finalLength))
+            return NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+        }
+
+        private func isAtBottom(_ scrollView: NSScrollView) -> Bool {
+            if let textView = scrollView.documentView as? NSTextView,
+               let textContainer = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+
+            let clipView = scrollView.contentView
+            let visibleBottom = clipView.bounds.maxY
+            let contentBottom = scrollView.documentView?.bounds.maxY ?? visibleBottom
+            let tolerance: CGFloat = 20
+            return contentBottom - visibleBottom <= tolerance
+        }
+
+        private func scrollToBottom(_ scrollView: NSScrollView) {
+            if let textView = scrollView.documentView as? NSTextView,
+               let textContainer = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+
+            let clipView = scrollView.contentView
+            let contentHeight = scrollView.documentView?.bounds.height ?? clipView.bounds.height
+            let visibleHeight = clipView.bounds.height
+            let maxOffsetY = max(0, contentHeight - visibleHeight)
+            clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: maxOffsetY))
+            scrollView.reflectScrolledClipView(clipView)
+        }
+
+        private func restoreScrollOrigin(_ scrollView: NSScrollView, _ previousOrigin: NSPoint) {
+            if let textView = scrollView.documentView as? NSTextView,
+               let textContainer = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+
+            let clipView = scrollView.contentView
+            let contentHeight = scrollView.documentView?.bounds.height ?? clipView.bounds.height
+            let visibleHeight = clipView.bounds.height
+            let maxOffsetY = max(0, contentHeight - visibleHeight)
+            let clampedY = max(0, min(previousOrigin.y, maxOffsetY))
+            clipView.setBoundsOrigin(NSPoint(x: previousOrigin.x, y: clampedY))
+            scrollView.reflectScrolledClipView(clipView)
         }
 
         private func clampedRangeForStorage(_ range: NSRange, textView: NSTextView) -> NSRange {
