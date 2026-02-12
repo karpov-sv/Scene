@@ -51,17 +51,79 @@ enum SummaryScope: String, Codable, CaseIterable, Identifiable {
 }
 
 enum AIProvider: String, Codable, CaseIterable, Identifiable {
-    case localMock
+    case openAI
+    case anthropic
+    case openRouter
+    case lmStudio
     case openAICompatible
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .localMock:
-            return "Local Mock"
+        case .openAI:
+            return "OpenAI (ChatGPT)"
+        case .anthropic:
+            return "Anthropic (Claude)"
+        case .openRouter:
+            return "OpenRouter"
+        case .lmStudio:
+            return "LM Studio (Local)"
         case .openAICompatible:
-            return "OpenAI-Compatible API"
+            return "OpenAI-Compatible (Custom)"
+        }
+    }
+
+    var defaultEndpoint: String {
+        switch self {
+        case .openAI:
+            return GenerationSettings.openAIDefaultEndpoint
+        case .anthropic:
+            return GenerationSettings.anthropicDefaultEndpoint
+        case .openRouter:
+            return GenerationSettings.openRouterDefaultEndpoint
+        case .lmStudio, .openAICompatible:
+            return GenerationSettings.lmStudioDefaultEndpoint
+        }
+    }
+
+    var usesOpenAICompatibleAPI: Bool {
+        switch self {
+        case .anthropic:
+            return false
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
+            return true
+        }
+    }
+
+    var supportsModelDiscovery: Bool {
+        true
+    }
+
+    var supportsStreaming: Bool {
+        true
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+
+        if let provider = AIProvider(rawValue: raw) {
+            self = provider
+            return
+        }
+
+        // Migrate legacy values from previous builds.
+        switch raw {
+        case "localMock":
+            self = .lmStudio
+        case "openAICompatible":
+            self = .openAICompatible
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown AI provider value: \(raw)"
+            )
         }
     }
 }
@@ -266,6 +328,9 @@ struct GenerationSettings: Codable, Equatable {
     var requestTimeoutSeconds: Double
     var defaultSystemPrompt: String
 
+    static let openAIDefaultEndpoint = "https://api.openai.com/v1"
+    static let anthropicDefaultEndpoint = "https://api.anthropic.com"
+    static let openRouterDefaultEndpoint = "https://openrouter.ai/api/v1"
     static let lmStudioDefaultEndpoint = "http://localhost:1234/v1"
     static let ollamaDefaultEndpoint = "http://localhost:11434/v1"
 
@@ -311,19 +376,19 @@ struct GenerationSettings: Codable, Equatable {
         model = try container.decode(String.self, forKey: .model)
         temperature = try container.decode(Double.self, forKey: .temperature)
         maxTokens = try container.decode(Int.self, forKey: .maxTokens)
-        enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? false
+        enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? true
         requestTimeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .requestTimeoutSeconds) ?? 300
         defaultSystemPrompt = try container.decode(String.self, forKey: .defaultSystemPrompt)
     }
 
     static let `default` = GenerationSettings(
-        provider: .localMock,
-        endpoint: lmStudioDefaultEndpoint,
+        provider: .openAI,
+        endpoint: openAIDefaultEndpoint,
         apiKey: "",
         model: "gpt-4o-mini",
         temperature: 0.8,
         maxTokens: 700,
-        enableStreaming: false,
+        enableStreaming: true,
         requestTimeoutSeconds: 300,
         defaultSystemPrompt: "You are a fiction writing assistant. Keep continuity and return only the generated passage."
     )

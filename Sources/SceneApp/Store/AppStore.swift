@@ -47,8 +47,8 @@ final class AppStore: ObservableObject {
     @Published var showingSettings: Bool = false
 
     private let persistence: ProjectPersistence
-    private let mockService: LocalMockAIService
     private let openAIService: OpenAICompatibleAIService
+    private let anthropicService: AnthropicAIService
     private let isDocumentBacked: Bool
     private var documentChangeHandler: ((StoryProject) -> Void)?
 
@@ -59,12 +59,12 @@ final class AppStore: ObservableObject {
 
     init(
         persistence: ProjectPersistence = .shared,
-        mockService: LocalMockAIService = LocalMockAIService(),
-        openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService()
+        openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService(),
+        anthropicService: AnthropicAIService = AnthropicAIService()
     ) {
         self.persistence = persistence
-        self.mockService = mockService
         self.openAIService = openAIService
+        self.anthropicService = anthropicService
         self.isDocumentBacked = false
         self.documentChangeHandler = nil
 
@@ -87,12 +87,12 @@ final class AppStore: ObservableObject {
         documentProject: StoryProject,
         projectURL: URL?,
         persistence: ProjectPersistence = .shared,
-        mockService: LocalMockAIService = LocalMockAIService(),
-        openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService()
+        openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService(),
+        anthropicService: AnthropicAIService = AnthropicAIService()
     ) {
         self.persistence = persistence
-        self.mockService = mockService
         self.openAIService = openAIService
+        self.anthropicService = anthropicService
         self.isDocumentBacked = true
         self.documentChangeHandler = nil
         self.project = documentProject
@@ -107,7 +107,7 @@ final class AppStore: ObservableObject {
         selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
         ensureValidSelections()
 
-        if project.settings.provider == .openAICompatible {
+        if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         }
     }
@@ -484,7 +484,7 @@ final class AppStore: ObservableObject {
         ensureProjectBaseline()
         ensureValidSelections()
 
-        if project.settings.provider == .openAICompatible {
+        if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         } else {
             modelDiscoveryTask?.cancel()
@@ -582,14 +582,21 @@ final class AppStore: ObservableObject {
     }
 
     func updateProvider(_ provider: AIProvider) {
+        let previousProvider = project.settings.provider
         project.settings.provider = provider
-        if provider == .openAICompatible {
+
+        let endpoint = project.settings.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if endpoint.isEmpty || endpoint == previousProvider.defaultEndpoint {
+            project.settings.endpoint = provider.defaultEndpoint
+        }
+
+        if provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         } else {
             modelDiscoveryTask?.cancel()
             availableRemoteModels = []
             isDiscoveringModels = false
-            modelDiscoveryStatus = "Model discovery is available for OpenAI-compatible providers."
+            modelDiscoveryStatus = "Model discovery is unavailable for this provider."
         }
         saveProject(debounced: true)
     }
@@ -636,13 +643,6 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
-    func applyLMStudioEndpointPreset() {
-        project.settings.provider = .openAICompatible
-        project.settings.endpoint = GenerationSettings.lmStudioDefaultEndpoint
-        scheduleModelDiscovery(immediate: true)
-        saveProject(debounced: true)
-    }
-
     func refreshAvailableModels(force: Bool = false, showErrors: Bool = true) async {
         guard isProjectOpen else {
             availableRemoteModels = []
@@ -651,9 +651,9 @@ final class AppStore: ObservableObject {
             return
         }
 
-        guard project.settings.provider == .openAICompatible else {
+        guard project.settings.provider.supportsModelDiscovery else {
             availableRemoteModels = []
-            modelDiscoveryStatus = "Model discovery is available for OpenAI-compatible providers."
+            modelDiscoveryStatus = "Model discovery is unavailable for this provider."
             return
         }
 
@@ -676,7 +676,12 @@ final class AppStore: ObservableObject {
         }
 
         do {
-            let discovered = try await openAIService.fetchAvailableModels(settings: project.settings)
+            let discovered: [String]
+            if project.settings.provider == .anthropic {
+                discovered = try await anthropicService.fetchAvailableModels(settings: project.settings)
+            } else {
+                discovered = try await openAIService.fetchAvailableModels(settings: project.settings)
+            }
             availableRemoteModels = discovered
 
             if discovered.isEmpty {
@@ -1003,8 +1008,8 @@ final class AppStore: ObservableObject {
         let request = makeProseGenerationRequest(beat: beat, scene: scene)
 
         switch project.settings.provider {
-        case .openAICompatible:
-            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
+        case .anthropic:
+            let preview = try anthropicService.makeRequestPreview(request: request, settings: project.settings)
             return WorkshopPayloadPreview(
                 providerLabel: project.settings.provider.label,
                 endpointURL: preview.url,
@@ -1017,25 +1022,19 @@ final class AppStore: ObservableObject {
                     "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
                 ]
             )
-        case .localMock:
-            let dictionary: [String: Any] = [
-                "provider": project.settings.provider.label,
-                "request": [
-                    "systemPrompt": request.systemPrompt,
-                    "userPrompt": request.userPrompt,
-                    "model": request.model,
-                    "temperature": request.temperature,
-                    "maxTokens": request.maxTokens
-                ]
-            ]
-            let bodyJSON = (try? Self.prettyJSONString(fromJSONObject: dictionary)) ?? "{}"
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
+            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
             return WorkshopPayloadPreview(
                 providerLabel: project.settings.provider.label,
-                endpointURL: nil,
-                method: nil,
-                headers: [],
-                bodyJSON: bodyJSON,
-                notes: ["Local Mock provider is active. This request does not use network transport."]
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: [
+                    "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
+                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+                ]
             )
         }
     }
@@ -1142,8 +1141,8 @@ final class AppStore: ObservableObject {
         )
 
         switch project.settings.provider {
-        case .openAICompatible:
-            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
+        case .anthropic:
+            let preview = try anthropicService.makeRequestPreview(request: request, settings: project.settings)
             return WorkshopPayloadPreview(
                 providerLabel: project.settings.provider.label,
                 endpointURL: preview.url,
@@ -1155,25 +1154,18 @@ final class AppStore: ObservableObject {
                     "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
                 ]
             )
-        case .localMock:
-            let dictionary: [String: Any] = [
-                "provider": project.settings.provider.label,
-                "request": [
-                    "systemPrompt": request.systemPrompt,
-                    "userPrompt": request.userPrompt,
-                    "model": request.model,
-                    "temperature": request.temperature,
-                    "maxTokens": request.maxTokens
-                ]
-            ]
-            let bodyJSON = (try? Self.prettyJSONString(fromJSONObject: dictionary)) ?? "{}"
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
+            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
             return WorkshopPayloadPreview(
                 providerLabel: project.settings.provider.label,
-                endpointURL: nil,
-                method: nil,
-                headers: [],
-                bodyJSON: bodyJSON,
-                notes: ["Local Mock provider is active. This request does not use network transport."]
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: [
+                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+                ]
             )
         }
     }
@@ -1816,7 +1808,7 @@ final class AppStore: ObservableObject {
             NSDocumentController.shared.noteNewRecentDocumentURL(currentProjectURL)
         }
 
-        if project.settings.provider == .openAICompatible {
+        if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         }
     }
@@ -2069,7 +2061,7 @@ final class AppStore: ObservableObject {
     }
 
     private var shouldUseStreaming: Bool {
-        project.settings.provider == .openAICompatible && project.settings.enableStreaming
+        project.settings.provider.supportsStreaming && project.settings.enableStreaming
     }
 
     private func generateTextResult(
@@ -2077,10 +2069,13 @@ final class AppStore: ObservableObject {
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async throws -> TextGenerationResult {
         switch project.settings.provider {
-        case .localMock:
-            let text = try await mockService.generateText(request, settings: project.settings)
-            return TextGenerationResult(text: text, usage: nil)
-        case .openAICompatible:
+        case .anthropic:
+            return try await anthropicService.generateTextResult(
+                request,
+                settings: project.settings,
+                onPartial: onPartial
+            )
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
             return try await openAIService.generateTextResult(
                 request,
                 settings: project.settings,
@@ -2094,9 +2089,13 @@ final class AppStore: ObservableObject {
         onPartial: (@MainActor (String) -> Void)? = nil
     ) async throws -> String {
         switch project.settings.provider {
-        case .localMock:
-            return try await mockService.generateText(request, settings: project.settings)
-        case .openAICompatible:
+        case .anthropic:
+            return try await anthropicService.generateText(
+                request,
+                settings: project.settings,
+                onPartial: onPartial
+            )
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
             return try await openAIService.generateText(
                 request,
                 settings: project.settings,
@@ -2704,14 +2703,9 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private static func prettyJSONString(fromJSONObject jsonObject: Any) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted, .sortedKeys])
-        return String(data: data, encoding: .utf8) ?? "{}"
-    }
-
     private func scheduleModelDiscovery(immediate: Bool = false) {
         guard isProjectOpen else { return }
-        guard project.settings.provider == .openAICompatible else {
+        guard project.settings.provider.supportsModelDiscovery else {
             return
         }
 

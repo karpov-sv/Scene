@@ -199,20 +199,6 @@ struct SettingsSheetView: View {
 
                     TextField("Endpoint", text: endpointBinding)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(store.project.settings.provider != .openAICompatible)
-
-                    if store.project.settings.provider == .openAICompatible {
-                        HStack(spacing: 10) {
-                            Button("Use LM Studio Default") {
-                                store.applyLMStudioEndpointPreset()
-                            }
-
-                            Text("http://localhost:1234/v1")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    }
 
                     Stepper(value: requestTimeoutBinding, in: 30 ... 3600, step: 15) {
                         HStack {
@@ -223,16 +209,14 @@ struct SettingsSheetView: View {
                                 .monospacedDigit()
                         }
                     }
-                    .disabled(store.project.settings.provider != .openAICompatible)
 
                     SecureField("API Key", text: apiKeyBinding)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(store.project.settings.provider != .openAICompatible)
 
                     TextField("Model", text: modelBinding)
                         .textFieldStyle(.roundedBorder)
 
-                    if store.project.settings.provider == .openAICompatible {
+                    if store.project.settings.provider.supportsModelDiscovery {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 10) {
                                 if modelPickerOptions.isEmpty {
@@ -272,7 +256,6 @@ struct SettingsSheetView: View {
                     }
 
                     Toggle("Enable Streaming Responses", isOn: enableStreamingBinding)
-                        .disabled(store.project.settings.provider != .openAICompatible)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -320,7 +303,7 @@ struct SettingsSheetView: View {
             .padding(20)
         }
         .task {
-            if store.project.settings.provider == .openAICompatible,
+            if store.project.settings.provider.supportsModelDiscovery,
                store.availableRemoteModels.isEmpty,
                !store.isDiscoveringModels {
                 await store.refreshAvailableModels(showErrors: false)

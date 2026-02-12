@@ -120,13 +120,13 @@ Script options:
   - `compendium/*.md` (entry text)
   - `workshop/*.json` (chat messages)
 - The app restores the last opened project on restart.
-- Default provider is `Local Mock` (works without API keys).
-- To use a real model endpoint, open Settings and select `OpenAI-Compatible API`, then configure:
-  - LM Studio default endpoint: `http://localhost:1234/v1`
-  - endpoint URL
+- Supported providers: `OpenAI (ChatGPT)`, `Anthropic (Claude)`, `OpenRouter`, `LM Studio (Local)`, and `OpenAI-Compatible (Custom)`.
+- Configure provider settings in Project Settings:
+  - endpoint URL (auto-populated with provider default)
   - API key
   - model name
-  - streaming mode (optional)
+  - optional model discovery (`Refresh`)
+  - streaming mode
   - request timeout (default: 5 minutes)
 
 ## Scene Context Behavior
