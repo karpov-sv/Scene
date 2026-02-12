@@ -161,6 +161,7 @@ final class ProjectPersistence {
         var title: String
         var updatedAt: Date
         var selectedProsePromptID: UUID?
+        var selectedRewritePromptID: UUID?
         var selectedWorkshopSessionID: UUID?
         var selectedWorkshopPromptID: UUID?
         var sceneContextCompendiumSelection: [String: [UUID]]
@@ -322,6 +323,7 @@ final class ProjectPersistence {
             compendium: compendium,
             prompts: prompts,
             selectedProsePromptID: manifest.selectedProsePromptID,
+            selectedRewritePromptID: manifest.selectedRewritePromptID,
             workshopSessions: workshopSessions,
             selectedWorkshopSessionID: manifest.selectedWorkshopSessionID,
             selectedWorkshopPromptID: manifest.selectedWorkshopPromptID,
@@ -441,6 +443,7 @@ final class ProjectPersistence {
             title: project.title,
             updatedAt: project.updatedAt,
             selectedProsePromptID: project.selectedProsePromptID,
+            selectedRewritePromptID: project.selectedRewritePromptID,
             selectedWorkshopSessionID: project.selectedWorkshopSessionID,
             selectedWorkshopPromptID: project.selectedWorkshopPromptID,
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,

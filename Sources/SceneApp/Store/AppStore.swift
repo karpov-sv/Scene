@@ -108,6 +108,11 @@ final class AppStore: ObservableObject {
         return project.prompts.filter { $0.category == .prose }
     }
 
+    var rewritePrompts: [PromptTemplate] {
+        guard isProjectOpen else { return [] }
+        return project.prompts.filter { $0.category == .rewrite }
+    }
+
     var workshopPrompts: [PromptTemplate] {
         guard isProjectOpen else { return [] }
         return project.prompts.filter { $0.category == .workshop }
@@ -159,6 +164,15 @@ final class AppStore: ObservableObject {
             return project.prompts[index]
         }
         return workshopPrompts.first
+    }
+
+    var activeRewritePrompt: PromptTemplate? {
+        guard isProjectOpen else { return nil }
+        if let selectedID = project.selectedRewritePromptID,
+           let index = promptIndex(for: selectedID) {
+            return project.prompts[index]
+        }
+        return rewritePrompts.first
     }
 
     var workshopInputHistory: [String] {
@@ -728,6 +742,25 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func rewriteSelectedSceneText(_ selectedText: String) async throws -> String {
+        let normalizedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSelection.isEmpty else {
+            throw AIServiceError.badResponse("Select some scene text first.")
+        }
+        guard let scene = selectedScene else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        let request = makeRewriteRequest(selectedText: normalizedSelection, scene: scene)
+        let rewritten = try await generateText(request)
+        let normalizedRewrite = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedRewrite.isEmpty else {
+            throw AIServiceError.badResponse("Rewrite result was empty.")
+        }
+
+        return normalizedRewrite
+    }
+
     // MARK: - Workshop
 
     func applyWorkshopInputFromHistory(_ text: String) {
@@ -1024,6 +1057,11 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func setSelectedRewritePrompt(_ id: UUID?) {
+        project.selectedRewritePromptID = id
+        saveProject(debounced: true)
+    }
+
     func setSelectedWorkshopPrompt(_ id: UUID?) {
         project.selectedWorkshopPromptID = id
         saveProject(debounced: true)
@@ -1046,9 +1084,11 @@ final class AppStore: ObservableObject {
         switch category {
         case .prose:
             project.selectedProsePromptID = prompt.id
+        case .rewrite:
+            project.selectedRewritePromptID = prompt.id
         case .workshop:
             project.selectedWorkshopPromptID = prompt.id
-        case .rewrite, .summary:
+        case .summary:
             break
         }
 
@@ -1075,11 +1115,15 @@ final class AppStore: ObservableObject {
             if project.selectedProsePromptID == promptID {
                 project.selectedProsePromptID = prompts(in: .prose).first?.id
             }
+        case .rewrite:
+            if project.selectedRewritePromptID == promptID {
+                project.selectedRewritePromptID = prompts(in: .rewrite).first?.id
+            }
         case .workshop:
             if project.selectedWorkshopPromptID == promptID {
                 project.selectedWorkshopPromptID = prompts(in: .workshop).first?.id
             }
-        case .rewrite, .summary:
+        case .summary:
             break
         }
 
@@ -1134,7 +1178,10 @@ final class AppStore: ObservableObject {
                 category: .rewrite,
                 title: "Rewrite",
                 userTemplate: """
-                Rewrite the provided passage according to the requested direction.
+                Rewrite the selected passage according to the style and continuity of the scene.
+
+                SELECTED PASSAGE:
+                {beat}
 
                 CURRENT SCENE:
                 {scene}
@@ -1142,8 +1189,7 @@ final class AppStore: ObservableObject {
                 CONTEXT:
                 {context}
 
-                INSTRUCTION:
-                {beat}
+                Return only the rewritten passage.
                 """,
                 systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
             )
@@ -1266,6 +1312,32 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func makeRewriteRequest(selectedText: String, scene: Scene) -> TextGenerationRequest {
+        let prompt = activeRewritePrompt ?? defaultPromptTemplate(for: .rewrite)
+        let sceneContext = String(scene.content.suffix(4500))
+        let compendiumContext = buildCompendiumContext(for: scene.id)
+
+        let userPrompt = expandPrompt(
+            template: prompt.userTemplate,
+            beat: selectedText,
+            scene: sceneContext,
+            context: compendiumContext,
+            conversation: ""
+        )
+
+        let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? project.settings.defaultSystemPrompt
+            : prompt.systemTemplate
+
+        return TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: project.settings.model,
+            temperature: project.settings.temperature,
+            maxTokens: project.settings.maxTokens
+        )
+    }
+
     private func rememberBeatInputHistory(_ value: String) {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
@@ -1373,6 +1445,14 @@ final class AppStore: ObservableObject {
     }
 
     private func ensureProjectBaseline() {
+        if !project.prompts.contains(where: { $0.category == .rewrite }) {
+            let rewritePrompt = defaultPromptTemplate(for: .rewrite)
+            project.prompts.append(rewritePrompt)
+            if project.selectedRewritePromptID == nil {
+                project.selectedRewritePromptID = rewritePrompt.id
+            }
+        }
+
         if !project.prompts.contains(where: { $0.category == .workshop }) {
             let workshopPrompt = PromptTemplate.defaultWorkshopTemplate
             project.prompts.append(workshopPrompt)
@@ -1771,6 +1851,15 @@ final class AppStore: ObservableObject {
         if let selectedPromptID = project.selectedProsePromptID,
            promptIndex(for: selectedPromptID) == nil {
             project.selectedProsePromptID = prosePrompts.first?.id
+        } else if project.selectedProsePromptID == nil {
+            project.selectedProsePromptID = prosePrompts.first?.id
+        }
+
+        if let selectedRewritePromptID = project.selectedRewritePromptID,
+           promptIndex(for: selectedRewritePromptID) == nil {
+            project.selectedRewritePromptID = rewritePrompts.first?.id
+        } else if project.selectedRewritePromptID == nil {
+            project.selectedRewritePromptID = rewritePrompts.first?.id
         }
 
         if let selectedWorkshopPromptID = project.selectedWorkshopPromptID,

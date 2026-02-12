@@ -292,6 +292,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var compendium: [CompendiumEntry]
     var prompts: [PromptTemplate]
     var selectedProsePromptID: UUID?
+    var selectedRewritePromptID: UUID?
     var workshopSessions: [WorkshopSession]
     var selectedWorkshopSessionID: UUID?
     var selectedWorkshopPromptID: UUID?
@@ -306,6 +307,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         compendium: [CompendiumEntry],
         prompts: [PromptTemplate],
         selectedProsePromptID: UUID?,
+        selectedRewritePromptID: UUID?,
         workshopSessions: [WorkshopSession],
         selectedWorkshopSessionID: UUID?,
         selectedWorkshopPromptID: UUID?,
@@ -319,6 +321,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.compendium = compendium
         self.prompts = prompts
         self.selectedProsePromptID = selectedProsePromptID
+        self.selectedRewritePromptID = selectedRewritePromptID
         self.workshopSessions = workshopSessions
         self.selectedWorkshopSessionID = selectedWorkshopSessionID
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
@@ -334,6 +337,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case compendium
         case prompts
         case selectedProsePromptID
+        case selectedRewritePromptID
         case workshopSessions
         case selectedWorkshopSessionID
         case selectedWorkshopPromptID
@@ -351,6 +355,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         compendium = try container.decode([CompendiumEntry].self, forKey: .compendium)
         prompts = try container.decode([PromptTemplate].self, forKey: .prompts)
         selectedProsePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedProsePromptID)
+        selectedRewritePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedRewritePromptID)
         workshopSessions = try container.decodeIfPresent([WorkshopSession].self, forKey: .workshopSessions) ?? []
         selectedWorkshopSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopSessionID)
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
@@ -382,6 +387,25 @@ struct StoryProject: Codable, Identifiable, Equatable {
         ]
 
         let defaultPrompt = PromptTemplate.defaultProseTemplate
+        let defaultRewritePrompt = PromptTemplate(
+            category: .rewrite,
+            title: "Rewrite",
+            userTemplate: """
+            Rewrite the selected passage according to the style and continuity of the scene.
+
+            SELECTED PASSAGE:
+            {beat}
+
+            CURRENT SCENE:
+            {scene}
+
+            CONTEXT:
+            {context}
+
+            Return only the rewritten passage.
+            """,
+            systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
+        )
         let defaultWorkshopPrompt = PromptTemplate.defaultWorkshopTemplate
 
         let workshopSession = WorkshopSession(
@@ -399,8 +423,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
             title: "Untitled Project",
             chapters: [firstChapter],
             compendium: compendium,
-            prompts: [defaultPrompt, defaultWorkshopPrompt],
+            prompts: [defaultPrompt, defaultRewritePrompt, defaultWorkshopPrompt],
             selectedProsePromptID: defaultPrompt.id,
+            selectedRewritePromptID: defaultRewritePrompt.id,
             workshopSessions: [workshopSession],
             selectedWorkshopSessionID: workshopSession.id,
             selectedWorkshopPromptID: defaultWorkshopPrompt.id,

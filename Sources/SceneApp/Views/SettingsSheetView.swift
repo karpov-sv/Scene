@@ -479,11 +479,15 @@ struct SettingsSheetView: View {
             if store.project.selectedProsePromptID != prompt.id {
                 store.setSelectedProsePrompt(prompt.id)
             }
+        case .rewrite:
+            if store.project.selectedRewritePromptID != prompt.id {
+                store.setSelectedRewritePrompt(prompt.id)
+            }
         case .workshop:
             if store.project.selectedWorkshopPromptID != prompt.id {
                 store.setSelectedWorkshopPrompt(prompt.id)
             }
-        case .rewrite, .summary:
+        case .summary:
             break
         }
     }

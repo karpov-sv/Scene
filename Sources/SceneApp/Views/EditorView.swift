@@ -1,11 +1,37 @@
 import SwiftUI
 import AppKit
 
+private struct SceneEditorRange: Equatable {
+    let location: Int
+    let length: Int
+
+    init(range: NSRange) {
+        self.location = range.location
+        self.length = range.length
+    }
+
+    var nsRange: NSRange {
+        NSRange(location: location, length: length)
+    }
+}
+
+private struct SceneEditorSelection: Equatable {
+    var range: SceneEditorRange
+    var text: String
+
+    var hasSelection: Bool {
+        range.length > 0 && !text.isEmpty
+    }
+
+    static let empty = SceneEditorSelection(range: SceneEditorRange(range: NSRange(location: 0, length: 0)), text: "")
+}
+
 private struct SceneEditorCommand: Equatable {
     enum Action: Equatable {
         case toggleBoldface
         case toggleItalics
         case toggleUnderline
+        case replaceSelection(rewrittenText: String, targetRange: SceneEditorRange, emphasizeWithItalics: Bool)
     }
 
     let id: UUID = UUID()
@@ -17,6 +43,8 @@ struct EditorView: View {
     @State private var showingSceneContextSheet: Bool = false
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var sceneEditorCommand: SceneEditorCommand?
+    @State private var editorSelection: SceneEditorSelection = .empty
+    @State private var isRewritingSelection: Bool = false
 
     private let generationButtonWidth: CGFloat = 150
     private let generationButtonHeight: CGFloat = 30
@@ -58,6 +86,13 @@ struct EditorView: View {
         Binding(
             get: { store.project.selectedProsePromptID },
             set: { store.setSelectedProsePrompt($0) }
+        )
+    }
+
+    private var selectedRewritePromptBinding: Binding<UUID?> {
+        Binding(
+            get: { store.project.selectedRewritePromptID },
+            set: { store.setSelectedRewritePrompt($0) }
         )
     }
 
@@ -120,6 +155,40 @@ struct EditorView: View {
                 .controlSize(.small)
                 .help("Underline (Cmd+U)")
 
+                if editorSelection.hasSelection {
+                    Picker("Rewrite Prompt", selection: selectedRewritePromptBinding) {
+                        ForEach(store.rewritePrompts) { prompt in
+                            Text(prompt.title)
+                                .tag(Optional(prompt.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 220)
+                    .disabled(isRewritingSelection || store.rewritePrompts.isEmpty)
+
+                    Button {
+                        rewriteSelectedText()
+                    } label: {
+                        Group {
+                            if isRewritingSelection {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Rewriting")
+                                }
+                            } else {
+                                Label("Rewrite", systemImage: "text.redaction")
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(isRewritingSelection || !editorSelection.hasSelection || store.activeRewritePrompt == nil)
+                    .help("Rewrite the selected text using the selected rewrite prompt.")
+                }
+
                 Spacer(minLength: 0)
             }
         }
@@ -143,7 +212,10 @@ struct EditorView: View {
             sceneID: store.selectedScene?.id,
             plainText: store.selectedScene?.content ?? "",
             richTextData: store.selectedScene?.contentRTFData,
-            command: sceneEditorCommand
+            command: sceneEditorCommand,
+            onSelectionChange: { selection in
+                editorSelection = selection
+            }
         ) { plainText, richTextData in
             store.updateSelectedSceneContent(plainText, richTextData: richTextData)
         }
@@ -282,6 +354,35 @@ struct EditorView: View {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
     }
+
+    private func rewriteSelectedText() {
+        guard !isRewritingSelection else { return }
+        let selectionSnapshot = editorSelection
+        guard selectionSnapshot.hasSelection else { return }
+
+        isRewritingSelection = true
+
+        Task { @MainActor in
+            defer {
+                isRewritingSelection = false
+            }
+
+            do {
+                let rewritten = try await store.rewriteSelectedSceneText(selectionSnapshot.text)
+                sceneEditorCommand = SceneEditorCommand(
+                    action: .replaceSelection(
+                        rewrittenText: rewritten,
+                        targetRange: selectionSnapshot.range,
+                        emphasizeWithItalics: true
+                    )
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                store.lastError = error.localizedDescription
+            }
+        }
+    }
 }
 
 private struct SceneRichTextEditorView: NSViewRepresentable {
@@ -289,6 +390,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let plainText: String
     let richTextData: Data?
     let command: SceneEditorCommand?
+    let onSelectionChange: (SceneEditorSelection) -> Void
     let onChange: (String, Data?) -> Void
 
     private final class SceneEditorTextView: NSTextView {
@@ -379,17 +481,19 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onChange: onChange)
+        Coordinator(onSelectionChange: onSelectionChange, onChange: onChange)
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
+        private let onSelectionChange: (SceneEditorSelection) -> Void
         private let onChange: (String, Data?) -> Void
         private var isApplyingProgrammaticChange: Bool = false
         private var lastSceneID: UUID?
         private var lastHandledCommandID: UUID?
 
-        init(onChange: @escaping (String, Data?) -> Void) {
+        init(onSelectionChange: @escaping (SceneEditorSelection) -> Void, onChange: @escaping (String, Data?) -> Void) {
+            self.onSelectionChange = onSelectionChange
             self.onChange = onChange
         }
 
@@ -416,12 +520,20 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: attributed.length, length: 0))
             isApplyingProgrammaticChange = false
             lastSceneID = sceneID
+            publishSelection(from: textView)
         }
 
         func textDidChange(_ notification: Notification) {
             guard !isApplyingProgrammaticChange else { return }
             guard let textView = notification.object as? NSTextView else { return }
             publishChange(from: textView)
+            publishSelection(from: textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isApplyingProgrammaticChange else { return }
+            guard let textView = notification.object as? NSTextView else { return }
+            publishSelection(from: textView)
         }
 
         func applyCommand(_ command: SceneEditorCommand?, to textView: NSTextView) {
@@ -430,13 +542,25 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
 
             lastHandledCommandID = command.id
             textView.window?.makeFirstResponder(textView)
-            applyFormatting(command.action, to: textView)
+            switch command.action {
+            case .toggleBoldface, .toggleItalics, .toggleUnderline:
+                applyFormatting(command.action, to: textView)
+            case let .replaceSelection(rewrittenText, targetRange, emphasizeWithItalics):
+                replaceSelection(
+                    in: textView,
+                    targetRange: targetRange,
+                    with: rewrittenText,
+                    emphasizeWithItalics: emphasizeWithItalics
+                )
+            }
             publishChange(from: textView)
+            publishSelection(from: textView)
         }
 
         func applyFormattingShortcut(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
             applyFormatting(action, to: textView)
             publishChange(from: textView)
+            publishSelection(from: textView)
         }
 
         private func publishChange(from textView: NSTextView) {
@@ -449,6 +573,23 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             onChange(plainText, richTextData)
         }
 
+        private func publishSelection(from textView: NSTextView) {
+            let selectedRange = textView.selectedRange()
+            let clampedRange = clampedRangeForStorage(selectedRange, textView: textView)
+            guard clampedRange.length > 0 else {
+                onSelectionChange(.empty)
+                return
+            }
+
+            let selectedText = (textView.string as NSString).substring(with: clampedRange)
+            onSelectionChange(
+                SceneEditorSelection(
+                    range: SceneEditorRange(range: clampedRange),
+                    text: selectedText
+                )
+            )
+        }
+
         private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
             switch action {
             case .toggleBoldface:
@@ -457,7 +598,78 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 toggleFontTrait(.italicFontMask, in: textView)
             case .toggleUnderline:
                 toggleUnderline(in: textView)
+            case .replaceSelection:
+                break
             }
+        }
+
+        private func replaceSelection(
+            in textView: NSTextView,
+            targetRange: SceneEditorRange,
+            with rewrittenText: String,
+            emphasizeWithItalics: Bool
+        ) {
+            guard let textStorage = textView.textStorage else { return }
+
+            let normalizedText = rewrittenText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedText.isEmpty else { return }
+
+            var effectiveRange = clampedRangeForStorage(targetRange.nsRange, textView: textView)
+            if effectiveRange.length == 0 {
+                effectiveRange = clampedRangeForStorage(textView.selectedRange(), textView: textView)
+            }
+            guard effectiveRange.length > 0 else { return }
+
+            guard textView.shouldChangeText(in: effectiveRange, replacementString: normalizedText) else {
+                return
+            }
+
+            let baseFont = baseFontForReplacement(in: effectiveRange, textView: textView)
+            let replacementFont = emphasizeWithItalics
+                ? NSFontManager.shared.convert(baseFont, toHaveTrait: .italicFontMask)
+                : baseFont
+
+            var replacementAttributes = textView.typingAttributes
+            replacementAttributes[.font] = replacementFont
+
+            let replacementAttributedText = NSAttributedString(
+                string: normalizedText,
+                attributes: replacementAttributes
+            )
+
+            textStorage.beginEditing()
+            textStorage.replaceCharacters(in: effectiveRange, with: replacementAttributedText)
+            textStorage.endEditing()
+
+            let insertedRange = NSRange(location: effectiveRange.location, length: replacementAttributedText.length)
+            textView.setSelectedRange(insertedRange)
+            textView.didChangeText()
+        }
+
+        private func clampedRangeForStorage(_ range: NSRange, textView: NSTextView) -> NSRange {
+            if range.location == NSNotFound {
+                return NSRange(location: 0, length: 0)
+            }
+            let storageLength = textView.textStorage?.length ?? 0
+            let location = max(0, min(range.location, storageLength))
+            let maxLength = max(0, storageLength - location)
+            let length = max(0, min(range.length, maxLength))
+            return NSRange(location: location, length: length)
+        }
+
+        private func baseFontForReplacement(in range: NSRange, textView: NSTextView) -> NSFont {
+            let fallback = NSFont.preferredFont(forTextStyle: .body)
+
+            if range.length > 0,
+               let font = textView.textStorage?.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont {
+                return font
+            }
+
+            if let font = textView.typingAttributes[.font] as? NSFont {
+                return font
+            }
+
+            return textView.font ?? fallback
         }
 
         private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) {
