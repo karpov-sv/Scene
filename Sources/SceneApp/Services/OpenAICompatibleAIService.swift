@@ -18,12 +18,23 @@ struct OpenAICompatibleAIService: AIService {
         let content: String
     }
 
+    private struct StreamOptions: Codable {
+        let include_usage: Bool
+    }
+
     private struct ChatRequest: Codable {
         let model: String
         let messages: [ChatMessage]
         let temperature: Double
         let max_tokens: Int
         let stream: Bool
+        let stream_options: StreamOptions?
+    }
+
+    private struct ProviderUsage: Codable {
+        let prompt_tokens: Int?
+        let completion_tokens: Int?
+        let total_tokens: Int?
     }
 
     private struct ModelsResponse: Codable {
@@ -54,6 +65,7 @@ struct OpenAICompatibleAIService: AIService {
 
         let choices: [Choice]?
         let error: ProviderError?
+        let usage: ProviderUsage?
     }
 
     private struct ChatStreamChunk: Codable {
@@ -73,52 +85,18 @@ struct OpenAICompatibleAIService: AIService {
 
         let choices: [Choice]?
         let error: ProviderError?
+        let usage: ProviderUsage?
     }
 
     func generateText(_ request: TextGenerationRequest, settings: GenerationSettings) async throws -> String {
         try await generateText(request, settings: settings, onPartial: nil)
     }
 
-    func makeChatRequestPreview(request: TextGenerationRequest, settings: GenerationSettings) throws -> RequestPreview {
-        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIServiceError.missingModel
-        }
-
-        let endpoint = try makeChatCompletionsURL(from: settings.endpoint)
-        let shouldStream = settings.enableStreaming
-
-        let payload = ChatRequest(
-            model: request.model,
-            messages: [
-                ChatMessage(role: "system", content: request.systemPrompt),
-                ChatMessage(role: "user", content: request.userPrompt)
-            ],
-            temperature: request.temperature,
-            max_tokens: request.maxTokens,
-            stream: shouldStream
-        )
-
-        let bodyData = try prettyPrintedJSONData(payload)
-        let body = String(data: bodyData, encoding: .utf8) ?? "{}"
-
-        var headers = [RequestPreview.Header(name: "Content-Type", value: "application/json")]
-        if !settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            headers.append(RequestPreview.Header(name: "Authorization", value: "Bearer \(settings.apiKey)"))
-        }
-
-        return RequestPreview(
-            url: endpoint.absoluteString,
-            method: "POST",
-            headers: headers,
-            bodyJSON: body
-        )
-    }
-
-    func generateText(
+    func generateTextResult(
         _ request: TextGenerationRequest,
         settings: GenerationSettings,
         onPartial: (@MainActor (String) -> Void)?
-    ) async throws -> String {
+    ) async throws -> TextGenerationResult {
         guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AIServiceError.missingModel
         }
@@ -142,7 +120,8 @@ struct OpenAICompatibleAIService: AIService {
             ],
             temperature: request.temperature,
             max_tokens: request.maxTokens,
-            stream: shouldStream
+            stream: shouldStream,
+            stream_options: nil
         )
 
         urlRequest.httpBody = try JSONEncoder().encode(payload)
@@ -172,13 +151,65 @@ struct OpenAICompatibleAIService: AIService {
             throw AIServiceError.badResponse("No completion content in response")
         }
 
-        return content
+        return TextGenerationResult(
+            text: content,
+            usage: tokenUsage(from: decoded.usage)
+        )
+    }
+
+    func makeChatRequestPreview(request: TextGenerationRequest, settings: GenerationSettings) throws -> RequestPreview {
+        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIServiceError.missingModel
+        }
+
+        let endpoint = try makeChatCompletionsURL(from: settings.endpoint)
+        let shouldStream = settings.enableStreaming
+
+        let payload = ChatRequest(
+            model: request.model,
+            messages: [
+                ChatMessage(role: "system", content: request.systemPrompt),
+                ChatMessage(role: "user", content: request.userPrompt)
+            ],
+            temperature: request.temperature,
+            max_tokens: request.maxTokens,
+            stream: shouldStream,
+            stream_options: nil
+        )
+
+        let bodyData = try prettyPrintedJSONData(payload)
+        let body = String(data: bodyData, encoding: .utf8) ?? "{}"
+
+        var headers = [RequestPreview.Header(name: "Content-Type", value: "application/json")]
+        if !settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            headers.append(RequestPreview.Header(name: "Authorization", value: "Bearer \(settings.apiKey)"))
+        }
+
+        return RequestPreview(
+            url: endpoint.absoluteString,
+            method: "POST",
+            headers: headers,
+            bodyJSON: body
+        )
+    }
+
+    func generateText(
+        _ request: TextGenerationRequest,
+        settings: GenerationSettings,
+        onPartial: (@MainActor (String) -> Void)?
+    ) async throws -> String {
+        let result = try await generateTextResult(
+            request,
+            settings: settings,
+            onPartial: onPartial
+        )
+        return result.text
     }
 
     private func generateStreamingText(
         urlRequest: URLRequest,
         onPartial: (@MainActor (String) -> Void)?
-    ) async throws -> String {
+    ) async throws -> TextGenerationResult {
         let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
         guard let http = response as? HTTPURLResponse else {
             throw AIServiceError.badResponse("Missing HTTP response")
@@ -191,6 +222,7 @@ struct OpenAICompatibleAIService: AIService {
         }
 
         var accumulated = ""
+        var usage: TokenUsage?
 
         for try await rawLine in bytes.lines {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -213,6 +245,10 @@ struct OpenAICompatibleAIService: AIService {
                 throw AIServiceError.requestFailed(providerError)
             }
 
+            if let chunkUsage = tokenUsage(from: chunk.usage) {
+                usage = chunkUsage
+            }
+
             if let delta = chunk.choices?.first?.delta?.content, !delta.isEmpty {
                 accumulated += delta
                 if let onPartial {
@@ -225,7 +261,7 @@ struct OpenAICompatibleAIService: AIService {
         guard !final.isEmpty else {
             throw AIServiceError.badResponse("No completion content in response")
         }
-        return final
+        return TextGenerationResult(text: final, usage: usage)
     }
 
     func fetchAvailableModels(settings: GenerationSettings) async throws -> [String] {
@@ -348,5 +384,14 @@ struct OpenAICompatibleAIService: AIService {
         }
 
         return "HTTP \(statusCode)"
+    }
+
+    private func tokenUsage(from usage: ProviderUsage?) -> TokenUsage? {
+        guard let usage else { return nil }
+        return TokenUsage(
+            promptTokens: usage.prompt_tokens,
+            completionTokens: usage.completion_tokens,
+            totalTokens: usage.total_tokens
+        )
     }
 }

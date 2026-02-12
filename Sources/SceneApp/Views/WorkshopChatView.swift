@@ -20,11 +20,14 @@ struct WorkshopChatView: View {
     @State private var composerHeight: CGFloat = 0
     @State private var dragStartComposerHeight: CGFloat?
     @State private var dragStartPointerY: CGFloat?
+    @State private var shouldStickToBottom: Bool = true
     private let actionButtonWidth: CGFloat = 126
     private let actionButtonHeight: CGFloat = 30
     private let actionButtonSpacing: CGFloat = 8
     private let messagesMinimumHeight: CGFloat = 180
     private let composerResizeHandleHeight: CGFloat = 10
+    private let messagesBottomAnchorID = "workshop-messages-bottom-anchor"
+    private let autoScrollBottomTolerance: CGFloat = 20
 
     private var actionColumnContentHeight: CGFloat {
         (actionButtonHeight * 3) + (actionButtonSpacing * 2)
@@ -239,46 +242,192 @@ struct WorkshopChatView: View {
             TextField("Session name", text: selectedSessionNameBinding)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.weight(.semibold))
-
-            if !store.workshopStatus.isEmpty {
-                Text(store.workshopStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(12)
     }
 
     private var messagesList: some View {
-        List {
-            ForEach(store.selectedWorkshopSession?.messages ?? []) { message in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: message.role == .assistant ? "sparkles" : "person.fill")
-                            .foregroundStyle(.secondary)
-                        Text(message.role == .assistant ? "Assistant" : "You")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        let messages = store.selectedWorkshopSession?.messages ?? []
+
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    WorkshopMessagesScrollObserverView(tolerance: autoScrollBottomTolerance) { shouldStick in
+                        shouldStickToBottom = shouldStick
+                    }
+                    .frame(height: 0)
+
+                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Image(systemName: message.role == .assistant ? "sparkles" : "person.fill")
+                                    .foregroundStyle(.secondary)
+                                Text(message.role == .assistant ? "Assistant" : "You")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            WorkshopMessageText(message: message)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if index == messages.count - 1 {
+                                lastMessageControls
+                                    .padding(.top, 2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+
+                        Divider()
+                }
+
+                    if store.workshopIsGenerating {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Thinking...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Divider()
                     }
 
-                    WorkshopMessageText(message: message)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Color.clear
+                        .frame(height: 1)
+                        .id(messagesBottomAnchorID)
                 }
-                .padding(.vertical, 2)
-                .listRowSeparator(.visible)
             }
-
-            if store.workshopIsGenerating {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Thinking...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            .onAppear {
+                shouldStickToBottom = true
+                DispatchQueue.main.async {
+                    scrollMessagesToBottom(using: proxy, animated: false)
+                }
+            }
+            .onChange(of: store.selectedWorkshopSessionID) { _, _ in
+                shouldStickToBottom = true
+                DispatchQueue.main.async {
+                    scrollMessagesToBottom(using: proxy, animated: false)
+                }
+            }
+            .onChange(of: messagesAutoScrollToken(for: messages)) { _, _ in
+                let shouldKeepBottom = shouldStickToBottom
+                guard shouldKeepBottom else { return }
+                DispatchQueue.main.async {
+                    scrollMessagesToBottom(using: proxy, animated: false)
                 }
             }
         }
-        .listStyle(.plain)
+    }
+
+    private var lastMessageControls: some View {
+        HStack(spacing: 8) {
+            if let usage = store.inlineWorkshopUsage {
+                usageMetricsView(usage)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                store.retryLastWorkshopTurn()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help("Regenerate the latest user turn.")
+            .disabled(!store.canRetryLastWorkshopTurn)
+
+            Button {
+                store.deleteLastWorkshopAssistantMessage()
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help("Delete the latest assistant message.")
+            .disabled(!store.canDeleteLastWorkshopAssistantMessage)
+
+            Button {
+                store.deleteLastWorkshopUserTurn()
+            } label: {
+                Image(systemName: "trash.slash")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help("Delete the latest user message and any replies after it.")
+            .disabled(!store.canDeleteLastWorkshopUserTurn)
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func usageMetricsView(_ usage: TokenUsage) -> some View {
+        HStack(spacing: 8) {
+            if let promptTokens = usage.promptTokens {
+                usageMetric(
+                    icon: "text.quote",
+                    value: promptTokens,
+                    help: "Prompt tokens sent to the model."
+                )
+            }
+
+            if let completionTokens = usage.completionTokens {
+                usageMetric(
+                    icon: "sparkles",
+                    value: completionTokens,
+                    help: "Completion tokens generated by the model."
+                )
+            }
+
+            if let totalTokens = usage.totalTokens {
+                usageMetric(
+                    icon: "sum",
+                    value: totalTokens,
+                    help: "Total prompt + completion tokens."
+                )
+            }
+
+            if usage.isEstimated {
+                Image(systemName: "questionmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("Token counts are estimated because provider usage was unavailable.")
+            }
+        }
+    }
+
+    private func usageMetric(icon: String, value: Int, help: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text("\(value)")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+
+    private func messagesAutoScrollToken(for messages: [WorkshopMessage]) -> String {
+        let sessionID = store.selectedWorkshopSessionID?.uuidString ?? "none"
+        let lastID = messages.last?.id.uuidString ?? "none"
+        let lastLength = messages.last?.content.count ?? 0
+        let isGenerating = store.workshopIsGenerating ? 1 : 0
+        return "\(sessionID)|\(messages.count)|\(lastID)|\(lastLength)|\(isGenerating)"
+    }
+
+
+    private func scrollMessagesToBottom(using proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(messagesBottomAnchorID, anchor: .bottom)
+        }
+        if animated {
+            withAnimation(.easeOut(duration: 0.18), action)
+        } else {
+            action()
+        }
     }
 
     private var composer: some View {
@@ -447,6 +596,109 @@ struct WorkshopChatView: View {
     private func clamp(_ value: CGFloat, min lowerBound: CGFloat, max upperBound: CGFloat) -> CGFloat {
         guard upperBound >= lowerBound else { return lowerBound }
         return Swift.min(upperBound, Swift.max(lowerBound, value))
+    }
+}
+
+private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
+    let tolerance: CGFloat
+    let onStickinessChanged: (Bool) -> Void
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var tolerance: CGFloat
+        var onStickinessChanged: (Bool) -> Void
+        private weak var observedScrollView: NSScrollView?
+        private var lastOriginY: CGFloat?
+        private var isDetachedFromBottom: Bool = false
+
+        init(tolerance: CGFloat, onStickinessChanged: @escaping (Bool) -> Void) {
+            self.tolerance = tolerance
+            self.onStickinessChanged = onStickinessChanged
+            super.init()
+        }
+
+        func attachIfNeeded(from view: NSView) {
+            guard let scrollView = view.enclosingScrollView else {
+                DispatchQueue.main.async { [weak view] in
+                    guard let view else { return }
+                    self.attachIfNeeded(from: view)
+                }
+                return
+            }
+            if observedScrollView === scrollView {
+                publishStickiness(for: scrollView)
+                return
+            }
+
+            detach()
+            observedScrollView = scrollView
+            lastOriginY = nil
+            isDetachedFromBottom = false
+
+            let clipView = scrollView.contentView
+            clipView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleBoundsDidChange(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: clipView
+            )
+
+            publishStickiness(for: scrollView)
+        }
+
+        func detach() {
+            NotificationCenter.default.removeObserver(self)
+            observedScrollView = nil
+            lastOriginY = nil
+            isDetachedFromBottom = false
+        }
+
+        @objc
+        private func handleBoundsDidChange(_ notification: Notification) {
+            guard let scrollView = observedScrollView else { return }
+            publishStickiness(for: scrollView)
+        }
+
+        private func publishStickiness(for scrollView: NSScrollView) {
+            let clipView = scrollView.contentView
+            let originY = clipView.bounds.origin.y
+
+            if let lastOriginY, originY < lastOriginY - 0.5 {
+                isDetachedFromBottom = true
+            }
+            lastOriginY = originY
+
+            let visibleBottom = clipView.bounds.maxY
+            let contentBottom = scrollView.documentView?.bounds.maxY ?? visibleBottom
+            let isAtBottom = contentBottom - visibleBottom <= tolerance
+
+            if isAtBottom {
+                isDetachedFromBottom = false
+            }
+
+            onStickinessChanged(!isDetachedFromBottom)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(tolerance: tolerance, onStickinessChanged: onStickinessChanged)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.attachIfNeeded(from: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.tolerance = tolerance
+        context.coordinator.onStickinessChanged = onStickinessChanged
+        DispatchQueue.main.async {
+            context.coordinator.attachIfNeeded(from: nsView)
+        }
     }
 }
 

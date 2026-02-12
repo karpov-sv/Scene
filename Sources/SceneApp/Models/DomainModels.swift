@@ -172,12 +172,20 @@ struct WorkshopMessage: Codable, Identifiable, Equatable {
     var role: WorkshopRole
     var content: String
     var createdAt: Date
+    var usage: TokenUsage?
 
-    init(id: UUID = UUID(), role: WorkshopRole, content: String, createdAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        role: WorkshopRole,
+        content: String,
+        createdAt: Date = .now,
+        usage: TokenUsage? = nil
+    ) {
         self.id = id
         self.role = role
         self.content = content
         self.createdAt = createdAt
+        self.usage = usage
     }
 }
 

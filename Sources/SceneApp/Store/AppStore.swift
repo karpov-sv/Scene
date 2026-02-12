@@ -31,6 +31,7 @@ final class AppStore: ObservableObject {
     @Published var workshopStatus: String = ""
     @Published var workshopUseSceneContext: Bool = true
     @Published var workshopUseCompendiumContext: Bool = true
+    @Published private(set) var workshopLiveUsage: TokenUsage?
 
     @Published var beatInput: String = ""
     @Published private(set) var beatInputHistory: [String] = []
@@ -179,6 +180,31 @@ final class AppStore: ObservableObject {
         }
 
         return output
+    }
+
+    var canRetryLastWorkshopTurn: Bool {
+        guard !workshopIsGenerating else { return false }
+        guard let session = selectedWorkshopSession else { return false }
+        return session.messages.lastIndex(where: { $0.role == .user }) != nil
+    }
+
+    var canDeleteLastWorkshopAssistantMessage: Bool {
+        guard !workshopIsGenerating else { return false }
+        guard let session = selectedWorkshopSession else { return false }
+        return session.messages.lastIndex(where: { $0.role == .assistant }) != nil
+    }
+
+    var canDeleteLastWorkshopUserTurn: Bool {
+        guard !workshopIsGenerating else { return false }
+        guard let session = selectedWorkshopSession else { return false }
+        return session.messages.lastIndex(where: { $0.role == .user }) != nil
+    }
+
+    var inlineWorkshopUsage: TokenUsage? {
+        if workshopIsGenerating {
+            return workshopLiveUsage
+        }
+        return selectedWorkshopSession?.messages.reversed().compactMap(\.usage).first
     }
 
     func entries(in category: CompendiumCategory) -> [CompendiumEntry] {
@@ -775,6 +801,72 @@ final class AppStore: ObservableObject {
         workshopStatus = "Cancelling..."
     }
 
+    func retryLastWorkshopTurn() {
+        guard !workshopIsGenerating else { return }
+        guard let sessionID = selectedWorkshopSessionID,
+              let sessionIndex = workshopSessionIndex(for: sessionID) else {
+            workshopStatus = "Select a chat session first."
+            return
+        }
+
+        let messages = project.workshopSessions[sessionIndex].messages
+        guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }) else {
+            workshopStatus = "No user message to retry."
+            return
+        }
+
+        let userText = messages[lastUserIndex].content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userText.isEmpty else {
+            workshopStatus = "Last user message is empty."
+            return
+        }
+
+        project.workshopSessions[sessionIndex].messages.removeSubrange(lastUserIndex..<messages.endIndex)
+        project.workshopSessions[sessionIndex].updatedAt = .now
+
+        workshopInput = userText
+        workshopStatus = "Retrying last prompt..."
+        saveProject()
+        submitWorkshopMessage()
+    }
+
+    func deleteLastWorkshopAssistantMessage() {
+        guard !workshopIsGenerating else { return }
+        guard let sessionID = selectedWorkshopSessionID,
+              let sessionIndex = workshopSessionIndex(for: sessionID) else {
+            return
+        }
+
+        guard let assistantIndex = project.workshopSessions[sessionIndex].messages.lastIndex(where: { $0.role == .assistant }) else {
+            workshopStatus = "No assistant message to delete."
+            return
+        }
+
+        project.workshopSessions[sessionIndex].messages.remove(at: assistantIndex)
+        project.workshopSessions[sessionIndex].updatedAt = .now
+        workshopStatus = "Deleted last assistant message."
+        saveProject()
+    }
+
+    func deleteLastWorkshopUserTurn() {
+        guard !workshopIsGenerating else { return }
+        guard let sessionID = selectedWorkshopSessionID,
+              let sessionIndex = workshopSessionIndex(for: sessionID) else {
+            return
+        }
+
+        let messages = project.workshopSessions[sessionIndex].messages
+        guard let userIndex = messages.lastIndex(where: { $0.role == .user }) else {
+            workshopStatus = "No user message to delete."
+            return
+        }
+
+        project.workshopSessions[sessionIndex].messages.removeSubrange(userIndex..<messages.endIndex)
+        project.workshopSessions[sessionIndex].updatedAt = .now
+        workshopStatus = "Deleted last user turn."
+        saveProject()
+    }
+
     func createWorkshopSession() {
         let nextIndex = project.workshopSessions.count + 1
         let session = Self.makeInitialWorkshopSession(name: "Chat \(nextIndex)")
@@ -828,6 +920,7 @@ final class AppStore: ObservableObject {
         appendWorkshopMessage(.init(role: .user, content: userText), to: sessionID)
         workshopInput = ""
         workshopIsGenerating = true
+        workshopLiveUsage = nil
         workshopStatus = shouldUseStreaming ? "Streaming..." : "Thinking..."
 
         let prompt = buildWorkshopUserPrompt(sessionID: sessionID)
@@ -850,6 +943,7 @@ final class AppStore: ObservableObject {
 
         defer {
             workshopIsGenerating = false
+            workshopLiveUsage = nil
         }
 
         let workshopPartialHandler: (@MainActor (String) -> Void)?
@@ -857,21 +951,37 @@ final class AppStore: ObservableObject {
             workshopPartialHandler = { [weak self] partial in
                 guard let self, let messageID = streamingAssistantMessageID else { return }
                 self.updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: partial)
+                self.workshopLiveUsage = self.normalizedTokenUsage(
+                    from: nil,
+                    request: request,
+                    response: partial
+                )
             }
+            workshopLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
         } else {
             workshopPartialHandler = nil
         }
 
         do {
-            let response = try await generateText(
+            let result = try await generateTextResult(
                 request,
                 onPartial: workshopPartialHandler
+            )
+            let response = result.text
+            let usage = normalizedTokenUsage(
+                from: result.usage,
+                request: request,
+                response: response
             )
 
             if shouldUseStreaming, let messageID = streamingAssistantMessageID {
                 updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: response)
+                updateWorkshopMessageUsage(sessionID: sessionID, messageID: messageID, usage: usage)
             } else {
-                appendWorkshopMessage(.init(role: .assistant, content: response), to: sessionID)
+                appendWorkshopMessage(
+                    .init(role: .assistant, content: response, usage: usage),
+                    to: sessionID
+                )
             }
 
             workshopStatus = "Response generated."
@@ -1184,6 +1294,7 @@ final class AppStore: ObservableObject {
         workshopStatus = ""
         isGenerating = false
         workshopIsGenerating = false
+        workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
         modelDiscoveryStatus = ""
@@ -1226,6 +1337,7 @@ final class AppStore: ObservableObject {
         workshopStatus = ""
         isGenerating = false
         workshopIsGenerating = false
+        workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
         modelDiscoveryStatus = ""
@@ -1300,6 +1412,16 @@ final class AppStore: ObservableObject {
         project.workshopSessions[sessionIndex].updatedAt = .now
     }
 
+    private func updateWorkshopMessageUsage(sessionID: UUID, messageID: UUID, usage: TokenUsage?) {
+        guard let sessionIndex = workshopSessionIndex(for: sessionID),
+              let messageIndex = project.workshopSessions[sessionIndex].messages.firstIndex(where: { $0.id == messageID }) else {
+            return
+        }
+
+        project.workshopSessions[sessionIndex].messages[messageIndex].usage = usage
+        project.workshopSessions[sessionIndex].updatedAt = .now
+    }
+
     private func removeWorkshopMessageIfEmpty(sessionID: UUID, messageID: UUID) {
         guard let sessionIndex = workshopSessionIndex(for: sessionID),
               let messageIndex = project.workshopSessions[sessionIndex].messages.firstIndex(where: { $0.id == messageID }) else {
@@ -1312,6 +1434,45 @@ final class AppStore: ObservableObject {
             project.workshopSessions[sessionIndex].messages.remove(at: messageIndex)
             project.workshopSessions[sessionIndex].updatedAt = .now
         }
+    }
+
+    private func normalizedTokenUsage(
+        from providerUsage: TokenUsage?,
+        request: TextGenerationRequest,
+        response: String
+    ) -> TokenUsage {
+        let estimatedPromptTokens = estimateTokenCount(for: request.systemPrompt + "\n\n" + request.userPrompt)
+        let estimatedCompletionTokens = estimateTokenCount(for: response)
+        let estimatedTotalTokens = estimatedPromptTokens + estimatedCompletionTokens
+
+        guard let providerUsage else {
+            return TokenUsage(
+                promptTokens: estimatedPromptTokens,
+                completionTokens: estimatedCompletionTokens,
+                totalTokens: estimatedTotalTokens,
+                isEstimated: true
+            )
+        }
+
+        let promptTokens = providerUsage.promptTokens ?? estimatedPromptTokens
+        let completionTokens = providerUsage.completionTokens ?? estimatedCompletionTokens
+        let totalTokens = providerUsage.totalTokens ?? (promptTokens + completionTokens)
+
+        return TokenUsage(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: totalTokens,
+            isEstimated: providerUsage.isEstimated || providerUsage.promptTokens == nil || providerUsage.completionTokens == nil || providerUsage.totalTokens == nil
+        )
+    }
+
+    private func estimateTokenCount(for text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+
+        let characterBasedEstimate = Int(ceil(Double(trimmed.count) / 4.0))
+        let wordBasedEstimate = Int(ceil(Double(trimmed.split(whereSeparator: \.isWhitespace).count) * 1.3))
+        return max(1, max(characterBasedEstimate, wordBasedEstimate))
     }
 
     private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> String {
@@ -1372,6 +1533,23 @@ final class AppStore: ObservableObject {
 
     private var shouldUseStreaming: Bool {
         project.settings.provider == .openAICompatible && project.settings.enableStreaming
+    }
+
+    private func generateTextResult(
+        _ request: TextGenerationRequest,
+        onPartial: (@MainActor (String) -> Void)? = nil
+    ) async throws -> TextGenerationResult {
+        switch project.settings.provider {
+        case .localMock:
+            let text = try await mockService.generateText(request, settings: project.settings)
+            return TextGenerationResult(text: text, usage: nil)
+        case .openAICompatible:
+            return try await openAIService.generateTextResult(
+                request,
+                settings: project.settings,
+                onPartial: onPartial
+            )
+        }
     }
 
     private func generateText(

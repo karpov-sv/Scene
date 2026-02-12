@@ -1,5 +1,29 @@
 import Foundation
 
+struct TokenUsage: Codable, Equatable, Sendable {
+    var promptTokens: Int?
+    var completionTokens: Int?
+    var totalTokens: Int?
+    var isEstimated: Bool
+
+    init(
+        promptTokens: Int? = nil,
+        completionTokens: Int? = nil,
+        totalTokens: Int? = nil,
+        isEstimated: Bool = false
+    ) {
+        self.promptTokens = promptTokens
+        self.completionTokens = completionTokens
+        self.totalTokens = totalTokens
+        self.isEstimated = isEstimated
+    }
+}
+
+struct TextGenerationResult: Sendable {
+    var text: String
+    var usage: TokenUsage?
+}
+
 struct TextGenerationRequest: Sendable {
     var systemPrompt: String
     var userPrompt: String
