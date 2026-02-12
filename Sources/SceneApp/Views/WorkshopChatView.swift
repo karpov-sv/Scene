@@ -17,15 +17,11 @@ struct WorkshopChatView: View {
 
     @EnvironmentObject private var store: AppStore
     @State private var payloadPreview: AppStore.WorkshopPayloadPreview?
-    @State private var composerHeight: CGFloat = 0
-    @State private var dragStartComposerHeight: CGFloat?
-    @State private var dragStartPointerY: CGFloat?
     @State private var shouldStickToBottom: Bool = true
     private let actionButtonWidth: CGFloat = 126
     private let actionButtonHeight: CGFloat = 30
     private let actionButtonSpacing: CGFloat = 8
     private let messagesMinimumHeight: CGFloat = 180
-    private let composerResizeHandleHeight: CGFloat = 10
     private let messagesBottomAnchorID = "workshop-messages-bottom-anchor"
     private let autoScrollBottomTolerance: CGFloat = 20
 
@@ -218,23 +214,15 @@ struct WorkshopChatView: View {
     }
 
     private var chatSplit: some View {
-        GeometryReader { proxy in
-            let maxComposerHeight = maximumComposerHeight(in: proxy.size.height)
-            let activeComposerHeight = resolvedComposerHeight(maximum: maxComposerHeight)
+        VSplitView {
+            messagesList
+                .frame(minHeight: messagesMinimumHeight, maxHeight: .infinity)
+                .layoutPriority(1)
 
-            VStack(spacing: 0) {
-                messagesList
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                composerResizeHandle(
-                    currentHeight: activeComposerHeight,
-                    maximumHeight: maxComposerHeight
-                )
-
-                composer
-                    .frame(height: activeComposerHeight)
-            }
+            composer
+                .frame(minHeight: composerMinimumHeight, idealHeight: composerInitialHeight, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var header: some View {
@@ -554,50 +542,6 @@ struct WorkshopChatView: View {
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
     }
 
-    private func maximumComposerHeight(in totalHeight: CGFloat) -> CGFloat {
-        max(composerMinimumHeight, totalHeight - messagesMinimumHeight - composerResizeHandleHeight)
-    }
-
-    private func resolvedComposerHeight(maximum: CGFloat) -> CGFloat {
-        let value = composerHeight > 0 ? composerHeight : composerInitialHeight
-        return clamp(value, min: composerMinimumHeight, max: maximum)
-    }
-
-    private func composerResizeHandle(currentHeight: CGFloat, maximumHeight: CGFloat) -> some View {
-        ZStack {
-            Divider()
-
-            Capsule()
-                .fill(Color.secondary.opacity(0.25))
-                .frame(width: 44, height: 4)
-        }
-        .frame(height: composerResizeHandleHeight)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    if dragStartComposerHeight == nil {
-                        dragStartComposerHeight = currentHeight
-                        dragStartPointerY = value.startLocation.y
-                    }
-
-                    let baseHeight = dragStartComposerHeight ?? currentHeight
-                    let baseY = dragStartPointerY ?? value.startLocation.y
-                    let delta = baseY - value.location.y
-                    let proposed = baseHeight + delta
-                    composerHeight = clamp(proposed, min: composerMinimumHeight, max: maximumHeight)
-                }
-                .onEnded { _ in
-                    dragStartComposerHeight = nil
-                    dragStartPointerY = nil
-                }
-        )
-    }
-
-    private func clamp(_ value: CGFloat, min lowerBound: CGFloat, max upperBound: CGFloat) -> CGFloat {
-        guard upperBound >= lowerBound else { return lowerBound }
-        return Swift.min(upperBound, Swift.max(lowerBound, value))
-    }
 }
 
 private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {

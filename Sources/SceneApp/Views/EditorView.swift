@@ -16,15 +16,11 @@ struct EditorView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingSceneContextSheet: Bool = false
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
-    @State private var generationPanelHeight: CGFloat = 0
-    @State private var dragStartGenerationHeight: CGFloat?
-    @State private var dragStartPointerY: CGFloat?
     @State private var sceneEditorCommand: SceneEditorCommand?
 
     private let generationButtonWidth: CGFloat = 150
     private let generationButtonHeight: CGFloat = 30
     private let generationButtonSpacing: CGFloat = 8
-    private let generationResizeHandleHeight: CGFloat = 10
     private let sceneEditorMinimumHeight: CGFloat = 220
 
     private var generationActionColumnContentHeight: CGFloat {
@@ -131,23 +127,15 @@ struct EditorView: View {
     }
 
     private var writingSplit: some View {
-        GeometryReader { proxy in
-            let maxGenerationHeight = maximumGenerationHeight(in: proxy.size.height)
-            let activeGenerationHeight = resolvedGenerationHeight(maximum: maxGenerationHeight)
+        VSplitView {
+            sceneEditor
+                .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
+                .layoutPriority(1)
 
-            VStack(spacing: 0) {
-                sceneEditor
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                generationResizeHandle(
-                    currentHeight: activeGenerationHeight,
-                    maximumHeight: maxGenerationHeight
-                )
-
-                generationPanel
-                    .frame(height: activeGenerationHeight)
-            }
+            generationPanel
+                .frame(minHeight: generationPanelMinimumHeight, idealHeight: generationPanelInitialHeight, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sceneEditor: some View {
@@ -288,51 +276,6 @@ struct EditorView: View {
                 .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func maximumGenerationHeight(in totalHeight: CGFloat) -> CGFloat {
-        max(generationPanelMinimumHeight, totalHeight - sceneEditorMinimumHeight - generationResizeHandleHeight)
-    }
-
-    private func resolvedGenerationHeight(maximum: CGFloat) -> CGFloat {
-        let value = generationPanelHeight > 0 ? generationPanelHeight : generationPanelInitialHeight
-        return clamp(value, min: generationPanelMinimumHeight, max: maximum)
-    }
-
-    private func generationResizeHandle(currentHeight: CGFloat, maximumHeight: CGFloat) -> some View {
-        ZStack {
-            Divider()
-
-            Capsule()
-                .fill(Color.secondary.opacity(0.25))
-                .frame(width: 44, height: 4)
-        }
-        .frame(height: generationResizeHandleHeight)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    if dragStartGenerationHeight == nil {
-                        dragStartGenerationHeight = currentHeight
-                        dragStartPointerY = value.startLocation.y
-                    }
-
-                    let baseHeight = dragStartGenerationHeight ?? currentHeight
-                    let baseY = dragStartPointerY ?? value.startLocation.y
-                    let delta = baseY - value.location.y
-                    let proposed = baseHeight + delta
-                    generationPanelHeight = clamp(proposed, min: generationPanelMinimumHeight, max: maximumHeight)
-                }
-                .onEnded { _ in
-                    dragStartGenerationHeight = nil
-                    dragStartPointerY = nil
-                }
-        )
-    }
-
-    private func clamp(_ value: CGFloat, min lowerBound: CGFloat, max upperBound: CGFloat) -> CGFloat {
-        guard upperBound >= lowerBound else { return lowerBound }
-        return Swift.min(upperBound, Swift.max(lowerBound, value))
     }
 
     private func historyMenuTitle(_ value: String) -> String {
