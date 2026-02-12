@@ -166,6 +166,8 @@ final class ProjectPersistence {
         var selectedWorkshopSessionID: UUID?
         var selectedWorkshopPromptID: UUID?
         var sceneContextCompendiumSelection: [String: [UUID]]
+        var sceneContextSceneSummarySelection: [String: [UUID]]?
+        var sceneContextChapterSummarySelection: [String: [UUID]]?
         var settings: GenerationSettings
         var chapters: [ChapterRecord]
         var scenes: [SceneRecord]
@@ -384,6 +386,8 @@ final class ProjectPersistence {
             selectedWorkshopSessionID: manifest.selectedWorkshopSessionID,
             selectedWorkshopPromptID: manifest.selectedWorkshopPromptID,
             sceneContextCompendiumSelection: manifest.sceneContextCompendiumSelection,
+            sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
+            sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
             settings: manifest.settings,
             updatedAt: manifest.updatedAt
         )
@@ -506,6 +510,8 @@ final class ProjectPersistence {
             selectedWorkshopSessionID: project.selectedWorkshopSessionID,
             selectedWorkshopPromptID: project.selectedWorkshopPromptID,
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,
+            sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
+            sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,
             settings: project.settings,
             chapters: chapterRecords,
             scenes: sceneRecords,

@@ -72,7 +72,7 @@ struct EditorView: View {
     }
 
     private var selectedSceneContextCount: Int {
-        store.selectedSceneContextCompendiumIDs.count
+        store.selectedSceneContextTotalCount
     }
 
     private var sceneTitleBinding: Binding<String> {
@@ -1022,7 +1022,85 @@ private struct SceneContextSheet: View {
     @State private var searchQuery: String = ""
 
     private var selectedCount: Int {
+        store.selectedSceneContextTotalCount
+    }
+
+    private struct SceneSummaryOption: Identifiable {
+        let id: UUID
+        let chapterTitle: String
+        let sceneTitle: String
+        let summary: String
+    }
+
+    private struct ChapterSummaryOption: Identifiable {
+        let id: UUID
+        let chapterTitle: String
+        let summary: String
+    }
+
+    private var sceneSummaryOptions: [SceneSummaryOption] {
+        store.chapters.flatMap { chapter in
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return chapter.scenes.compactMap { scene -> SceneSummaryOption? in
+                let summary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !summary.isEmpty else { return nil }
+                let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Untitled Scene"
+                    : scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                return SceneSummaryOption(
+                    id: scene.id,
+                    chapterTitle: chapterTitle,
+                    sceneTitle: sceneTitle,
+                    summary: summary
+                )
+            }
+        }
+    }
+
+    private var chapterSummaryOptions: [ChapterSummaryOption] {
+        store.chapters.compactMap { chapter -> ChapterSummaryOption? in
+            let summary = chapter.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty else { return nil }
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return ChapterSummaryOption(
+                id: chapter.id,
+                chapterTitle: chapterTitle,
+                summary: summary
+            )
+        }
+    }
+
+    private var allCompendiumEntryIDs: [UUID] {
+        CompendiumCategory.allCases
+            .flatMap { store.entries(in: $0) }
+            .map(\.id)
+    }
+
+    private var allSceneContextIDs: [UUID] {
+        sceneSummaryOptions.map(\.id)
+    }
+
+    private var allChapterContextIDs: [UUID] {
+        chapterSummaryOptions.map(\.id)
+    }
+
+    private var selectedCompendiumCount: Int {
         store.selectedSceneContextCompendiumIDs.count
+    }
+
+    private var selectedSceneCount: Int {
+        store.selectedSceneContextSceneSummaryIDs.count + store.selectedSceneContextChapterSummaryIDs.count
+    }
+
+    private var totalSceneCount: Int {
+        allSceneContextIDs.count + allChapterContextIDs.count
     }
 
     var body: some View {
@@ -1040,7 +1118,7 @@ private struct SceneContextSheet: View {
 
                 if selectedCount > 0 {
                     Button("Clear") {
-                        store.clearCurrentSceneContextCompendiumSelection()
+                        store.clearCurrentSceneContextSelection()
                     }
                 }
 
@@ -1055,7 +1133,7 @@ private struct SceneContextSheet: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Search compendium entries", text: $searchQuery)
+                TextField("Search context entries", text: $searchQuery)
                     .textFieldStyle(.roundedBorder)
 
                 Text("\(selectedCount) entr\(selectedCount == 1 ? "y" : "ies") selected for this scene")
@@ -1063,6 +1141,94 @@ private struct SceneContextSheet: View {
                     .foregroundStyle(.secondary)
             }
             .padding(16)
+
+            Divider()
+
+            HSplitView {
+                compendiumColumn
+                    .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
+
+                scenesColumn
+                    .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(minWidth: 860, minHeight: 560)
+    }
+
+    private var sceneSubtitle: String {
+        if let scene = store.selectedScene {
+            let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = trimmed.isEmpty ? "Untitled Scene" : trimmed
+            return "Select context entries for \(title)"
+        }
+        return "Select context entries for the current scene"
+    }
+
+    private var hasVisibleCompendiumEntries: Bool {
+        CompendiumCategory.allCases.contains { !filteredEntries(for: $0).isEmpty }
+    }
+
+    private var hasVisibleSceneEntries: Bool {
+        !filteredSceneSummaryOptions().isEmpty || !filteredChapterSummaryOptions().isEmpty
+    }
+
+    private func filteredEntries(for category: CompendiumCategory) -> [CompendiumEntry] {
+        let entries = store.entries(in: category)
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return entries }
+
+        return entries.filter { entry in
+            entry.title.lowercased().contains(query) ||
+                entry.body.lowercased().contains(query) ||
+                entry.tags.joined(separator: " ").lowercased().contains(query)
+        }
+    }
+
+    private func filteredSceneSummaryOptions() -> [SceneSummaryOption] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return sceneSummaryOptions }
+
+        return sceneSummaryOptions.filter { option in
+            option.chapterTitle.lowercased().contains(query)
+                || option.sceneTitle.lowercased().contains(query)
+                || option.summary.lowercased().contains(query)
+        }
+    }
+
+    private func filteredChapterSummaryOptions() -> [ChapterSummaryOption] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return chapterSummaryOptions }
+
+        return chapterSummaryOptions.filter { option in
+            option.chapterTitle.lowercased().contains(query)
+                || option.summary.lowercased().contains(query)
+        }
+    }
+
+    private var compendiumColumn: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Compendium")
+                        .font(.headline)
+                    Text("\(selectedCompendiumCount) of \(allCompendiumEntryIDs.count) selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Select All") {
+                    store.setCompendiumContextIDsForCurrentScene(allCompendiumEntryIDs)
+                }
+                .disabled(allCompendiumEntryIDs.isEmpty)
+
+                Button("Unselect All") {
+                    store.setCompendiumContextIDsForCurrentScene([])
+                }
+                .disabled(selectedCompendiumCount == 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
 
             Divider()
 
@@ -1094,43 +1260,105 @@ private struct SceneContextSheet: View {
                         }
                     }
 
-                    if hasNoVisibleEntries {
+                    if !hasVisibleCompendiumEntries {
                         ContentUnavailableView(
-                            "No Matching Entries",
+                            "No Matching Compendium Entries",
                             systemImage: "books.vertical",
                             description: Text("No compendium entries match the current filter.")
                         )
                     }
                 }
-                .padding(16)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(minWidth: 720, minHeight: 560)
     }
 
-    private var sceneSubtitle: String {
-        if let scene = store.selectedScene {
-            let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let title = trimmed.isEmpty ? "Untitled Scene" : trimmed
-            return "Select context entries for \(title)"
-        }
-        return "Select context entries for the current scene"
-    }
+    private var scenesColumn: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scenes")
+                        .font(.headline)
+                    Text("\(selectedSceneCount) of \(totalSceneCount) selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Select All") {
+                    store.setSceneSummaryContextIDsForCurrentScene(allSceneContextIDs)
+                    store.setChapterSummaryContextIDsForCurrentScene(allChapterContextIDs)
+                }
+                .disabled(totalSceneCount == 0)
 
-    private var hasNoVisibleEntries: Bool {
-        CompendiumCategory.allCases.allSatisfy { filteredEntries(for: $0).isEmpty }
-    }
+                Button("Unselect All") {
+                    store.setSceneSummaryContextIDsForCurrentScene([])
+                    store.setChapterSummaryContextIDsForCurrentScene([])
+                }
+                .disabled(selectedSceneCount == 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
 
-    private func filteredEntries(for category: CompendiumCategory) -> [CompendiumEntry] {
-        let entries = store.entries(in: category)
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return entries }
+            Divider()
 
-        return entries.filter { entry in
-            entry.title.lowercased().contains(query) ||
-                entry.body.lowercased().contains(query) ||
-                entry.tags.joined(separator: " ").lowercased().contains(query)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    let visibleSceneSummaries = filteredSceneSummaryOptions()
+                    if !visibleSceneSummaries.isEmpty {
+                        GroupBox("Scene Summaries") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(visibleSceneSummaries) { option in
+                                    Toggle(isOn: isSceneSummarySelectedBinding(sceneID: option.id)) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("\(option.chapterTitle) / \(option.sceneTitle)")
+                                                .lineLimit(1)
+                                            Text(option.summary)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    .toggleStyle(.checkbox)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    let visibleChapterSummaries = filteredChapterSummaryOptions()
+                    if !visibleChapterSummaries.isEmpty {
+                        GroupBox("Chapter Summaries") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(visibleChapterSummaries) { option in
+                                    Toggle(isOn: isChapterSummarySelectedBinding(chapterID: option.id)) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(option.chapterTitle)
+                                                .lineLimit(1)
+                                            Text(option.summary)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    .toggleStyle(.checkbox)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if !hasVisibleSceneEntries {
+                        ContentUnavailableView(
+                            "No Matching Scene Entries",
+                            systemImage: "text.book.closed",
+                            description: Text("No scene or chapter summaries match the current filter.")
+                        )
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -1145,6 +1373,38 @@ private struct SceneContextSheet: View {
                     }
                 } else {
                     store.setCompendiumContextIDsForCurrentScene(current.filter { $0 != entryID })
+                }
+            }
+        )
+    }
+
+    private func isSceneSummarySelectedBinding(sceneID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { store.isSceneSummarySelectedForCurrentSceneContext(sceneID) },
+            set: { isSelected in
+                let current = store.selectedSceneContextSceneSummaryIDs
+                if isSelected {
+                    if !current.contains(sceneID) {
+                        store.setSceneSummaryContextIDsForCurrentScene(current + [sceneID])
+                    }
+                } else {
+                    store.setSceneSummaryContextIDsForCurrentScene(current.filter { $0 != sceneID })
+                }
+            }
+        )
+    }
+
+    private func isChapterSummarySelectedBinding(chapterID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { store.isChapterSummarySelectedForCurrentSceneContext(chapterID) },
+            set: { isSelected in
+                let current = store.selectedSceneContextChapterSummaryIDs
+                if isSelected {
+                    if !current.contains(chapterID) {
+                        store.setChapterSummaryContextIDsForCurrentScene(current + [chapterID])
+                    }
+                } else {
+                    store.setChapterSummaryContextIDsForCurrentScene(current.filter { $0 != chapterID })
                 }
             }
         )

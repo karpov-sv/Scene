@@ -116,7 +116,7 @@ Script options:
 - Projects are stored as folder bundles with `.sceneproj` extension.
 - Each project contains:
   - `manifest.json` (ordering, metadata, settings)
-  - `scenes/*.md` (scene text)
+  - `scenes/*.rtf` (scene text with optional rich text formatting)
   - `compendium/*.md` (entry text)
   - `workshop/*.json` (chat messages)
 - The app restores the last opened project on restart.
@@ -128,6 +128,27 @@ Script options:
   - model name
   - streaming mode (optional)
   - request timeout (default: 5 minutes)
+
+## Scene Context Behavior
+
+- Scene context selection is scene-local and persisted in project data.
+- Scene context can include three source types:
+  - compendium entries
+  - scene summaries
+  - chapter summaries
+- Context selection is used by prose generation, rewrite, summary generation, and workshop chat when context usage is enabled.
+- Context selection no longer applies hard caps on:
+  - number of selected entries
+  - per-entry context text length
+
+## Recent Changes
+
+- Added persistent scene-local context selection for scene summaries and chapter summaries.
+- Extended Scene Context sheet with searchable multi-source selection (compendium + scene summaries + chapter summaries).
+- Removed hardcoded compendium context truncation and count restrictions in Swift context construction.
+- Added chapter-level summary workflow (from scene summaries) alongside scene-level summaries.
+- Added streaming support, live token usage reporting, inline workshop message actions, and improved auto-scroll behavior in workshop chat.
+- Added rich text editor support in the writing panel (bold/italic/underline + keyboard shortcuts).
 
 ## Prompt Placeholders
 

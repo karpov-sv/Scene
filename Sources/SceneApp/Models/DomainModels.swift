@@ -342,6 +342,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var selectedWorkshopSessionID: UUID?
     var selectedWorkshopPromptID: UUID?
     var sceneContextCompendiumSelection: [String: [UUID]]
+    var sceneContextSceneSummarySelection: [String: [UUID]]
+    var sceneContextChapterSummarySelection: [String: [UUID]]
     var settings: GenerationSettings
     var updatedAt: Date
 
@@ -358,6 +360,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedWorkshopSessionID: UUID?,
         selectedWorkshopPromptID: UUID?,
         sceneContextCompendiumSelection: [String: [UUID]],
+        sceneContextSceneSummarySelection: [String: [UUID]],
+        sceneContextChapterSummarySelection: [String: [UUID]],
         settings: GenerationSettings,
         updatedAt: Date
     ) {
@@ -373,6 +377,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.selectedWorkshopSessionID = selectedWorkshopSessionID
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
         self.sceneContextCompendiumSelection = sceneContextCompendiumSelection
+        self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
+        self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
         self.settings = settings
         self.updatedAt = updatedAt
     }
@@ -390,6 +396,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case selectedWorkshopSessionID
         case selectedWorkshopPromptID
         case sceneContextCompendiumSelection
+        case sceneContextSceneSummarySelection
+        case sceneContextChapterSummarySelection
         case settings
         case updatedAt
     }
@@ -409,6 +417,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedWorkshopSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopSessionID)
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
         sceneContextCompendiumSelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextCompendiumSelection) ?? [:]
+        sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
+        sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
@@ -496,6 +506,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
             selectedWorkshopSessionID: workshopSession.id,
             selectedWorkshopPromptID: defaultWorkshopPrompt.id,
             sceneContextCompendiumSelection: [:],
+            sceneContextSceneSummarySelection: [:],
+            sceneContextChapterSummarySelection: [:],
             settings: .default,
             updatedAt: .now
         )

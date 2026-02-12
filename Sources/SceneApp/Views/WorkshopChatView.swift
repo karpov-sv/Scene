@@ -77,7 +77,7 @@ struct WorkshopChatView: View {
     }
 
     private var selectedCompendiumCount: Int {
-        store.selectedSceneContextCompendiumIDs.count
+        store.selectedSceneContextTotalCount
     }
 
     var body: some View {

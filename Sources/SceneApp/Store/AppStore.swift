@@ -263,6 +263,20 @@ final class AppStore: ObservableObject {
         compendiumEntries(forIDs: selectedSceneContextCompendiumIDs)
     }
 
+    var selectedSceneContextSceneSummaryIDs: [UUID] {
+        sceneSummaryContextIDs(for: selectedSceneID)
+    }
+
+    var selectedSceneContextChapterSummaryIDs: [UUID] {
+        chapterSummaryContextIDs(for: selectedSceneID)
+    }
+
+    var selectedSceneContextTotalCount: Int {
+        selectedSceneContextCompendiumIDs.count
+            + selectedSceneContextSceneSummaryIDs.count
+            + selectedSceneContextChapterSummaryIDs.count
+    }
+
     // MARK: - Project Lifecycle
 
     func createNewProject(at destinationURL: URL) throws {
@@ -332,12 +346,36 @@ final class AppStore: ObservableObject {
     }
 
     func clearCurrentSceneContextCompendiumSelection() {
+        clearCurrentSceneContextSelection()
+    }
+
+    func clearCurrentSceneContextSelection() {
         setCompendiumContextIDsForCurrentScene([])
+        setSceneSummaryContextIDsForCurrentScene([])
+        setChapterSummaryContextIDsForCurrentScene([])
     }
 
     func setCompendiumContextIDsForCurrentScene(_ entryIDs: [UUID]) {
         guard let selectedSceneID else { return }
         setCompendiumContextIDs(entryIDs, for: selectedSceneID)
+    }
+
+    func isSceneSummarySelectedForCurrentSceneContext(_ sceneID: UUID) -> Bool {
+        selectedSceneContextSceneSummaryIDs.contains(sceneID)
+    }
+
+    func setSceneSummaryContextIDsForCurrentScene(_ sceneIDs: [UUID]) {
+        guard let selectedSceneID else { return }
+        setSceneSummaryContextIDs(sceneIDs, for: selectedSceneID)
+    }
+
+    func isChapterSummarySelectedForCurrentSceneContext(_ chapterID: UUID) -> Bool {
+        selectedSceneContextChapterSummaryIDs.contains(chapterID)
+    }
+
+    func setChapterSummaryContextIDsForCurrentScene(_ chapterIDs: [UUID]) {
+        guard let selectedSceneID else { return }
+        setChapterSummaryContextIDs(chapterIDs, for: selectedSceneID)
     }
 
     func selectCompendiumEntry(_ entryID: UUID?) {
@@ -496,7 +534,19 @@ final class AppStore: ObservableObject {
     }
 
     func deleteChapter(_ chapterID: UUID) {
+        let removedSceneIDs = Set(
+            project.chapters
+                .first(where: { $0.id == chapterID })?
+                .scenes
+                .map(\.id) ?? []
+        )
+
         project.chapters.removeAll { $0.id == chapterID }
+        removeChapterSummaryFromSceneContextSelections(chapterID)
+        for sceneID in removedSceneIDs {
+            removeSceneSummaryFromSceneContextSelections(sceneID)
+            removeSceneContextSelection(for: sceneID)
+        }
 
         if project.chapters.isEmpty {
             let replacement = Chapter(title: "Chapter 1", scenes: [Scene(title: "Scene 1")])
@@ -564,6 +614,7 @@ final class AppStore: ObservableObject {
         for chapterIndex in project.chapters.indices {
             project.chapters[chapterIndex].scenes.removeAll { $0.id == sceneID }
         }
+        removeSceneSummaryFromSceneContextSelections(sceneID)
         removeSceneContextSelection(for: sceneID)
 
         if !project.chapters.contains(where: { !$0.scenes.isEmpty }) {
@@ -1857,18 +1908,38 @@ final class AppStore: ObservableObject {
     private func buildCompendiumContext(for sceneID: UUID?) -> String {
         let selectedEntryIDs = compendiumContextIDs(for: sceneID)
         let selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
-        return formattedCompendiumContext(entries: selectedEntries)
+        let selectedSceneSummaryIDs = sceneSummaryContextIDs(for: sceneID)
+        let selectedChapterSummaryIDs = chapterSummaryContextIDs(for: sceneID)
+        let selectedSceneSummaries = sceneSummaryEntries(forIDs: selectedSceneSummaryIDs)
+        let selectedChapterSummaries = chapterSummaryEntries(forIDs: selectedChapterSummaryIDs)
+        return formattedCompendiumContext(
+            compendiumEntries: selectedEntries,
+            sceneSummaries: selectedSceneSummaries,
+            chapterSummaries: selectedChapterSummaries
+        )
     }
 
-    private func formattedCompendiumContext(entries: [CompendiumEntry]) -> String {
-        let excerpt = entries.map { entry in
-            let body = String(entry.body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(220))
+    private func formattedCompendiumContext(
+        compendiumEntries: [CompendiumEntry],
+        sceneSummaries: [(chapterTitle: String, sceneTitle: String, summary: String)],
+        chapterSummaries: [(chapterTitle: String, summary: String)]
+    ) -> String {
+        var excerpt = compendiumEntries.map { entry in
+            let body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
             let tags = entry.tags.isEmpty ? "" : " [tags: \(entry.tags.joined(separator: ", "))]"
             return "- [\(entry.category.label)] \(entry.title)\(tags): \(body)"
         }
 
+        excerpt.append(contentsOf: sceneSummaries.map { item in
+            "- [Scene Summary] \(item.chapterTitle) / \(item.sceneTitle): \(item.summary)"
+        })
+
+        excerpt.append(contentsOf: chapterSummaries.map { item in
+            "- [Chapter Summary] \(item.chapterTitle): \(item.summary)"
+        })
+
         if excerpt.isEmpty {
-            return "No compendium context selected for this scene."
+            return "No scene context selected for this scene."
         }
 
         return excerpt.joined(separator: "\n")
@@ -1885,7 +1956,7 @@ final class AppStore: ObservableObject {
                 return "\(index + 1). \(title): [No scene summary yet]"
             }
 
-            return "\(index + 1). \(title): \(String(summary.prefix(900)))"
+            return "\(index + 1). \(title): \(summary)"
         }
 
         if excerpt.isEmpty {
@@ -1897,6 +1968,29 @@ final class AppStore: ObservableObject {
     private func compendiumContextIDs(for sceneID: UUID?) -> [UUID] {
         guard let sceneID else { return [] }
         return project.sceneContextCompendiumSelection[sceneID.uuidString] ?? []
+    }
+
+    private func sceneSummaryContextIDs(for sceneID: UUID?) -> [UUID] {
+        guard let sceneID else { return [] }
+        let selected = project.sceneContextSceneSummarySelection[sceneID.uuidString] ?? []
+        let available = Set(
+            project.chapters
+                .flatMap(\.scenes)
+                .filter { !$0.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map(\.id)
+        )
+        return selected.filter { available.contains($0) }
+    }
+
+    private func chapterSummaryContextIDs(for sceneID: UUID?) -> [UUID] {
+        guard let sceneID else { return [] }
+        let selected = project.sceneContextChapterSummarySelection[sceneID.uuidString] ?? []
+        let available = Set(
+            project.chapters
+                .filter { !$0.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map(\.id)
+        )
+        return selected.filter { available.contains($0) }
     }
 
     private func setCompendiumContextIDs(_ entryIDs: [UUID], for sceneID: UUID) {
@@ -1918,13 +2012,88 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    private func setSceneSummaryContextIDs(_ sceneIDs: [UUID], for sceneID: UUID) {
+        let validSceneIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
+        var deduplicated: [UUID] = []
+        var seen = Set<UUID>()
+        for candidateID in sceneIDs where validSceneIDs.contains(candidateID) {
+            if seen.insert(candidateID).inserted {
+                deduplicated.append(candidateID)
+            }
+        }
+
+        let key = sceneID.uuidString
+        if deduplicated.isEmpty {
+            project.sceneContextSceneSummarySelection.removeValue(forKey: key)
+        } else {
+            project.sceneContextSceneSummarySelection[key] = deduplicated
+        }
+        saveProject(debounced: true)
+    }
+
+    private func setChapterSummaryContextIDs(_ chapterIDs: [UUID], for sceneID: UUID) {
+        let validChapterIDs = Set(project.chapters.map(\.id))
+        var deduplicated: [UUID] = []
+        var seen = Set<UUID>()
+        for candidateID in chapterIDs where validChapterIDs.contains(candidateID) {
+            if seen.insert(candidateID).inserted {
+                deduplicated.append(candidateID)
+            }
+        }
+
+        let key = sceneID.uuidString
+        if deduplicated.isEmpty {
+            project.sceneContextChapterSummarySelection.removeValue(forKey: key)
+        } else {
+            project.sceneContextChapterSummarySelection[key] = deduplicated
+        }
+        saveProject(debounced: true)
+    }
+
     private func compendiumEntries(forIDs entryIDs: [UUID]) -> [CompendiumEntry] {
         let map = Dictionary(uniqueKeysWithValues: project.compendium.map { ($0.id, $0) })
         return entryIDs.compactMap { map[$0] }
     }
 
+    private func sceneSummaryEntries(forIDs sceneIDs: [UUID]) -> [(chapterTitle: String, sceneTitle: String, summary: String)] {
+        var map: [UUID: (chapterTitle: String, sceneTitle: String, summary: String)] = [:]
+
+        for chapter in project.chapters {
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            for scene in chapter.scenes {
+                let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Untitled Scene"
+                    : scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let summary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !summary.isEmpty else { continue }
+                map[scene.id] = (chapterTitle: chapterTitle, sceneTitle: sceneTitle, summary: summary)
+            }
+        }
+
+        return sceneIDs.compactMap { map[$0] }
+    }
+
+    private func chapterSummaryEntries(forIDs chapterIDs: [UUID]) -> [(chapterTitle: String, summary: String)] {
+        let map = Dictionary(uniqueKeysWithValues: project.chapters.map { chapter in
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (chapter.id, (chapterTitle: chapterTitle, summary: chapter.summary.trimmingCharacters(in: .whitespacesAndNewlines)))
+        })
+
+        return chapterIDs.compactMap { id in
+            guard let entry = map[id], !entry.summary.isEmpty else { return nil }
+            return entry
+        }
+    }
+
     private func removeSceneContextSelection(for sceneID: UUID) {
         project.sceneContextCompendiumSelection.removeValue(forKey: sceneID.uuidString)
+        project.sceneContextSceneSummarySelection.removeValue(forKey: sceneID.uuidString)
+        project.sceneContextChapterSummarySelection.removeValue(forKey: sceneID.uuidString)
     }
 
     private func removeCompendiumEntryFromSceneContextSelections(_ entryID: UUID) {
@@ -1940,6 +2109,32 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func removeSceneSummaryFromSceneContextSelections(_ sceneID: UUID) {
+        let keys = project.sceneContextSceneSummarySelection.keys
+        for key in keys {
+            guard var ids = project.sceneContextSceneSummarySelection[key] else { continue }
+            ids.removeAll { $0 == sceneID }
+            if ids.isEmpty {
+                project.sceneContextSceneSummarySelection.removeValue(forKey: key)
+            } else {
+                project.sceneContextSceneSummarySelection[key] = ids
+            }
+        }
+    }
+
+    private func removeChapterSummaryFromSceneContextSelections(_ chapterID: UUID) {
+        let keys = project.sceneContextChapterSummarySelection.keys
+        for key in keys {
+            guard var ids = project.sceneContextChapterSummarySelection[key] else { continue }
+            ids.removeAll { $0 == chapterID }
+            if ids.isEmpty {
+                project.sceneContextChapterSummarySelection.removeValue(forKey: key)
+            } else {
+                project.sceneContextChapterSummarySelection[key] = ids
+            }
+        }
+    }
+
     private func sanitizeSceneContextSelections() {
         let validSceneIDs = Set(
             project.chapters
@@ -1947,6 +2142,8 @@ final class AppStore: ObservableObject {
                 .map(\.id.uuidString)
         )
         let validEntryIDs = Set(project.compendium.map(\.id))
+        let validSceneSummaryIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
+        let validChapterSummaryIDs = Set(project.chapters.map(\.id))
 
         var sanitized: [String: [UUID]] = [:]
         for (sceneKey, ids) in project.sceneContextCompendiumSelection where validSceneIDs.contains(sceneKey) {
@@ -1962,6 +2159,36 @@ final class AppStore: ObservableObject {
             }
         }
         project.sceneContextCompendiumSelection = sanitized
+
+        var sanitizedSceneSummaries: [String: [UUID]] = [:]
+        for (sceneKey, ids) in project.sceneContextSceneSummarySelection where validSceneIDs.contains(sceneKey) {
+            var unique: [UUID] = []
+            var seen = Set<UUID>()
+            for id in ids where validSceneSummaryIDs.contains(id) {
+                if seen.insert(id).inserted {
+                    unique.append(id)
+                }
+            }
+            if !unique.isEmpty {
+                sanitizedSceneSummaries[sceneKey] = unique
+            }
+        }
+        project.sceneContextSceneSummarySelection = sanitizedSceneSummaries
+
+        var sanitizedChapterSummaries: [String: [UUID]] = [:]
+        for (sceneKey, ids) in project.sceneContextChapterSummarySelection where validSceneIDs.contains(sceneKey) {
+            var unique: [UUID] = []
+            var seen = Set<UUID>()
+            for id in ids where validChapterSummaryIDs.contains(id) {
+                if seen.insert(id).inserted {
+                    unique.append(id)
+                }
+            }
+            if !unique.isEmpty {
+                sanitizedChapterSummaries[sceneKey] = unique
+            }
+        }
+        project.sceneContextChapterSummarySelection = sanitizedChapterSummaries
     }
 
     private func expandPrompt(template: String, beat: String, scene: String, context: String, conversation: String) -> String {
