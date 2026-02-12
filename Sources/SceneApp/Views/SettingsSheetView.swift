@@ -137,12 +137,10 @@ struct SettingsSheetView: View {
                     }
                     .tag(SettingsTab.prompts)
             }
-            .padding(16)
+            .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .frame(width: 940, height: 720)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 900, idealWidth: 940, minHeight: 640, idealHeight: 720)
     }
 
     private var header: some View {
@@ -153,153 +151,174 @@ struct SettingsSheetView: View {
             Button("Done") {
                 dismiss()
             }
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var generalTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                GroupBox("Project") {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Project")
+                        .font(.headline)
+
                     TextField("Project title", text: projectTitleBinding)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                GroupBox("Storage") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Project file location")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(store.currentProjectPathDisplay)
-                            .font(.system(.footnote, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Storage")
+                        .font(.headline)
+
+                    Text("Project file location")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(store.currentProjectPathDisplay)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(4)
+            .padding(20)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var providerTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                GroupBox("Connection") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Picker("Provider", selection: providerBinding) {
-                            ForEach(AIProvider.allCases) { provider in
-                                Text(provider.label).tag(provider)
-                            }
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Connection")
+                        .font(.headline)
+
+                    Picker("Provider", selection: providerBinding) {
+                        ForEach(AIProvider.allCases) { provider in
+                            Text(provider.label).tag(provider)
                         }
-
-                        TextField("Endpoint", text: endpointBinding)
-                            .textFieldStyle(.roundedBorder)
-                            .disabled(store.project.settings.provider != .openAICompatible)
-
-                        if store.project.settings.provider == .openAICompatible {
-                            HStack(spacing: 10) {
-                                Button("Use LM Studio Default") {
-                                    store.applyLMStudioEndpointPreset()
-                                }
-
-                                Text("http://localhost:1234/v1")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-
-                        Stepper(value: requestTimeoutBinding, in: 30 ... 3600, step: 15) {
-                            HStack {
-                                Text("Request Timeout")
-                                Spacer(minLength: 0)
-                                Text(timeoutLabel(store.project.settings.requestTimeoutSeconds))
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                        }
-
-                        SecureField("API Key", text: apiKeyBinding)
-                            .textFieldStyle(.roundedBorder)
-                            .disabled(store.project.settings.provider != .openAICompatible)
-
-                        TextField("Model", text: modelBinding)
-                            .textFieldStyle(.roundedBorder)
-
-                        if store.project.settings.provider == .openAICompatible {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    if modelPickerOptions.isEmpty {
-                                        Text("No discovered models yet.")
-                                            .foregroundStyle(.secondary)
-                                    } else {
-                                        Picker("Discovered Models", selection: modelBinding) {
-                                            ForEach(modelPickerOptions, id: \.self) { modelID in
-                                                Text(modelID).tag(modelID)
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(minLength: 0)
-
-                                    Button {
-                                        Task {
-                                            await store.refreshAvailableModels(force: true, showErrors: true)
-                                        }
-                                    } label: {
-                                        if store.isDiscoveringModels {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                        } else {
-                                            Label("Refresh", systemImage: "arrow.clockwise")
-                                        }
-                                    }
-                                    .disabled(store.isDiscoveringModels)
-                                }
-
-                                if !store.modelDiscoveryStatus.isEmpty {
-                                    Text(store.modelDiscoveryStatus)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-
-                        Toggle("Enable Streaming Responses", isOn: enableStreamingBinding)
-                            .disabled(store.project.settings.provider != .openAICompatible)
                     }
-                }
 
-                GroupBox("Generation Parameters") {
-                    VStack(alignment: .leading, spacing: 10) {
+                    TextField("Endpoint", text: endpointBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(store.project.settings.provider != .openAICompatible)
+
+                    if store.project.settings.provider == .openAICompatible {
+                        HStack(spacing: 10) {
+                            Button("Use LM Studio Default") {
+                                store.applyLMStudioEndpointPreset()
+                            }
+
+                            Text("http://localhost:1234/v1")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    Stepper(value: requestTimeoutBinding, in: 30 ... 3600, step: 15) {
                         HStack {
-                            Text("Temperature")
-                            Slider(value: temperatureBinding, in: 0.1 ... 1.5, step: 0.1)
-                            Text(String(format: "%.1f", store.project.settings.temperature))
-                                .frame(width: 34)
+                            Text("Request Timeout")
+                            Spacer(minLength: 0)
+                            Text(timeoutLabel(store.project.settings.requestTimeoutSeconds))
+                                .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
+                    }
+                    .disabled(store.project.settings.provider != .openAICompatible)
 
-                        Stepper(value: maxTokensBinding, in: 100 ... 4000, step: 50) {
-                            Text("Max Tokens: \(store.project.settings.maxTokens)")
+                    SecureField("API Key", text: apiKeyBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(store.project.settings.provider != .openAICompatible)
+
+                    TextField("Model", text: modelBinding)
+                        .textFieldStyle(.roundedBorder)
+
+                    if store.project.settings.provider == .openAICompatible {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                if modelPickerOptions.isEmpty {
+                                    Text("No discovered models yet.")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Picker("Discovered Models", selection: modelBinding) {
+                                        ForEach(modelPickerOptions, id: \.self) { modelID in
+                                            Text(modelID).tag(modelID)
+                                        }
+                                    }
+                                }
+
+                                Spacer(minLength: 4)
+
+                                Button {
+                                    Task {
+                                        await store.refreshAvailableModels(force: true, showErrors: true)
+                                    }
+                                } label: {
+                                    if store.isDiscoveringModels {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Label("Refresh", systemImage: "arrow.clockwise")
+                                    }
+                                }
+                                .disabled(store.isDiscoveringModels)
+                            }
+
+                            if !store.modelDiscoveryStatus.isEmpty {
+                                Text(store.modelDiscoveryStatus)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    Toggle("Enable Streaming Responses", isOn: enableStreamingBinding)
+                        .disabled(store.project.settings.provider != .openAICompatible)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Generation Parameters")
+                        .font(.headline)
+
+                    LabeledContent("Temperature") {
+                        HStack(spacing: 8) {
+                            Slider(value: temperatureBinding, in: 0.1 ... 1.5, step: 0.1)
+                            Text(String(format: "%.1f", store.project.settings.temperature))
+                                .frame(width: 34, alignment: .trailing)
+                                .monospacedDigit()
+                        }
+                        .frame(minWidth: 260)
+                    }
+
+                    Stepper(value: maxTokensBinding, in: 100 ... 4000, step: 50) {
+                        HStack {
+                            Text("Max Tokens")
+                            Spacer(minLength: 0)
+                            Text("\(store.project.settings.maxTokens)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
                     }
                 }
 
-                GroupBox("Default System Prompt") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Default System Prompt")
+                        .font(.headline)
+
                     TextEditor(text: defaultSystemPromptBinding)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
                         .frame(minHeight: 160)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(4)
+            .padding(20)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .task {
             if store.project.settings.provider == .openAICompatible,
                store.availableRemoteModels.isEmpty,
@@ -351,7 +370,7 @@ struct SettingsSheetView: View {
 
                     Spacer(minLength: 0)
 
-                    Button(role: .destructive) {
+                    Button {
                         guard let selectedPromptID else { return }
                         let selectedCategory = activePromptForEditor?.category
                         guard store.deletePrompt(selectedPromptID) else { return }
@@ -377,7 +396,6 @@ struct SettingsSheetView: View {
                 .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             if selectedPromptID == nil {
                 selectedPromptID = store.project.selectedProsePromptID
@@ -395,41 +413,68 @@ struct SettingsSheetView: View {
     private var promptEditorDetail: some View {
         if let prompt = activePromptForEditor {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    GroupBox("Template Properties") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("\(promptCategoryName(for: prompt.category)) Template")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Template Properties")
+                            .font(.headline)
 
-                            TextField(
-                                "Prompt title",
-                                text: promptTitleBinding(prompt.id)
-                            )
-                            .textFieldStyle(.roundedBorder)
-                        }
+                        Text("\(promptCategoryName(for: prompt.category)) Template")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        TextField(
+                            "Prompt title",
+                            text: promptTitleBinding(prompt.id)
+                        )
+                        .textFieldStyle(.roundedBorder)
                     }
 
-                    GroupBox("User Template") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("User Template")
+                            .font(.headline)
+
                         TextEditor(text: promptUserTemplateBinding(prompt.id))
-                        .frame(minHeight: 220)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                            )
+                            .frame(minHeight: 220)
                     }
 
-                    GroupBox("System Template") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("System Template")
+                            .font(.headline)
+
                         TextEditor(text: promptSystemTemplateBinding(prompt.id))
-                        .frame(minHeight: 180)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                            )
+                            .frame(minHeight: 180)
                     }
 
                     Text("Template placeholders: \(placeholderHint(for: prompt.category))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(4)
+                .padding(20)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
         } else {
-            ContentUnavailableView("No Prompt Selected", systemImage: "text.badge.star", description: Text("Select a prompt template from the list."))
+            ContentUnavailableView(
+                "No Prompt Selected",
+                systemImage: "text.badge.star",
+                description: Text("Select a prompt template from the list.")
+            )
         }
     }
 
