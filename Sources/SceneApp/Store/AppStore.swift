@@ -630,15 +630,21 @@ final class AppStore: ObservableObject {
     }
 
     func updateSelectedSceneSummary(_ summary: String) {
-        guard let selectedSceneID,
-              let location = sceneLocation(for: selectedSceneID) else {
+        guard let selectedSceneID else {
+            return
+        }
+        updateSceneSummary(sceneID: selectedSceneID, summary: summary, debounced: true)
+    }
+
+    private func updateSceneSummary(sceneID: UUID, summary: String, debounced: Bool) {
+        guard let location = sceneLocation(for: sceneID) else {
             return
         }
 
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].summary = summary
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
-        saveProject(debounced: true)
+        saveProject(debounced: debounced)
     }
 
     // MARK: - Compendium
@@ -798,14 +804,27 @@ final class AppStore: ObservableObject {
             throw AIServiceError.badResponse("Select a scene first.")
         }
 
+        let sceneID = scene.id
         let request = makeSummaryRequest(scene: scene)
-        let rawSummary = try await generateText(request)
-        let normalizedSummary = rawSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateSceneSummary(sceneID: sceneID, summary: "", debounced: true)
+
+        let summaryPartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            summaryPartialHandler = { [weak self] partial in
+                guard let self else { return }
+                self.updateSceneSummary(sceneID: sceneID, summary: partial, debounced: true)
+            }
+        } else {
+            summaryPartialHandler = nil
+        }
+
+        let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
+        let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedSummary.isEmpty else {
             throw AIServiceError.badResponse("Summary result was empty.")
         }
 
-        updateSelectedSceneSummary(normalizedSummary)
+        updateSceneSummary(sceneID: sceneID, summary: normalizedSummary, debounced: false)
         return normalizedSummary
     }
 
