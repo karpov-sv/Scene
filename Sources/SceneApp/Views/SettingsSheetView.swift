@@ -7,6 +7,18 @@ struct SettingsSheetView: View {
         case prompts
     }
 
+    private struct PromptVariableItem: Identifiable {
+        let token: String
+        let meaning: String
+        let id: String
+
+        init(token: String, meaning: String) {
+            self.token = token
+            self.meaning = meaning
+            self.id = "\(token)|\(meaning)"
+        }
+    }
+
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .general
@@ -455,9 +467,7 @@ struct SettingsSheetView: View {
                             .frame(minHeight: 180)
                     }
 
-                    Text("Template placeholders: \(placeholderHint(for: prompt.category))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    promptVariableHelp(currentCategory: prompt.category)
                 }
                 .padding(20)
             }
@@ -564,12 +574,76 @@ struct SettingsSheetView: View {
         )
     }
 
-    private func placeholderHint(for category: PromptCategory) -> String {
+    @ViewBuilder
+    private func promptVariableHelp(currentCategory: PromptCategory) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Template Variable Help")
+                .font(.headline)
+
+            Text("Available placeholders by mode. If a value is unavailable in a mode, the placeholder resolves to an empty string.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(promptCategoryName(for: currentCategory)) mode")
+                    .font(.subheadline)
+
+                ForEach(variableHelpItems(for: currentCategory)) { item in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(item.token)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 120, alignment: .leading)
+                            .foregroundStyle(.secondary)
+
+                        Text(item.meaning)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+        }
+    }
+
+    private func variableHelpItems(for category: PromptCategory) -> [PromptVariableItem] {
         switch category {
+        case .prose:
+            return [
+                .init(token: "{beat}", meaning: "Text from the \"Generate from beat\" input."),
+                .init(token: "{scene}", meaning: "Current scene text (recent portion) for continuity."),
+                .init(token: "{context}", meaning: "Selected/mentioned scene context from compendium and summaries."),
+                .init(token: "{conversation}", meaning: "Empty in writing generation mode."),
+            ]
+        case .rewrite:
+            return [
+                .init(token: "{beat}", meaning: "Currently selected text in the editor (the text to rewrite/expand/shorten)."),
+                .init(token: "{scene}", meaning: "Current scene text (recent portion) for continuity."),
+                .init(token: "{context}", meaning: "Selected scene context from compendium and summaries."),
+                .init(token: "{conversation}", meaning: "Empty in rewrite mode."),
+            ]
+        case .summary:
+            return [
+                .init(token: "{scene}", meaning: "Source material being summarized: scene text (scene scope) or scene summaries list (chapter scope)."),
+                .init(token: "{context}", meaning: "Additional metadata/context: selected scene context (scene scope) or chapter metadata (chapter scope)."),
+                .init(token: "{beat}", meaning: "Empty in summary mode."),
+                .init(token: "{conversation}", meaning: "Empty in summary mode."),
+            ]
         case .workshop:
-            return "{scene}, {context}, {conversation}"
-        case .prose, .rewrite, .summary:
-            return "{beat}, {scene}, {context}"
+            return [
+                .init(token: "{scene}", meaning: "Current scene excerpt, if scene context is enabled."),
+                .init(token: "{context}", meaning: "Selected/mentioned compendium and summary context, if enabled."),
+                .init(token: "{conversation}", meaning: "Recent workshop chat transcript (user/assistant turns)."),
+                .init(token: "{beat}", meaning: "Empty in workshop mode."),
+            ]
         }
     }
 
