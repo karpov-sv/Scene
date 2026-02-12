@@ -88,7 +88,7 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var workspaceToolbar: some ToolbarContent {
         if store.isProjectOpen {
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(placement: .status) {
                 Picker("Workspace", selection: $selectedTab) {
                     ForEach(WorkspaceTab.allCases) { tab in
                         Text(tab.title).tag(tab)

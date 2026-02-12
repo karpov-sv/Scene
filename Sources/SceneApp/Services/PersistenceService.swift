@@ -26,9 +26,8 @@ enum ProjectPersistenceError: LocalizedError {
     }
 }
 
-@MainActor
 final class ProjectPersistence {
-    static let shared = ProjectPersistence()
+    nonisolated(unsafe) static let shared = ProjectPersistence()
 
     nonisolated static let projectDirectoryExtension = "sceneproj"
 
@@ -156,6 +155,20 @@ final class ProjectPersistence {
         userDefaults.removeObject(forKey: Self.lastOpenedProjectPathKey)
     }
 
+    func loadProject(from fileWrapper: FileWrapper) throws -> StoryProject {
+        try withTemporaryProjectDirectory(named: "Imported.sceneproj") { projectURL in
+            try fileWrapper.write(to: projectURL, options: .atomic, originalContentsURL: nil)
+            return try loadProject(at: projectURL)
+        }
+    }
+
+    func makeFileWrapper(for project: StoryProject) throws -> FileWrapper {
+        try withTemporaryProjectDirectory(named: "Exported.sceneproj") { projectURL in
+            _ = try saveProject(project, at: projectURL)
+            return try FileWrapper(url: projectURL, options: .immediate)
+        }
+    }
+
     // MARK: - File Layout
 
     private struct ProjectManifest: Codable {
@@ -273,6 +286,23 @@ final class ProjectPersistence {
         static let scenesFolder = "scenes"
         static let compendiumFolder = "compendium"
         static let workshopFolder = "workshop"
+    }
+
+    private func withTemporaryProjectDirectory<T>(
+        named name: String,
+        _ body: (URL) throws -> T
+    ) throws -> T {
+        let baseURL = fileManager.temporaryDirectory
+            .appendingPathComponent("SceneDoc-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: baseURL, withIntermediateDirectories: true)
+
+        let projectURL = baseURL.appendingPathComponent(name, isDirectory: true)
+
+        defer {
+            try? fileManager.removeItem(at: baseURL)
+        }
+
+        return try body(projectURL)
     }
 
     private func markAsPackage(_ projectURL: URL) throws {

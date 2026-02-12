@@ -48,6 +48,8 @@ final class AppStore: ObservableObject {
     private let persistence: ProjectPersistence
     private let mockService: LocalMockAIService
     private let openAIService: OpenAICompatibleAIService
+    private let isDocumentBacked: Bool
+    private var documentChangeHandler: ((StoryProject) -> Void)?
 
     private var autosaveTask: Task<Void, Never>?
     private var modelDiscoveryTask: Task<Void, Never>?
@@ -62,6 +64,8 @@ final class AppStore: ObservableObject {
         self.persistence = persistence
         self.mockService = mockService
         self.openAIService = openAIService
+        self.isDocumentBacked = false
+        self.documentChangeHandler = nil
 
         self.project = StoryProject.starter()
 
@@ -78,6 +82,35 @@ final class AppStore: ObservableObject {
         }
     }
 
+    init(
+        documentProject: StoryProject,
+        projectURL: URL?,
+        persistence: ProjectPersistence = .shared,
+        mockService: LocalMockAIService = LocalMockAIService(),
+        openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService()
+    ) {
+        self.persistence = persistence
+        self.mockService = mockService
+        self.openAIService = openAIService
+        self.isDocumentBacked = true
+        self.documentChangeHandler = nil
+        self.project = documentProject
+        self.currentProjectURL = projectURL?.standardizedFileURL
+        self.isProjectOpen = true
+
+        ensureProjectBaseline()
+
+        selectedChapterID = project.chapters.first?.id
+        selectedSceneID = project.chapters.first?.scenes.first?.id
+        selectedCompendiumID = project.compendium.first?.id
+        selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
+        ensureValidSelections()
+
+        if project.settings.provider == .openAICompatible {
+            scheduleModelDiscovery(immediate: true)
+        }
+    }
+
     deinit {
         autosaveTask?.cancel()
         modelDiscoveryTask?.cancel()
@@ -88,12 +121,16 @@ final class AppStore: ObservableObject {
     // MARK: - Read APIs
 
     var currentProjectPathDisplay: String {
-        currentProjectURL?.path ?? "No project open"
+        currentProjectURL?.path ?? "Unsaved project"
     }
 
     var currentProjectName: String {
-        guard let currentProjectURL else { return "No Project" }
-        return currentProjectURL.deletingPathExtension().lastPathComponent
+        if let currentProjectURL {
+            return currentProjectURL.deletingPathExtension().lastPathComponent
+        }
+
+        let trimmedTitle = project.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? "Untitled Project" : trimmedTitle
     }
 
     var chapters: [Chapter] {
@@ -414,6 +451,40 @@ final class AppStore: ObservableObject {
         let duplicatedURL = try persistence.duplicateProject(from: sourceURL, to: destinationURL)
         let duplicatedProject = try persistence.loadProject(at: duplicatedURL)
         applyLoadedProject(duplicatedProject, from: duplicatedURL, rememberAsLastOpened: true)
+    }
+
+    // MARK: - Document Sync
+
+    func bindToDocumentChanges(_ handler: @escaping (StoryProject) -> Void) {
+        guard isDocumentBacked else { return }
+        documentChangeHandler = handler
+    }
+
+    func synchronizeProjectToDocument() {
+        guard isDocumentBacked else { return }
+        documentChangeHandler?(project)
+    }
+
+    func updateProjectURL(_ projectURL: URL?) {
+        currentProjectURL = projectURL?.standardizedFileURL
+    }
+
+    func replaceProjectFromDocument(_ project: StoryProject) {
+        guard isDocumentBacked else { return }
+        autosaveTask?.cancel()
+
+        self.project = project
+        ensureProjectBaseline()
+        ensureValidSelections()
+
+        if project.settings.provider == .openAICompatible {
+            scheduleModelDiscovery(immediate: true)
+        } else {
+            modelDiscoveryTask?.cancel()
+            availableRemoteModels = []
+            isDiscoveringModels = false
+            modelDiscoveryStatus = ""
+        }
     }
 
     // MARK: - Selection
@@ -1774,7 +1845,15 @@ final class AppStore: ObservableObject {
     }
 
     private func persistOpenProjectIfNeeded() throws {
-        guard isProjectOpen, let currentProjectURL else { return }
+        guard isProjectOpen else { return }
+
+        if isDocumentBacked {
+            project.updatedAt = .now
+            documentChangeHandler?(project)
+            return
+        }
+
+        guard let currentProjectURL else { return }
 
         autosaveTask?.cancel()
         project.updatedAt = .now
@@ -2576,6 +2655,22 @@ final class AppStore: ObservableObject {
     private func saveProject(debounced: Bool = false) {
         guard isProjectOpen else { return }
         project.updatedAt = .now
+
+        if isDocumentBacked {
+            if debounced {
+                autosaveTask?.cancel()
+                autosaveTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    guard let self, !Task.isCancelled else { return }
+                    self.documentChangeHandler?(self.project)
+                }
+                return
+            }
+
+            autosaveTask?.cancel()
+            documentChangeHandler?(project)
+            return
+        }
 
         if debounced {
             autosaveTask?.cancel()
