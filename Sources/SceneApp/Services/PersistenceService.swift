@@ -91,6 +91,7 @@ final class ProjectPersistence {
         }
 
         try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        try markAsPackage(projectURL)
         try writeProject(project, at: projectURL)
         return projectURL
     }
@@ -113,6 +114,7 @@ final class ProjectPersistence {
             try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
         }
 
+        try markAsPackage(projectURL)
         try writeProject(project, at: projectURL)
         return projectURL
     }
@@ -127,6 +129,7 @@ final class ProjectPersistence {
         }
 
         try fileManager.copyItem(at: sourceProjectURL, to: destinationProjectURL)
+        try markAsPackage(destinationProjectURL)
         return destinationProjectURL
     }
 
@@ -270,6 +273,13 @@ final class ProjectPersistence {
         static let scenesFolder = "scenes"
         static let compendiumFolder = "compendium"
         static let workshopFolder = "workshop"
+    }
+
+    private func markAsPackage(_ projectURL: URL) throws {
+        var values = URLResourceValues()
+        values.isPackage = true
+        var mutableURL = projectURL
+        try mutableURL.setResourceValues(values)
     }
 
     // MARK: - Read

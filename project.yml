@@ -14,14 +14,14 @@ targets:
       - path: Sources/SceneApp
       - path: Resources
         optional: true
+        excludes:
+          - Info.plist
     settings:
       base:
         PRODUCT_NAME: SceneApp
         PRODUCT_BUNDLE_IDENTIFIER: com.karpov.SceneApp
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Scene
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Resources/Info.plist
 schemes:
   SceneApp:
     build:
