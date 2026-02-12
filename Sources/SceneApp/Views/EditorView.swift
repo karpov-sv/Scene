@@ -45,6 +45,10 @@ struct EditorView: View {
     @State private var sceneEditorCommand: SceneEditorCommand?
     @State private var editorSelection: SceneEditorSelection = .empty
     @State private var isRewritingSelection: Bool = false
+    @State private var beatMentionQuery: MentionAutocompleteQuery?
+    @State private var beatMentionSelectionIndex: Int = 0
+    @State private var beatMentionQueryIdentity: String = ""
+    @State private var beatMentionAnchor: CGPoint?
 
     private let generationButtonWidth: CGFloat = 150
     private let generationButtonHeight: CGFloat = 30
@@ -73,6 +77,11 @@ struct EditorView: View {
 
     private var selectedSceneContextCount: Int {
         store.selectedSceneContextTotalCount
+    }
+
+    private var beatMentionSuggestions: [MentionSuggestion] {
+        guard let beatMentionQuery else { return [] }
+        return store.mentionSuggestions(for: beatMentionQuery.trigger, query: beatMentionQuery.query)
     }
 
     private var sceneTitleBinding: Binding<String> {
@@ -282,10 +291,45 @@ struct EditorView: View {
             HStack(alignment: .top, spacing: 10) {
                 BeatInputTextView(
                     text: $store.beatInput,
-                    onSend: { store.submitBeatGeneration() }
+                    onSend: { store.submitBeatGeneration() },
+                    onMentionQueryChange: handleBeatMentionQueryChange,
+                    onMentionAnchorChange: handleBeatMentionAnchorChange,
+                    isMentionMenuVisible: !beatMentionSuggestions.isEmpty,
+                    onMentionMove: moveBeatMentionSelection,
+                    onMentionSelect: confirmBeatMentionSelection,
+                    onMentionDismiss: dismissBeatMentionSuggestions
                 )
-                    .padding(.leading, 8)
-                    .frame(minHeight: generationInputMinimumHeight, idealHeight: generationInputMinimumHeight, maxHeight: .infinity)
+                .frame(minHeight: generationInputMinimumHeight, idealHeight: generationInputMinimumHeight, maxHeight: .infinity)
+                .overlay(alignment: .topLeading) {
+                    GeometryReader { proxy in
+                        if !beatMentionSuggestions.isEmpty, let anchor = beatMentionAnchor {
+                            let menuWidth = min(420, max(220, proxy.size.width - 16))
+                            let maxX = max(8, proxy.size.width - menuWidth - 8)
+                            let x = min(max(8, anchor.x + 4), maxX)
+                            let belowY = anchor.y + 8
+                            let availableBelow = proxy.size.height - belowY - 8
+                            let availableAbove = anchor.y - 8
+                            let showBelow = availableBelow >= 80 || availableBelow >= availableAbove
+                            let availableHeight = max(60, showBelow ? availableBelow : availableAbove)
+                            let y = showBelow
+                                ? max(8, belowY)
+                                : max(8, anchor.y - availableHeight - 2)
+
+                            MentionAutocompleteListView(
+                                suggestions: beatMentionSuggestions,
+                                selectedIndex: beatMentionSelectionIndex,
+                                availableHeight: availableHeight,
+                                onHighlight: { beatMentionSelectionIndex = $0 },
+                                onSelect: applyBeatMentionSuggestion
+                            )
+                            .frame(width: menuWidth)
+                            .offset(x: x, y: y)
+                            .zIndex(10)
+                        }
+                    }
+                }
+                .padding(.leading, 8)
+                .frame(minHeight: generationInputMinimumHeight, idealHeight: generationInputMinimumHeight, maxHeight: .infinity, alignment: .top)
 
                 VStack(alignment: .trailing, spacing: generationButtonSpacing) {
                     Menu {
@@ -409,6 +453,61 @@ struct EditorView: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
         .help(help)
+    }
+
+    private func applyBeatMentionSuggestion(_ suggestion: MentionSuggestion) {
+        guard let beatMentionQuery else { return }
+        guard let updated = MentionParsing.replacingToken(
+            in: store.beatInput,
+            range: beatMentionQuery.tokenRange,
+            with: suggestion.insertion
+        ) else {
+            return
+        }
+        store.beatInput = updated
+        self.beatMentionQuery = nil
+        self.beatMentionAnchor = nil
+    }
+
+    private func moveBeatMentionSelection(_ delta: Int) {
+        guard !beatMentionSuggestions.isEmpty else { return }
+        let maxIndex = beatMentionSuggestions.count - 1
+        let next = beatMentionSelectionIndex + delta
+        beatMentionSelectionIndex = min(max(next, 0), maxIndex)
+    }
+
+    private func confirmBeatMentionSelection() -> Bool {
+        guard !beatMentionSuggestions.isEmpty else { return false }
+        let index = min(max(beatMentionSelectionIndex, 0), beatMentionSuggestions.count - 1)
+        applyBeatMentionSuggestion(beatMentionSuggestions[index])
+        return true
+    }
+
+    private func dismissBeatMentionSuggestions() {
+        beatMentionQuery = nil
+        beatMentionSelectionIndex = 0
+        beatMentionQueryIdentity = ""
+        beatMentionAnchor = nil
+    }
+
+    private func handleBeatMentionQueryChange(_ query: MentionAutocompleteQuery?) {
+        beatMentionQuery = query
+        let identity = query.map { mention in
+            "\(mention.trigger.rawValue)|\(mention.query)|\(mention.tokenRange.location)|\(mention.tokenRange.length)"
+        } ?? ""
+
+        if identity != beatMentionQueryIdentity {
+            beatMentionSelectionIndex = 0
+            beatMentionQueryIdentity = identity
+        }
+
+        if query == nil {
+            beatMentionAnchor = nil
+        }
+    }
+
+    private func handleBeatMentionAnchorChange(_ anchor: CGPoint?) {
+        beatMentionAnchor = anchor
     }
 
     private func rewriteSelectedText() {
@@ -1557,8 +1656,34 @@ private struct GenerationJSONSyntaxTextView: NSViewRepresentable {
 }
 
 private struct BeatInputTextView: NSViewRepresentable {
+    private final class MentionInputTextView: NSTextView {
+        var onKeyEvent: ((NSEvent) -> Bool)?
+        var onDidResignFirstResponder: (() -> Void)?
+
+        override func keyDown(with event: NSEvent) {
+            if onKeyEvent?(event) == true {
+                return
+            }
+            super.keyDown(with: event)
+        }
+
+        override func resignFirstResponder() -> Bool {
+            let didResign = super.resignFirstResponder()
+            if didResign {
+                onDidResignFirstResponder?()
+            }
+            return didResign
+        }
+    }
+
     @Binding var text: String
     var onSend: () -> Void
+    var onMentionQueryChange: (MentionAutocompleteQuery?) -> Void = { _ in }
+    var onMentionAnchorChange: (CGPoint?) -> Void = { _ in }
+    var isMentionMenuVisible: Bool = false
+    var onMentionMove: (Int) -> Void = { _ in }
+    var onMentionSelect: () -> Bool = { false }
+    var onMentionDismiss: () -> Void = {}
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -1572,7 +1697,7 @@ private struct BeatInputTextView: NSViewRepresentable {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = NSColor.textBackgroundColor
 
-        let textView = NSTextView()
+        let textView = MentionInputTextView()
         textView.delegate = context.coordinator
         textView.isEditable = true
         textView.isSelectable = true
@@ -1599,41 +1724,188 @@ private struct BeatInputTextView: NSViewRepresentable {
             textContainer.lineFragmentPadding = 0
         }
 
+        context.coordinator.attach(to: textView)
+
+        textView.onKeyEvent = { [weak coordinator = context.coordinator] event in
+            coordinator?.handleKeyEvent(event) ?? false
+        }
+        textView.onDidResignFirstResponder = { [weak coordinator = context.coordinator] in
+            coordinator?.handleDidResignFirstResponder()
+        }
+
         scrollView.documentView = textView
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
+        var changedTextProgrammatically = false
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: text.count, length: 0))
+            changedTextProgrammatically = true
+        }
+        context.coordinator.isMentionMenuVisible = isMentionMenuVisible
+        if changedTextProgrammatically {
+            context.coordinator.publishMentionQuery(from: textView)
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSend: onSend)
+        Coordinator(
+            text: $text,
+            onSend: onSend,
+            onMentionQueryChange: onMentionQueryChange,
+            onMentionAnchorChange: onMentionAnchorChange,
+            onMentionMove: onMentionMove,
+            onMentionSelect: onMentionSelect,
+            onMentionDismiss: onMentionDismiss
+        )
     }
 
+    static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
         private let onSend: () -> Void
+        private let onMentionQueryChange: (MentionAutocompleteQuery?) -> Void
+        private let onMentionAnchorChange: (CGPoint?) -> Void
+        private let onMentionMove: (Int) -> Void
+        private let onMentionSelect: () -> Bool
+        private let onMentionDismiss: () -> Void
+        private weak var trackedTextView: NSTextView?
+        private var outsideClickMonitor: Any?
+        var isMentionMenuVisible: Bool = false
 
-        init(text: Binding<String>, onSend: @escaping () -> Void) {
+        init(
+            text: Binding<String>,
+            onSend: @escaping () -> Void,
+            onMentionQueryChange: @escaping (MentionAutocompleteQuery?) -> Void,
+            onMentionAnchorChange: @escaping (CGPoint?) -> Void,
+            onMentionMove: @escaping (Int) -> Void,
+            onMentionSelect: @escaping () -> Bool,
+            onMentionDismiss: @escaping () -> Void
+        ) {
             self._text = text
             self.onSend = onSend
+            self.onMentionQueryChange = onMentionQueryChange
+            self.onMentionAnchorChange = onMentionAnchorChange
+            self.onMentionMove = onMentionMove
+            self.onMentionSelect = onMentionSelect
+            self.onMentionDismiss = onMentionDismiss
+        }
+
+        func attach(to textView: NSTextView) {
+            trackedTextView = textView
+            guard outsideClickMonitor == nil else { return }
+
+            outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                self?.handleOutsideMouseDown(event)
+                return event
+            }
+        }
+
+        func detach() {
+            if let outsideClickMonitor {
+                NSEvent.removeMonitor(outsideClickMonitor)
+                self.outsideClickMonitor = nil
+            }
+            trackedTextView = nil
+        }
+
+        func handleKeyEvent(_ event: NSEvent) -> Bool {
+            guard isMentionMenuVisible else { return false }
+
+            switch event.keyCode {
+            case 125: // down arrow
+                onMentionMove(1)
+                return true
+            case 126: // up arrow
+                onMentionMove(-1)
+                return true
+            case 53: // escape
+                onMentionDismiss()
+                return true
+            case 48: // tab
+                return onMentionSelect()
+            case 36, 76: // return / enter
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                if flags.contains(.command) {
+                    return false
+                }
+                return onMentionSelect()
+            default:
+                return false
+            }
+        }
+
+        func handleDidResignFirstResponder() {
+            if isMentionMenuVisible {
+                onMentionDismiss()
+            }
+        }
+
+        private func handleOutsideMouseDown(_ event: NSEvent) {
+            guard isMentionMenuVisible else { return }
+            guard let textView = trackedTextView else { return }
+            guard event.window === textView.window else {
+                onMentionDismiss()
+                return
+            }
+
+            let locationInTextView = textView.convert(event.locationInWindow, from: nil)
+            if textView.bounds.contains(locationInTextView) {
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isMentionMenuVisible else { return }
+                self.onMentionDismiss()
+            }
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
+            publishMentionQuery(from: textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            publishMentionQuery(from: textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if isMentionMenuVisible {
+                if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                    onMentionMove(1)
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                    onMentionMove(-1)
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                    onMentionDismiss()
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                    return onMentionSelect()
+                }
+                if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                    let flags = NSApp.currentEvent?.modifierFlags ?? []
+                    if !flags.contains(.command), onMentionSelect() {
+                        return true
+                    }
+                }
+            }
+
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
                 return false
             }
-
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             if flags.contains(.command) {
                 textView.insertText("\n", replacementRange: textView.selectedRange())
@@ -1642,6 +1914,32 @@ private struct BeatInputTextView: NSViewRepresentable {
 
             onSend()
             return true
+        }
+
+        func publishMentionQuery(from textView: NSTextView) {
+            let mention = MentionParsing.activeQuery(
+                in: textView.string,
+                caretLocation: textView.selectedRange().location
+            )
+            onMentionQueryChange(mention)
+            if mention != nil {
+                onMentionAnchorChange(caretAnchor(in: textView))
+            } else {
+                onMentionAnchorChange(nil)
+            }
+        }
+
+        private func caretAnchor(in textView: NSTextView) -> CGPoint? {
+            guard let window = textView.window else { return nil }
+            let selection = textView.selectedRange()
+            let screenRect = textView.firstRect(forCharacterRange: selection, actualRange: nil)
+            let windowPoint = window.convertPoint(fromScreen: screenRect.origin)
+            let localPoint = textView.convert(windowPoint, from: nil)
+            let yFromTop = textView.isFlipped ? localPoint.y : (textView.bounds.height - localPoint.y)
+            return CGPoint(
+                x: max(0, localPoint.x),
+                y: max(0, yFromTop)
+            )
         }
     }
 }

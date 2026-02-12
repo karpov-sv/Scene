@@ -129,6 +129,111 @@ final class AppStore: ObservableObject {
         return project.prompts.filter { $0.category == category }
     }
 
+    func mentionSuggestions(
+        for trigger: MentionTrigger,
+        query: String,
+        limit: Int = 12
+    ) -> [MentionSuggestion] {
+        guard isProjectOpen else { return [] }
+        let normalizedQuery = MentionParsing.normalize(query)
+
+        switch trigger {
+        case .tag:
+            var frequencies: [String: (label: String, count: Int)] = [:]
+            for entry in project.compendium {
+                for tag in entry.tags {
+                    let cleaned = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let key = MentionParsing.normalize(cleaned)
+                    guard !key.isEmpty else { continue }
+
+                    if var existing = frequencies[key] {
+                        existing.count += 1
+                        frequencies[key] = existing
+                    } else {
+                        frequencies[key] = (label: cleaned, count: 1)
+                    }
+                }
+            }
+
+            return frequencies
+                .filter { normalizedQuery.isEmpty || $0.key.contains(normalizedQuery) }
+                .sorted {
+                    if $0.value.count != $1.value.count {
+                        return $0.value.count > $1.value.count
+                    }
+                    return $0.value.label.localizedCaseInsensitiveCompare($1.value.label) == .orderedAscending
+                }
+                .prefix(limit)
+                .map { key, value in
+                    MentionSuggestion(
+                        id: "tag:\(key)",
+                        trigger: .tag,
+                        label: value.label,
+                        subtitle: "\(value.count) entr\(value.count == 1 ? "y" : "ies")",
+                        insertion: value.label.contains { $0.isWhitespace }
+                            ? "@[\(value.label)] "
+                            : "@\(value.label) "
+                    )
+                }
+
+        case .scene:
+            struct SceneSuggestionCandidate {
+                let id: UUID
+                let chapterTitle: String
+                let sceneTitle: String
+                let inSelectedChapter: Bool
+                let hasSummary: Bool
+            }
+
+            var candidates: [SceneSuggestionCandidate] = []
+            for chapter in project.chapters {
+                let chapterTitleRaw = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let chapterTitle = chapterTitleRaw.isEmpty ? "Untitled Chapter" : chapterTitleRaw
+                let inSelectedChapter = chapter.id == selectedChapterID
+
+                for scene in chapter.scenes {
+                    let sceneTitleRaw = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let sceneTitle = sceneTitleRaw.isEmpty ? "Untitled Scene" : sceneTitleRaw
+                    let key = MentionParsing.normalize(sceneTitle)
+                    guard normalizedQuery.isEmpty || key.contains(normalizedQuery) else { continue }
+
+                    candidates.append(
+                        SceneSuggestionCandidate(
+                            id: scene.id,
+                            chapterTitle: chapterTitle,
+                            sceneTitle: sceneTitle,
+                            inSelectedChapter: inSelectedChapter,
+                            hasSummary: !scene.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
+                    )
+                }
+            }
+
+            return candidates
+                .sorted {
+                    if $0.inSelectedChapter != $1.inSelectedChapter {
+                        return $0.inSelectedChapter && !$1.inSelectedChapter
+                    }
+                    if $0.sceneTitle.caseInsensitiveCompare($1.sceneTitle) != .orderedSame {
+                        return $0.sceneTitle.localizedCaseInsensitiveCompare($1.sceneTitle) == .orderedAscending
+                    }
+                    return $0.chapterTitle.localizedCaseInsensitiveCompare($1.chapterTitle) == .orderedAscending
+                }
+                .prefix(limit)
+                .map { item in
+                    MentionSuggestion(
+                        id: "scene:\(item.id.uuidString)",
+                        trigger: .scene,
+                        label: item.sceneTitle,
+                        subtitle: item.hasSummary ? item.chapterTitle : "\(item.chapterTitle) • no summary",
+                        insertion: item.sceneTitle.contains { $0.isWhitespace }
+                            ? "#[\(item.sceneTitle)] "
+                            : "#\(item.sceneTitle) "
+                    )
+                }
+        }
+    }
+
     var selectedScene: Scene? {
         guard isProjectOpen else { return nil }
         guard let selectedSceneID, let location = sceneLocation(for: selectedSceneID) else {
@@ -1475,7 +1580,7 @@ final class AppStore: ObservableObject {
     private func makeProseGenerationRequest(beat: String, scene: Scene) -> TextGenerationRequest {
         let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
         let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(for: scene.id)
+        let compendiumContext = buildCompendiumContext(for: scene.id, mentionSourceText: beat)
 
         let userPrompt = expandPrompt(
             template: activePrompt.userTemplate,
@@ -1818,11 +1923,16 @@ final class AppStore: ObservableObject {
         }
 
         var messages = project.workshopSessions[sessionIndex].messages
-        if let pendingUserInput {
-            let trimmedPending = pendingUserInput.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedPending.isEmpty {
+        let trimmedPending = pendingUserInput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mentionSourceText: String?
+
+        if pendingUserInput != nil {
+            if let trimmedPending, !trimmedPending.isEmpty {
                 messages.append(WorkshopMessage(role: .user, content: trimmedPending))
             }
+            mentionSourceText = trimmedPending?.isEmpty == false ? trimmedPending : nil
+        } else {
+            mentionSourceText = messages.reversed().first(where: { $0.role == .user })?.content
         }
 
         let transcript = messages
@@ -1842,7 +1952,10 @@ final class AppStore: ObservableObject {
 
         let compendiumContext: String
         if workshopUseCompendiumContext {
-            compendiumContext = buildCompendiumContext(for: selectedScene?.id)
+            compendiumContext = buildCompendiumContext(
+                for: selectedScene?.id,
+                mentionSourceText: mentionSourceText
+            )
         } else {
             compendiumContext = "Compendium context disabled."
         }
@@ -1905,16 +2018,39 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func buildCompendiumContext(for sceneID: UUID?) -> String {
+    private struct MentionResolvedContext {
+        var compendiumEntries: [CompendiumEntry] = []
+        var sceneReferences: [(chapterTitle: String, sceneTitle: String, summary: String)] = []
+
+        var isEmpty: Bool {
+            compendiumEntries.isEmpty && sceneReferences.isEmpty
+        }
+    }
+
+    private func buildCompendiumContext(
+        for sceneID: UUID?,
+        mentionSourceText: String? = nil
+    ) -> String {
         let selectedEntryIDs = compendiumContextIDs(for: sceneID)
         let selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
         let selectedSceneSummaryIDs = sceneSummaryContextIDs(for: sceneID)
         let selectedChapterSummaryIDs = chapterSummaryContextIDs(for: sceneID)
         let selectedSceneSummaries = sceneSummaryEntries(forIDs: selectedSceneSummaryIDs)
         let selectedChapterSummaries = chapterSummaryEntries(forIDs: selectedChapterSummaryIDs)
+        let mentionContext = resolveMentionContext(from: mentionSourceText)
+
+        let mergedCompendiumEntries = mergeCompendiumEntries(
+            selectedEntries,
+            mentionContext.compendiumEntries
+        )
+        let mergedSceneSummaries = mergeSceneContext(
+            selectedSceneSummaries,
+            mentionContext.sceneReferences
+        )
+
         return formattedCompendiumContext(
-            compendiumEntries: selectedEntries,
-            sceneSummaries: selectedSceneSummaries,
+            compendiumEntries: mergedCompendiumEntries,
+            sceneSummaries: mergedSceneSummaries,
             chapterSummaries: selectedChapterSummaries
         )
     }
@@ -1943,6 +2079,94 @@ final class AppStore: ObservableObject {
         }
 
         return excerpt.joined(separator: "\n")
+    }
+
+    private func resolveMentionContext(from sourceText: String?) -> MentionResolvedContext {
+        guard let sourceText else { return MentionResolvedContext() }
+        let tokens = MentionParsing.extractMentionTokens(from: sourceText)
+        guard !tokens.isEmpty else { return MentionResolvedContext() }
+
+        var context = MentionResolvedContext()
+
+        if !tokens.tags.isEmpty {
+            context.compendiumEntries = project.compendium.filter { entry in
+                entry.tags.contains { tag in
+                    mentionTokenSet(tokens.tags, matches: MentionParsing.normalize(tag))
+                }
+            }
+        }
+
+        if !tokens.scenes.isEmpty {
+            var references: [(chapterTitle: String, sceneTitle: String, summary: String)] = []
+
+            for chapter in project.chapters {
+                let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Untitled Chapter"
+                    : chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                for scene in chapter.scenes {
+                    let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "Untitled Scene"
+                        : scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let sceneKey = MentionParsing.normalize(sceneTitle)
+                    guard mentionTokenSet(tokens.scenes, matches: sceneKey) else { continue }
+
+                    var content = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if content.isEmpty {
+                        content = String(scene.content.suffix(2400)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    guard !content.isEmpty else { continue }
+
+                    references.append(
+                        (chapterTitle: chapterTitle, sceneTitle: sceneTitle, summary: content)
+                    )
+                }
+            }
+
+            context.sceneReferences = references
+        }
+
+        return context
+    }
+
+    private func mentionTokenSet(_ tokens: Set<String>, matches key: String) -> Bool {
+        guard !key.isEmpty else { return false }
+        if tokens.contains(key) {
+            return true
+        }
+        return tokens.contains { token in
+            token.count >= 3 && key.contains(token)
+        }
+    }
+
+    private func mergeCompendiumEntries(
+        _ selected: [CompendiumEntry],
+        _ mentioned: [CompendiumEntry]
+    ) -> [CompendiumEntry] {
+        var merged = selected
+        var seen = Set(selected.map(\.id))
+        for entry in mentioned where seen.insert(entry.id).inserted {
+            merged.append(entry)
+        }
+        return merged
+    }
+
+    private func mergeSceneContext(
+        _ selected: [(chapterTitle: String, sceneTitle: String, summary: String)],
+        _ mentioned: [(chapterTitle: String, sceneTitle: String, summary: String)]
+    ) -> [(chapterTitle: String, sceneTitle: String, summary: String)] {
+        var merged = selected
+        var seen = Set(selected.map { key in
+            "\(MentionParsing.normalize(key.chapterTitle))::\(MentionParsing.normalize(key.sceneTitle))::\(MentionParsing.normalize(key.summary))"
+        })
+
+        for item in mentioned {
+            let key = "\(MentionParsing.normalize(item.chapterTitle))::\(MentionParsing.normalize(item.sceneTitle))::\(MentionParsing.normalize(item.summary))"
+            if seen.insert(key).inserted {
+                merged.append(item)
+            }
+        }
+        return merged
     }
 
     private func buildChapterSceneSummaryContext(chapter: Chapter) -> String {
