@@ -1813,6 +1813,7 @@ final class AppStore: ObservableObject {
 
         if rememberAsLastOpened, let currentProjectURL {
             persistence.saveLastOpenedProjectURL(currentProjectURL)
+            NSDocumentController.shared.noteNewRecentDocumentURL(currentProjectURL)
         }
 
         if project.settings.provider == .openAICompatible {

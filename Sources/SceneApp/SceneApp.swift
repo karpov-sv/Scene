@@ -4,11 +4,6 @@ import AppKit
 @MainActor
 final class SceneAppDelegate: NSObject, NSApplicationDelegate {
     private let persistence = ProjectPersistence.shared
-
-    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        false
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         // When launched from `swift run`, make the app frontmost so keyboard input
         // is delivered to the window instead of remaining in the terminal.
@@ -33,14 +28,7 @@ final class SceneAppDelegate: NSObject, NSApplicationDelegate {
             projectURLs = [lastProjectURL]
         }
 
-        closeTransientUntitledDocuments(using: documentController)
-
-        guard !projectURLs.isEmpty else {
-            if documentController.documents.isEmpty {
-                openDocumentDialog(using: documentController)
-            }
-            return
-        }
+        guard !projectURLs.isEmpty else { return }
 
         var pending = projectURLs.count
         var openedCount = 0
@@ -52,8 +40,10 @@ final class SceneAppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 pending -= 1
-                if pending == 0 && openedCount == 0 && documentController.documents.isEmpty {
-                    self.openDocumentDialog(using: documentController)
+                if pending == 0 {
+                    if openedCount > 0 {
+                        self.closeTransientUntitledDocuments(using: documentController)
+                    }
                 }
             }
         }
