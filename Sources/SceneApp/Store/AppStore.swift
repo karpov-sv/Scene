@@ -1696,6 +1696,48 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func renameChapter(_ chapterID: UUID, to title: String) {
+        guard let index = chapterIndex(for: chapterID) else { return }
+        project.chapters[index].title = title
+        project.chapters[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func renameScene(_ sceneID: UUID, to title: String) {
+        guard let location = sceneLocation(for: sceneID) else { return }
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].title = title
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+        project.chapters[location.chapterIndex].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func moveScene(_ sceneID: UUID, toChapterID: UUID, atIndex: Int) {
+        guard let sourceLocation = sceneLocation(for: sceneID),
+              let targetChapterIndex = chapterIndex(for: toChapterID) else { return }
+
+        let scene = project.chapters[sourceLocation.chapterIndex].scenes.remove(at: sourceLocation.sceneIndex)
+        project.chapters[sourceLocation.chapterIndex].updatedAt = .now
+
+        let clampedIndex = min(max(atIndex, 0), project.chapters[targetChapterIndex].scenes.count)
+        project.chapters[targetChapterIndex].scenes.insert(scene, at: clampedIndex)
+        project.chapters[targetChapterIndex].updatedAt = .now
+
+        if selectedSceneID == sceneID {
+            selectedChapterID = toChapterID
+        }
+        saveProject()
+    }
+
+    func moveChapter(_ chapterID: UUID, toIndex: Int) {
+        guard let sourceIndex = chapterIndex(for: chapterID) else { return }
+        let clampedIndex = min(max(toIndex, 0), project.chapters.count - 1)
+        guard clampedIndex != sourceIndex else { return }
+
+        let chapter = project.chapters.remove(at: sourceIndex)
+        project.chapters.insert(chapter, at: clampedIndex)
+        saveProject()
+    }
+
     func updateSelectedSceneContent(_ content: String) {
         updateSelectedSceneContent(content, richTextData: nil)
     }

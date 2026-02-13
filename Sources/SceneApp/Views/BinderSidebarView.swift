@@ -1,9 +1,14 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct BinderSidebarView: View {
     @EnvironmentObject private var store: AppStore
     @State private var collapsedChapterIDs: Set<UUID> = []
     @FocusState private var isSearchFieldFocused: Bool
+    @State private var editingChapterID: UUID?
+    @State private var editingSceneID: UUID?
+    @State private var editingTitle: String = ""
+    @FocusState private var isRenameFieldFocused: Bool
     let onOpenSceneSummary: ((UUID, UUID) -> Void)?
     let onOpenChapterSummary: ((UUID) -> Void)?
     let onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)?
@@ -51,10 +56,19 @@ struct BinderSidebarView: View {
                 List(selection: selectedSceneBinding) {
                     ForEach(store.chapters) { chapter in
                         Section(isExpanded: chapterExpandedBinding(chapter.id)) {
-                            ForEach(chapter.scenes) { scene in
-                                sceneRow(scene, chapterID: chapter.id)
-                                    .tag(Optional(scene.id))
+                            if chapter.scenes.isEmpty {
+                                emptyChapterDropTarget(chapter)
                                     .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 8))
+                            } else {
+                                ForEach(chapter.scenes) { scene in
+                                    sceneRow(scene, chapterID: chapter.id)
+                                        .tag(Optional(scene.id))
+                                        .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 8))
+                                        .draggable("scene:\(scene.id.uuidString)")
+                                }
+                                .onInsert(of: [.utf8PlainText]) { index, providers in
+                                    handleSceneInsert(into: chapter.id, at: index, providers: providers)
+                                }
                             }
                         } header: {
                             chapterRow(chapter)
@@ -62,6 +76,9 @@ struct BinderSidebarView: View {
                                     chapterActions(chapter)
                                 }
                         }
+                    }
+                    .onInsert(of: [.utf8PlainText]) { index, providers in
+                        handleChapterInsert(at: index, providers: providers)
                     }
                 }
                 .listStyle(.sidebar)
@@ -72,6 +89,15 @@ struct BinderSidebarView: View {
         }
         .onChange(of: store.globalSearchFocusRequestID) { _, _ in
             isSearchFieldFocused = true
+        }
+        .onChange(of: isRenameFieldFocused) { _, focused in
+            if !focused {
+                if let chapterID = editingChapterID {
+                    commitChapterRename(chapterID)
+                } else if let sceneID = editingSceneID {
+                    commitSceneRename(sceneID)
+                }
+            }
         }
     }
 
@@ -242,31 +268,219 @@ struct BinderSidebarView: View {
         .padding(12)
     }
 
+    // MARK: - Chapter Row
+
     private func chapterRow(_ chapter: Chapter) -> some View {
         HStack(spacing: 8) {
-            Label(chapterTitle(chapter), systemImage: "folder")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    store.selectChapter(chapter.id)
-                }
+            if editingChapterID == chapter.id {
+                Image(systemName: "folder")
+                    .foregroundStyle(.primary)
+                TextField("Chapter Title", text: $editingTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.subheadline.weight(.semibold))
+                    .focused($isRenameFieldFocused)
+                    .onSubmit {
+                        commitChapterRename(chapter.id)
+                    }
+                    .onExitCommand {
+                        cancelRename()
+                    }
+            } else {
+                Label(chapterTitle(chapter), systemImage: "folder")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 1) {
+                        store.selectChapter(chapter.id)
+                    }
+            }
 
             Spacer(minLength: 0)
         }
         .textCase(nil)
+        .draggable("chapter:\(chapter.id.uuidString)")
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            return handleDropOnChapter(payload: payload, targetChapter: chapter)
+        } isTargeted: { _ in }
     }
 
+    // MARK: - Scene Row
+
     private func sceneRow(_ scene: Scene, chapterID: UUID) -> some View {
-        Label(sceneTitle(scene), systemImage: "doc.text")
-            .lineLimit(1)
-            .contextMenu {
-                sceneActions(scene, chapterID: chapterID)
+        Group {
+            if editingSceneID == scene.id {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                        .foregroundStyle(.secondary)
+                    TextField("Scene Title", text: $editingTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isRenameFieldFocused)
+                        .onSubmit {
+                            commitSceneRename(scene.id)
+                        }
+                        .onExitCommand {
+                            cancelRename()
+                        }
+                }
+            } else {
+                Label(sceneTitle(scene), systemImage: "doc.text")
+                    .lineLimit(1)
             }
+        }
+        .contextMenu {
+            sceneActions(scene, chapterID: chapterID)
+        }
     }
+
+    // MARK: - Rename Helpers
+
+    private func beginChapterRename(_ chapter: Chapter) {
+        editingSceneID = nil
+        editingChapterID = chapter.id
+        editingTitle = chapter.title
+        DispatchQueue.main.async {
+            isRenameFieldFocused = true
+        }
+    }
+
+    private func beginSceneRename(_ scene: Scene) {
+        editingChapterID = nil
+        editingSceneID = scene.id
+        editingTitle = scene.title
+        DispatchQueue.main.async {
+            isRenameFieldFocused = true
+        }
+    }
+
+    private func commitChapterRename(_ chapterID: UUID) {
+        let trimmed = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            store.renameChapter(chapterID, to: trimmed)
+        }
+        editingChapterID = nil
+    }
+
+    private func commitSceneRename(_ sceneID: UUID) {
+        let trimmed = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            store.renameScene(sceneID, to: trimmed)
+        }
+        editingSceneID = nil
+    }
+
+    private func cancelRename() {
+        editingChapterID = nil
+        editingSceneID = nil
+    }
+
+    // MARK: - Drag & Drop Helpers
+
+    private func emptyChapterDropTarget(_ chapter: Chapter) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Drop scene or chapter here")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            return handleDropOnChapter(payload: payload, targetChapter: chapter)
+        } isTargeted: { _ in }
+    }
+
+    private func handleDropOnChapter(payload: String, targetChapter: Chapter) -> Bool {
+        let parts = payload.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { return false }
+
+        let kind = String(parts[0])
+        let identifier = String(parts[1])
+
+        if kind == "scene", let sceneID = UUID(uuidString: identifier) {
+            store.moveScene(sceneID, toChapterID: targetChapter.id, atIndex: targetChapter.scenes.count)
+            return true
+        }
+
+        if kind == "chapter", let chapterID = UUID(uuidString: identifier) {
+            guard let targetChapterIndex = chapterIndex(for: targetChapter.id) else { return false }
+            moveChapter(chapterID, toInsertionIndex: targetChapterIndex + 1)
+            return true
+        }
+
+        return false
+    }
+
+    private func handleChapterInsert(at index: Int, providers: [NSItemProvider]) {
+        guard let provider = providers.first else { return }
+        provider.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier) { data, _ in
+            guard let data = data as? Data,
+                  let payload = String(data: data, encoding: .utf8) else { return }
+            let parts = payload.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2,
+                  String(parts[0]) == "chapter",
+                  let chapterID = UUID(uuidString: String(parts[1])) else { return }
+            DispatchQueue.main.async {
+                moveChapter(chapterID, toInsertionIndex: index)
+            }
+        }
+    }
+
+    private func handleSceneInsert(into chapterID: UUID, at index: Int, providers: [NSItemProvider]) {
+        guard let provider = providers.first else { return }
+        provider.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier) { data, _ in
+            guard let data = data as? Data,
+                  let payload = String(data: data, encoding: .utf8) else { return }
+            let parts = payload.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { return }
+
+            if String(parts[0]) == "chapter" {
+                guard let chapterIDToMove = UUID(uuidString: String(parts[1])) else { return }
+                DispatchQueue.main.async {
+                    guard let targetChapterIndex = chapterIndex(for: chapterID) else { return }
+                    moveChapter(chapterIDToMove, toInsertionIndex: targetChapterIndex + 1)
+                }
+                return
+            }
+
+            guard String(parts[0]) == "scene",
+                  let sceneID = UUID(uuidString: String(parts[1])) else { return }
+
+            DispatchQueue.main.async {
+                var targetIndex = index
+                if let sourceLocation = sceneLocation(for: sceneID),
+                   sourceLocation.chapterID == chapterID,
+                   sourceLocation.sceneIndex < index {
+                    targetIndex -= 1
+                }
+                store.moveScene(sceneID, toChapterID: chapterID, atIndex: targetIndex)
+            }
+        }
+    }
+
+    private func moveChapter(_ chapterID: UUID, toInsertionIndex index: Int) {
+        var targetIndex = index
+        if let sourceChapterIndex = chapterIndex(for: chapterID),
+           sourceChapterIndex < index {
+            targetIndex -= 1
+        }
+        store.moveChapter(chapterID, toIndex: targetIndex)
+    }
+
+    // MARK: - Context Menus
 
     @ViewBuilder
     private func chapterActions(_ chapter: Chapter) -> some View {
+        Button {
+            beginChapterRename(chapter)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+
         Button {
             store.addScene(to: chapter.id)
         } label: {
@@ -303,6 +517,12 @@ struct BinderSidebarView: View {
     @ViewBuilder
     private func sceneActions(_ scene: Scene, chapterID: UUID) -> some View {
         Button {
+            beginSceneRename(scene)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+
+        Button {
             onOpenSceneSummary?(scene.id, chapterID)
         } label: {
             Label("Open Scene Summary", systemImage: "text.alignleft")
@@ -329,9 +549,24 @@ struct BinderSidebarView: View {
         }
     }
 
+    // MARK: - Helpers
+
     private func chapterTitle(_ chapter: Chapter) -> String {
         let trimmed = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Chapter" : trimmed
+    }
+
+    private func chapterIndex(for chapterID: UUID) -> Int? {
+        store.chapters.firstIndex(where: { $0.id == chapterID })
+    }
+
+    private func sceneLocation(for sceneID: UUID) -> (chapterID: UUID, sceneIndex: Int)? {
+        for chapter in store.chapters {
+            if let sceneIndex = chapter.scenes.firstIndex(where: { $0.id == sceneID }) {
+                return (chapter.id, sceneIndex)
+            }
+        }
+        return nil
     }
 
     private func sceneTitle(_ scene: Scene) -> String {
