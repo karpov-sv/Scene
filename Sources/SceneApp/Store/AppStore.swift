@@ -627,6 +627,10 @@ final class AppStore: ObservableObject {
         project.settings.useInlineGeneration
     }
 
+    var markRewrittenTextAsItalics: Bool {
+        project.settings.markRewrittenTextAsItalics
+    }
+
     func isGenerationModelSelected(_ model: String) -> Bool {
         selectedGenerationModels.contains(model.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -900,6 +904,12 @@ final class AppStore: ObservableObject {
     func updateUseInlineGeneration(_ enabled: Bool) {
         guard project.settings.useInlineGeneration != enabled else { return }
         project.settings.useInlineGeneration = enabled
+        saveProject(debounced: true)
+    }
+
+    func updateMarkRewrittenTextAsItalics(_ enabled: Bool) {
+        guard project.settings.markRewrittenTextAsItalics != enabled else { return }
+        project.settings.markRewrittenTextAsItalics = enabled
         saveProject(debounced: true)
     }
 

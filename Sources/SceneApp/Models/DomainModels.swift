@@ -490,6 +490,7 @@ struct GenerationSettings: Codable, Equatable {
     var model: String
     var generationModelSelection: [String]
     var useInlineGeneration: Bool
+    var markRewrittenTextAsItalics: Bool
     var temperature: Double
     var maxTokens: Int
     var enableStreaming: Bool
@@ -509,6 +510,7 @@ struct GenerationSettings: Codable, Equatable {
         model: String,
         generationModelSelection: [String],
         useInlineGeneration: Bool,
+        markRewrittenTextAsItalics: Bool,
         temperature: Double,
         maxTokens: Int,
         enableStreaming: Bool,
@@ -521,6 +523,7 @@ struct GenerationSettings: Codable, Equatable {
         self.model = model
         self.generationModelSelection = generationModelSelection
         self.useInlineGeneration = useInlineGeneration
+        self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.enableStreaming = enableStreaming
@@ -535,6 +538,7 @@ struct GenerationSettings: Codable, Equatable {
         case model
         case generationModelSelection
         case useInlineGeneration
+        case markRewrittenTextAsItalics
         case temperature
         case maxTokens
         case enableStreaming
@@ -564,6 +568,7 @@ struct GenerationSettings: Codable, Equatable {
             generationModelSelection = deduplicated
         }
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
+        markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         temperature = try container.decode(Double.self, forKey: .temperature)
         maxTokens = try container.decode(Int.self, forKey: .maxTokens)
         enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? true
@@ -578,6 +583,7 @@ struct GenerationSettings: Codable, Equatable {
         model: "gpt-4o-mini",
         generationModelSelection: ["gpt-4o-mini"],
         useInlineGeneration: false,
+        markRewrittenTextAsItalics: true,
         temperature: 0.8,
         maxTokens: 700,
         enableStreaming: true,

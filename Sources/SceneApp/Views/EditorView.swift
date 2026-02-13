@@ -611,6 +611,7 @@ struct EditorView: View {
         guard !isRewritingSelection else { return }
         let selectionSnapshot = editorSelection
         guard selectionSnapshot.hasSelection else { return }
+        let emphasizeWithItalics = store.markRewrittenTextAsItalics
 
         isRewritingSelection = true
         rewriteTask = Task { @MainActor in
@@ -625,7 +626,7 @@ struct EditorView: View {
                     action: .replaceSelection(
                         rewrittenText: rewritten,
                         targetRange: selectionSnapshot.range,
-                        emphasizeWithItalics: true
+                        emphasizeWithItalics: emphasizeWithItalics
                     )
                 )
             } catch is CancellationError {

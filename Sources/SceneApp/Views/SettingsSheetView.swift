@@ -49,6 +49,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var markRewrittenTextAsItalicsBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.markRewrittenTextAsItalics },
+            set: { store.updateMarkRewrittenTextAsItalics($0) }
+        )
+    }
+
     private var endpointBinding: Binding<String> {
         Binding(
             get: { store.project.settings.endpoint },
@@ -198,77 +205,108 @@ struct SettingsSheetView: View {
     private var generalTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Project")
-                        .font(.headline)
+                GroupBox("Project") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Project title", text: projectTitleBinding)
+                            .textFieldStyle(.roundedBorder)
 
-                    TextField("Project title", text: projectTitleBinding)
-                        .textFieldStyle(.roundedBorder)
-
-                    Toggle("Autosave project changes", isOn: autosaveEnabledBinding)
+                        HStack(spacing: 8) {
+                            Text("Autosave project changes")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: autosaveEnabledBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Autosave project changes")
+                        }
+                    }
+                    .padding(.top, 4)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Storage")
-                        .font(.headline)
-
-                    Text("Project file location")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(store.currentProjectPathDisplay)
-                        .font(.system(.footnote, design: .monospaced))
-                        .textSelection(.enabled)
+                GroupBox("Writing") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("Mark rewritten text as italics")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: markRewrittenTextAsItalicsBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Mark rewritten text as italics")
+                        }
+                    }
+                    .padding(.top, 4)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Data Exchange")
-                        .font(.headline)
-
-                    Text("Transfer prompt templates, compendium entries, and full projects as JSON files.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 8) {
-                        Text("Prompts")
-                            .frame(width: 96, alignment: .leading)
-                        Button("Export...") {
-                            exportPrompts()
-                        }
-                        Button("Import...") {
-                            importPrompts()
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("Compendium")
-                            .frame(width: 96, alignment: .leading)
-                        Button("Export...") {
-                            exportCompendium()
-                        }
-                        Button("Import...") {
-                            importCompendium()
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("Project")
-                            .frame(width: 96, alignment: .leading)
-                        Button("Export...") {
-                            exportProjectExchange()
-                        }
-                        Button("Import...") {
-                            importProjectExchange()
-                        }
-                    }
-
-                    if !dataExchangeStatus.isEmpty {
-                        Text(dataExchangeStatus)
+                GroupBox("Storage") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Project file location")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .padding(.top, 2)
+                        Text(store.currentProjectPathDisplay)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Data Exchange") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Transfer prompt templates, compendium entries, and full projects as JSON files.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("Prompts")
+                                .frame(width: 96, alignment: .leading)
+                            Spacer(minLength: 0)
+                            Button("Export...") {
+                                exportPrompts()
+                            }
+                            Button("Import...") {
+                                importPrompts()
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Compendium")
+                                .frame(width: 96, alignment: .leading)
+                            Spacer(minLength: 0)
+                            Button("Export...") {
+                                exportCompendium()
+                            }
+                            Button("Import...") {
+                                importCompendium()
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Project")
+                                .frame(width: 96, alignment: .leading)
+                            Spacer(minLength: 0)
+                            Button("Export...") {
+                                exportProjectExchange()
+                            }
+                            Button("Import...") {
+                                importProjectExchange()
+                            }
+                        }
+
+                        if !dataExchangeStatus.isEmpty {
+                            Text(dataExchangeStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
     }
@@ -344,7 +382,14 @@ struct SettingsSheetView: View {
                         }
                     }
 
-                    Toggle("Enable Streaming Responses", isOn: enableStreamingBinding)
+                    HStack(spacing: 8) {
+                        Text("Enable Streaming Responses")
+                        Spacer(minLength: 0)
+                        Toggle("", isOn: enableStreamingBinding)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityLabel("Enable Streaming Responses")
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
