@@ -105,6 +105,35 @@ struct EditorView: View {
         )
     }
 
+    private var inlineGenerationBinding: Binding<Bool> {
+        Binding(
+            get: { store.useInlineGeneration },
+            set: { store.updateUseInlineGeneration($0) }
+        )
+    }
+
+    private func generationModelToggleBinding(for model: String) -> Binding<Bool> {
+        Binding(
+            get: { store.isGenerationModelSelected(model) },
+            set: { isEnabled in
+                let isCurrentlySelected = store.isGenerationModelSelected(model)
+                guard isEnabled != isCurrentlySelected else { return }
+                store.toggleGenerationModelSelection(model)
+            }
+        )
+    }
+
+    private var proseGenerationReviewPresented: Binding<Bool> {
+        Binding(
+            get: { store.proseGenerationReview != nil },
+            set: { isPresented in
+                if !isPresented {
+                    store.dismissProseGenerationReview()
+                }
+            }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if store.selectedScene != nil {
@@ -118,6 +147,10 @@ struct EditorView: View {
         }
         .sheet(isPresented: $showingSceneContextSheet) {
             SceneContextSheet()
+                .environmentObject(store)
+        }
+        .sheet(isPresented: proseGenerationReviewPresented) {
+            ProseGenerationReviewSheet()
                 .environmentObject(store)
         }
     }
@@ -270,6 +303,35 @@ struct EditorView: View {
                 .labelsHidden()
                 .frame(maxWidth: 280)
                 .padding(.leading, 8)
+
+                Menu {
+                    if store.generationModelOptions.isEmpty {
+                        Button("No models available") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(store.generationModelOptions, id: \.self) { model in
+                            Toggle(model, isOn: generationModelToggleBinding(for: model))
+                        }
+                    }
+
+                    let currentModel = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !currentModel.isEmpty {
+                        Divider()
+                        Button("Use Only \(currentModel)") {
+                            store.selectOnlyGenerationModel(currentModel)
+                        }
+                    }
+
+                    Divider()
+                    Toggle("Inline generation", isOn: inlineGenerationBinding)
+                } label: {
+                    Label(store.selectedGenerationModelsLabel, systemImage: "square.stack.3d.up")
+                        .lineLimit(1)
+                        .frame(maxWidth: 220, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .padding(.trailing, 8)
 
                 Spacer(minLength: 0)
 
@@ -1587,6 +1649,289 @@ private struct GenerationPayloadPreviewSheet: View {
             }
         }
         .frame(minWidth: 840, minHeight: 640)
+    }
+}
+
+private struct ProseGenerationReviewSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            if let review = store.proseGenerationReview {
+                VStack(spacing: 0) {
+                    header(review: review)
+                    Divider()
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if !review.renderWarnings.isEmpty {
+                                GroupBox("Template Warnings") {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        ForEach(Array(review.renderWarnings.enumerated()), id: \.offset) { _, warning in
+                                            Text(warning)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
+                            ForEach(review.candidates) { candidate in
+                                candidateCard(candidate)
+                            }
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .frame(minWidth: 960, minHeight: 680)
+            } else {
+                ContentUnavailableView(
+                    "No Generation Candidates",
+                    systemImage: "sparkles",
+                    description: Text("Run generation to review and accept outputs.")
+                )
+                .frame(minWidth: 600, minHeight: 420)
+            }
+        }
+    }
+
+    private func header(review: AppStore.ProseGenerationReviewState) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Generation Candidates")
+                    .font(.title3.weight(.semibold))
+                Text("Scene: \(review.sceneTitle) • Prompt: \(review.promptTitle)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Beat: \(singleLineSummary(review.beat, maxLength: 120))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            if store.isGenerating {
+                Button {
+                    store.cancelBeatGeneration()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            } else if !review.candidates.isEmpty {
+                Button {
+                    store.retryAllProseGenerationCandidates()
+                } label: {
+                    Label("Retry All", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Button("Close") {
+                store.dismissProseGenerationReview()
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func candidateCard(_ candidate: AppStore.ProseGenerationCandidate) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(candidate.model)
+                        .font(.headline)
+
+                    statusBadge(candidate.status)
+
+                    if let elapsedSeconds = candidate.elapsedSeconds {
+                        Text(String(format: "%.1fs", elapsedSeconds))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let usage = candidate.usage {
+                        candidateUsage(usage)
+                    }
+                }
+
+                switch candidate.status {
+                case .completed:
+                    ScrollView {
+                        Text(candidate.text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 140, maxHeight: 280)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+                case .failed:
+                    Text(candidate.errorMessage ?? "Generation failed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
+                case .running:
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Generating...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            ScrollView {
+                                Text(candidate.text)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                            }
+                            .frame(minHeight: 100, maxHeight: 220)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                            )
+                        }
+                    }
+                case .queued:
+                    Text("Queued...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                case .cancelled:
+                    Text("Cancelled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        store.acceptProseGenerationCandidate(candidate.id)
+                        dismiss()
+                    } label: {
+                        Label("Accept", systemImage: "checkmark.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(candidate.status != .completed || store.isGenerating)
+
+                    Button {
+                        store.retryProseGenerationCandidate(candidate.id)
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(store.isGenerating)
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            EmptyView()
+        }
+    }
+
+    private func statusBadge(_ status: AppStore.ProseGenerationCandidate.Status) -> some View {
+        Text(statusLabel(status))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(statusColor(status))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(statusColor(status).opacity(0.15))
+            )
+    }
+
+    private func statusLabel(_ status: AppStore.ProseGenerationCandidate.Status) -> String {
+        switch status {
+        case .queued:
+            return "Queued"
+        case .running:
+            return "Running"
+        case .completed:
+            return "Ready"
+        case .failed:
+            return "Failed"
+        case .cancelled:
+            return "Cancelled"
+        }
+    }
+
+    private func statusColor(_ status: AppStore.ProseGenerationCandidate.Status) -> Color {
+        switch status {
+        case .queued, .running:
+            return .secondary
+        case .completed:
+            return .green
+        case .failed:
+            return .red
+        case .cancelled:
+            return .orange
+        }
+    }
+
+    private func candidateUsage(_ usage: TokenUsage) -> some View {
+        HStack(spacing: 8) {
+            if let promptTokens = usage.promptTokens {
+                usageChip(icon: "text.quote", value: promptTokens, help: "Prompt tokens.")
+            }
+            if let completionTokens = usage.completionTokens {
+                usageChip(icon: "sparkles", value: completionTokens, help: "Completion tokens.")
+            }
+            if let totalTokens = usage.totalTokens {
+                usageChip(icon: "sum", value: totalTokens, help: "Total tokens.")
+            }
+            if usage.isEstimated {
+                Image(systemName: "questionmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("Token counts are estimated.")
+            }
+        }
+    }
+
+    private func usageChip(icon: String, value: Int, help: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text("\(value)")
+                .monospacedDigit()
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+
+    private func singleLineSummary(_ value: String, maxLength: Int) -> String {
+        let singleLine = value.replacingOccurrences(of: "\n", with: " ")
+        if singleLine.count <= maxLength {
+            return singleLine
+        }
+        return String(singleLine.prefix(maxLength)) + "..."
     }
 }
 

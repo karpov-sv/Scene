@@ -112,6 +112,52 @@ final class AppStore: ObservableObject {
         let addedCount: Int
     }
 
+    struct ProseGenerationCandidate: Identifiable, Equatable {
+        enum Status: String, Equatable {
+            case queued
+            case running
+            case completed
+            case failed
+            case cancelled
+
+            var isTerminal: Bool {
+                switch self {
+                case .queued, .running:
+                    return false
+                case .completed, .failed, .cancelled:
+                    return true
+                }
+            }
+        }
+
+        let id: UUID
+        let model: String
+        var status: Status
+        var text: String
+        var usage: TokenUsage?
+        var errorMessage: String?
+        var elapsedSeconds: Double?
+    }
+
+    struct ProseGenerationReviewState: Identifiable, Equatable {
+        let id: UUID
+        var beat: String
+        var sceneTitle: String
+        var promptTitle: String
+        var renderWarnings: [String]
+        var candidates: [ProseGenerationCandidate]
+        var startedAt: Date
+        var isRunning: Bool
+
+        var completedCount: Int {
+            candidates.filter { $0.status.isTerminal }.count
+        }
+
+        var successCount: Int {
+            candidates.filter { $0.status == .completed }.count
+        }
+    }
+
     private struct PromptRequestBuildResult {
         let request: TextGenerationRequest
         let renderWarnings: [String]
@@ -122,6 +168,28 @@ final class AppStore: ObservableObject {
         let compendium: String
         let sceneSummaries: String
         let chapterSummaries: String
+    }
+
+    private struct ProseGenerationSessionContext {
+        let reviewID: UUID
+        let sceneID: UUID
+        let beat: String
+    }
+
+    private struct ProseCandidateRequestInput {
+        let candidateID: UUID
+        let model: String
+        let request: TextGenerationRequest
+    }
+
+    private struct ProseCandidateRunResult {
+        let candidateID: UUID
+        let request: TextGenerationRequest
+        let text: String?
+        let usage: TokenUsage?
+        let errorMessage: String?
+        let cancelled: Bool
+        let elapsedSeconds: Double
     }
 
     private struct PromptPreviewSceneContext {
@@ -153,6 +221,7 @@ final class AppStore: ObservableObject {
     @Published var isGenerating: Bool = false
     @Published var generationStatus: String = ""
     @Published private(set) var proseLiveUsage: TokenUsage?
+    @Published var proseGenerationReview: ProseGenerationReviewState?
     @Published var lastError: String?
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
@@ -171,6 +240,7 @@ final class AppStore: ObservableObject {
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
     private var proseRequestTask: Task<Void, Never>?
+    private var proseGenerationSessionContext: ProseGenerationSessionContext?
 
     init(
         persistence: ProjectPersistence = .shared,
@@ -511,6 +581,56 @@ final class AppStore: ObservableObject {
         proseLiveUsage
     }
 
+    var generationModelOptions: [String] {
+        var output: [String] = []
+        var seen = Set<String>()
+
+        let selected = normalizedModelSelection(project.settings.generationModelSelection)
+        for model in selected where seen.insert(model).inserted {
+            output.append(model)
+        }
+
+        let current = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !current.isEmpty, seen.insert(current).inserted {
+            output.append(current)
+        }
+
+        for model in availableRemoteModels where seen.insert(model).inserted {
+            output.append(model)
+        }
+
+        return output
+    }
+
+    var selectedGenerationModels: [String] {
+        let selected = normalizedModelSelection(project.settings.generationModelSelection)
+        if !selected.isEmpty {
+            return selected
+        }
+
+        let current = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return current.isEmpty ? [] : [current]
+    }
+
+    var selectedGenerationModelsLabel: String {
+        let selected = selectedGenerationModels
+        if selected.isEmpty {
+            return "Select Models"
+        }
+        if selected.count == 1 {
+            return selected[0]
+        }
+        return "\(selected.count) Models"
+    }
+
+    var useInlineGeneration: Bool {
+        project.settings.useInlineGeneration
+    }
+
+    func isGenerationModelSelected(_ model: String) -> Bool {
+        selectedGenerationModels.contains(model.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     func entries(in category: CompendiumCategory) -> [CompendiumEntry] {
         project.compendium
             .filter { $0.category == category }
@@ -740,6 +860,46 @@ final class AppStore: ObservableObject {
 
     func updateModel(_ model: String) {
         project.settings.model = model
+        if normalizedModelSelection(project.settings.generationModelSelection).isEmpty {
+            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            project.settings.generationModelSelection = trimmed.isEmpty ? [] : [trimmed]
+        }
+        saveProject(debounced: true)
+    }
+
+    func toggleGenerationModelSelection(_ model: String) {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        var selected = normalizedModelSelection(project.settings.generationModelSelection)
+        if let index = selected.firstIndex(of: trimmed) {
+            selected.remove(at: index)
+        } else {
+            selected.append(trimmed)
+        }
+
+        if selected.isEmpty {
+            let fallback = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !fallback.isEmpty {
+                selected = [fallback]
+            }
+        }
+
+        project.settings.generationModelSelection = selected
+        saveProject(debounced: true)
+    }
+
+    func selectOnlyGenerationModel(_ model: String) {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        project.settings.generationModelSelection = [trimmed]
+        saveProject(debounced: true)
+    }
+
+    func updateUseInlineGeneration(_ enabled: Bool) {
+        guard project.settings.useInlineGeneration != enabled else { return }
+        project.settings.useInlineGeneration = enabled
         saveProject(debounced: true)
     }
 
@@ -819,6 +979,9 @@ final class AppStore: ObservableObject {
             let currentModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
             if currentModel.isEmpty, let first = discovered.first {
                 project.settings.model = first
+                if normalizedModelSelection(project.settings.generationModelSelection).isEmpty {
+                    project.settings.generationModelSelection = [first]
+                }
                 saveProject(debounced: true)
             }
         } catch AIServiceError.invalidEndpoint {
@@ -1065,6 +1228,8 @@ final class AppStore: ObservableObject {
         isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -1369,7 +1534,12 @@ final class AppStore: ObservableObject {
         beatInput = text
     }
 
-    func submitBeatGeneration() {
+    func submitBeatGeneration(
+        modelsOverride: [String]? = nil,
+        candidateIDsByModel: [String: UUID] = [:],
+        beatOverride: String? = nil,
+        sceneIDOverride: UUID? = nil
+    ) {
         guard proseRequestTask == nil else { return }
 
         proseRequestTask = Task { @MainActor [weak self] in
@@ -1377,14 +1547,71 @@ final class AppStore: ObservableObject {
             defer {
                 self.proseRequestTask = nil
             }
-            await self.generateFromBeat()
+            await self.generateFromBeat(
+                modelsOverride: modelsOverride,
+                candidateIDsByModel: candidateIDsByModel,
+                beatOverride: beatOverride,
+                sceneIDOverride: sceneIDOverride
+            )
         }
     }
 
     func cancelBeatGeneration() {
         proseRequestTask?.cancel()
-        proseLiveUsage = nil
         generationStatus = "Cancelling..."
+    }
+
+    func dismissProseGenerationReview() {
+        if isGenerating {
+            cancelBeatGeneration()
+        }
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
+    }
+
+    func retryAllProseGenerationCandidates() {
+        guard !isGenerating else { return }
+        guard let review = proseGenerationReview else { return }
+        guard let context = proseGenerationSessionContext else { return }
+        let models = review.candidates.map(\.model)
+        let idMap = Dictionary(uniqueKeysWithValues: review.candidates.map { ($0.model, $0.id) })
+        submitBeatGeneration(
+            modelsOverride: models,
+            candidateIDsByModel: idMap,
+            beatOverride: context.beat,
+            sceneIDOverride: context.sceneID
+        )
+    }
+
+    func retryProseGenerationCandidate(_ candidateID: UUID) {
+        guard !isGenerating else { return }
+        guard let review = proseGenerationReview,
+              let context = proseGenerationSessionContext,
+              let candidate = review.candidates.first(where: { $0.id == candidateID }) else {
+            return
+        }
+        submitBeatGeneration(
+            modelsOverride: [candidate.model],
+            candidateIDsByModel: [candidate.model: candidate.id],
+            beatOverride: context.beat,
+            sceneIDOverride: context.sceneID
+        )
+    }
+
+    func acceptProseGenerationCandidate(_ candidateID: UUID) {
+        guard let review = proseGenerationReview,
+              let candidate = review.candidates.first(where: { $0.id == candidateID }),
+              candidate.status == .completed else {
+            return
+        }
+
+        appendGeneratedText(candidate.text)
+        proseLiveUsage = candidate.usage
+        generationStatus = "Inserted output from \(candidate.model)."
+        beatInput = ""
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
+        saveProject()
     }
 
     func makeProsePayloadPreview() throws -> WorkshopPayloadPreview {
@@ -1397,12 +1624,15 @@ final class AppStore: ObservableObject {
             throw AIServiceError.badResponse("Select a scene first.")
         }
 
-        let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene)
+        let previewModel = resolveGenerationModelSelection(modelsOverride: nil).first
+        let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene, modelOverride: previewModel)
         let request = requestBuild.request
         let notes = previewNotes(
             base: [
                 "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
+                "Preview request model: \(request.model).",
                 "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                "Candidate-review generation runs in non-streaming mode.",
                 "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
             ],
             renderWarnings: requestBuild.renderWarnings
@@ -2225,21 +2455,258 @@ final class AppStore: ObservableObject {
 
     // MARK: - Generation
 
-    func generateFromBeat() async {
-        let beat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    func generateFromBeat(
+        modelsOverride: [String]? = nil,
+        candidateIDsByModel: [String: UUID] = [:],
+        beatOverride: String? = nil,
+        sceneIDOverride: UUID? = nil
+    ) async {
+        let beat = (beatOverride ?? beatInput).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isGenerating else { return }
         guard !beat.isEmpty else {
             generationStatus = "Enter a beat to generate text."
             return
         }
-        guard let scene = selectedScene else {
+        let scene: Scene?
+        if let sceneIDOverride, let location = sceneLocation(for: sceneIDOverride) {
+            scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+        } else {
+            scene = selectedScene
+        }
+
+        guard let scene else {
             generationStatus = "Select a scene first."
             return
         }
 
-        let request = makeProseGenerationRequest(beat: beat, scene: scene).request
+        if project.settings.useInlineGeneration {
+            let model = resolveGenerationModelSelection(modelsOverride: modelsOverride).first
+            await generateFromBeatInline(
+                beat: beat,
+                scene: scene,
+                modelOverride: model
+            )
+            return
+        }
+
+        let modelIDs = resolveGenerationModelSelection(modelsOverride: modelsOverride)
+        guard !modelIDs.isEmpty else {
+            generationStatus = "Select at least one model."
+            return
+        }
+
+        var renderWarnings: [String] = []
+        let candidateRequests: [ProseCandidateRequestInput] = modelIDs.map { model in
+            let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene, modelOverride: model)
+            renderWarnings.append(contentsOf: requestBuild.renderWarnings)
+            let candidateID = candidateIDsByModel[model] ?? UUID()
+            return ProseCandidateRequestInput(
+                candidateID: candidateID,
+                model: model,
+                request: requestBuild.request
+            )
+        }
+        renderWarnings = Array(Set(renderWarnings))
+
+        let sceneTitle = displaySceneTitle(scene)
+        let promptTitleRaw = activeProsePrompt?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptTitle = promptTitleRaw.isEmpty ? "Writing Prompt" : promptTitleRaw
+
+        let reviewID: UUID
+        if !candidateIDsByModel.isEmpty, var existing = proseGenerationReview {
+            existing.beat = beat
+            existing.sceneTitle = sceneTitle
+            existing.promptTitle = promptTitle
+            existing.renderWarnings = renderWarnings
+            existing.startedAt = .now
+            existing.isRunning = true
+
+            for input in candidateRequests {
+                if let index = existing.candidates.firstIndex(where: { $0.id == input.candidateID }) {
+                    existing.candidates[index].status = .running
+                    existing.candidates[index].text = ""
+                    existing.candidates[index].usage = nil
+                    existing.candidates[index].errorMessage = nil
+                    existing.candidates[index].elapsedSeconds = nil
+                } else {
+                    existing.candidates.append(
+                        ProseGenerationCandidate(
+                            id: input.candidateID,
+                            model: input.model,
+                            status: .running,
+                            text: "",
+                            usage: nil,
+                            errorMessage: nil,
+                            elapsedSeconds: nil
+                        )
+                    )
+                }
+            }
+
+            proseGenerationReview = existing
+            reviewID = existing.id
+        } else {
+            reviewID = UUID()
+            proseGenerationReview = ProseGenerationReviewState(
+                id: reviewID,
+                beat: beat,
+                sceneTitle: sceneTitle,
+                promptTitle: promptTitle,
+                renderWarnings: renderWarnings,
+                candidates: candidateRequests.map { input in
+                    ProseGenerationCandidate(
+                        id: input.candidateID,
+                        model: input.model,
+                        status: .running,
+                        text: "",
+                        usage: nil,
+                        errorMessage: nil,
+                        elapsedSeconds: nil
+                    )
+                },
+                startedAt: .now,
+                isRunning: true
+            )
+        }
+
+        proseGenerationSessionContext = ProseGenerationSessionContext(
+            reviewID: reviewID,
+            sceneID: scene.id,
+            beat: beat
+        )
         rememberBeatInputHistory(beat)
 
+        isGenerating = true
+        proseLiveUsage = nil
+        generationStatus = "Generating 0/\(candidateRequests.count)..."
+
+        defer {
+            isGenerating = false
+        }
+
+        let settingsForRun = project.settings
+        let streamCandidates = shouldUseStreaming
+
+        let provider = project.settings.provider
+        let openAIService = openAIService
+        let anthropicService = anthropicService
+        var completed = 0
+        let total = candidateRequests.count
+
+        await withTaskGroup(of: ProseCandidateRunResult.self) { group in
+            for input in candidateRequests {
+                group.addTask {
+                    let started = Date()
+                    let partialHandler: (@MainActor (String) -> Void)?
+                    if streamCandidates {
+                        partialHandler = { [weak self] partial in
+                            guard let self else { return }
+                            self.updateProseCandidatePartial(
+                                candidateID: input.candidateID,
+                                partial: partial,
+                                request: input.request,
+                                reviewID: reviewID,
+                                startedAt: started
+                            )
+                        }
+                    } else {
+                        partialHandler = nil
+                    }
+                    do {
+                        let result: TextGenerationResult
+                        switch provider {
+                        case .anthropic:
+                            result = try await anthropicService.generateTextResult(
+                                input.request,
+                                settings: settingsForRun,
+                                onPartial: partialHandler
+                            )
+                        case .openAI, .openRouter, .lmStudio, .openAICompatible:
+                            result = try await openAIService.generateTextResult(
+                                input.request,
+                                settings: settingsForRun,
+                                onPartial: partialHandler
+                            )
+                        }
+
+                        return ProseCandidateRunResult(
+                            candidateID: input.candidateID,
+                            request: input.request,
+                            text: result.text,
+                            usage: result.usage,
+                            errorMessage: nil,
+                            cancelled: false,
+                            elapsedSeconds: Date().timeIntervalSince(started)
+                        )
+                    } catch is CancellationError {
+                        return ProseCandidateRunResult(
+                            candidateID: input.candidateID,
+                            request: input.request,
+                            text: nil,
+                            usage: nil,
+                            errorMessage: nil,
+                            cancelled: true,
+                            elapsedSeconds: Date().timeIntervalSince(started)
+                        )
+                    } catch {
+                        return ProseCandidateRunResult(
+                            candidateID: input.candidateID,
+                            request: input.request,
+                            text: nil,
+                            usage: nil,
+                            errorMessage: error.localizedDescription,
+                            cancelled: false,
+                            elapsedSeconds: Date().timeIntervalSince(started)
+                        )
+                    }
+                }
+            }
+
+            for await outcome in group {
+                completed += 1
+                applyProseCandidateRunResult(outcome, reviewID: reviewID)
+                generationStatus = "Generating \(completed)/\(total)..."
+            }
+        }
+
+        if Task.isCancelled {
+            generationStatus = "Generation cancelled."
+            markRunningProseCandidatesCancelled(reviewID: reviewID)
+        }
+
+        if var review = proseGenerationReview, review.id == reviewID {
+            review.isRunning = false
+            proseGenerationReview = review
+
+            if review.successCount > 0 {
+                let label = review.successCount == 1 ? "candidate" : "candidates"
+                generationStatus = "Review \(review.successCount) \(label) and accept one."
+            } else {
+                generationStatus = "No candidate was generated."
+            }
+        } else if !Task.isCancelled {
+            generationStatus = "Generation finished."
+        }
+
+        if !Task.isCancelled {
+            saveProject(debounced: true)
+        }
+    }
+
+    private func generateFromBeatInline(
+        beat: String,
+        scene: Scene,
+        modelOverride: String?
+    ) async {
+        let request = makeProseGenerationRequest(
+            beat: beat,
+            scene: scene,
+            modelOverride: modelOverride
+        ).request
+        rememberBeatInputHistory(beat)
+
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
         isGenerating = true
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
@@ -2281,7 +2748,6 @@ final class AppStore: ObservableObject {
             beatInput = ""
             saveProject()
         } catch is CancellationError {
-            proseLiveUsage = nil
             generationStatus = "Generation cancelled."
             saveProject()
         } catch {
@@ -2291,7 +2757,92 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func makeProseGenerationRequest(beat: String, scene: Scene) -> PromptRequestBuildResult {
+    private func applyProseCandidateRunResult(_ outcome: ProseCandidateRunResult, reviewID: UUID) {
+        guard var review = proseGenerationReview, review.id == reviewID else { return }
+        guard let index = review.candidates.firstIndex(where: { $0.id == outcome.candidateID }) else { return }
+
+        let normalizedText = outcome.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if outcome.cancelled {
+            review.candidates[index].status = .cancelled
+            review.candidates[index].errorMessage = nil
+            review.candidates[index].text = ""
+            review.candidates[index].usage = nil
+        } else if normalizedText.isEmpty {
+            review.candidates[index].status = .failed
+            review.candidates[index].errorMessage = outcome.errorMessage ?? "No text returned."
+            review.candidates[index].text = ""
+            review.candidates[index].usage = nil
+        } else {
+            let usage = normalizedTokenUsage(
+                from: outcome.usage,
+                request: outcome.request,
+                response: normalizedText
+            )
+            review.candidates[index].status = .completed
+            review.candidates[index].errorMessage = nil
+            review.candidates[index].text = normalizedText
+            review.candidates[index].usage = usage
+            proseLiveUsage = usage
+        }
+        review.candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+        review.isRunning = review.candidates.contains { !$0.status.isTerminal }
+        proseGenerationReview = review
+    }
+
+    private func updateProseCandidatePartial(
+        candidateID: UUID,
+        partial: String,
+        request: TextGenerationRequest,
+        reviewID: UUID,
+        startedAt: Date
+    ) {
+        guard var review = proseGenerationReview, review.id == reviewID else { return }
+        guard let index = review.candidates.firstIndex(where: { $0.id == candidateID }) else { return }
+
+        review.candidates[index].status = .running
+        review.candidates[index].text = partial
+        let usage = normalizedTokenUsage(from: nil, request: request, response: partial)
+        review.candidates[index].usage = usage
+        review.candidates[index].errorMessage = nil
+        review.candidates[index].elapsedSeconds = max(0, Date().timeIntervalSince(startedAt))
+        proseLiveUsage = usage
+        proseGenerationReview = review
+    }
+
+    private func markRunningProseCandidatesCancelled(reviewID: UUID) {
+        guard var review = proseGenerationReview, review.id == reviewID else { return }
+        for index in review.candidates.indices where review.candidates[index].status == .running || review.candidates[index].status == .queued {
+            review.candidates[index].status = .cancelled
+            review.candidates[index].errorMessage = nil
+            review.candidates[index].text = ""
+            review.candidates[index].usage = nil
+        }
+        review.isRunning = false
+        proseGenerationReview = review
+    }
+
+    private func resolveGenerationModelSelection(modelsOverride: [String]?) -> [String] {
+        if let modelsOverride {
+            let normalized = normalizedModelSelection(modelsOverride)
+            if !normalized.isEmpty {
+                return normalized
+            }
+        }
+
+        let selected = selectedGenerationModels
+        if !selected.isEmpty {
+            return selected
+        }
+
+        let fallback = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? [] : [fallback]
+    }
+
+    private func makeProseGenerationRequest(
+        beat: String,
+        scene: Scene,
+        modelOverride: String? = nil
+    ) -> PromptRequestBuildResult {
         let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
         let sceneContext = String(scene.content.suffix(4500))
@@ -2316,11 +2867,17 @@ final class AppStore: ObservableObject {
             ? project.settings.defaultSystemPrompt
             : activePrompt.systemTemplate
 
+        let configuredModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackModel = configuredModel.isEmpty ? (selectedGenerationModels.first ?? "") : configuredModel
+        let selectedModel = modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? modelOverride!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : fallbackModel
+
         return PromptRequestBuildResult(
             request: TextGenerationRequest(
                 systemPrompt: systemPrompt,
                 userPrompt: promptResult.renderedText,
-                model: project.settings.model,
+                model: selectedModel,
                 temperature: project.settings.temperature,
                 maxTokens: project.settings.maxTokens
             ),
@@ -2492,6 +3049,8 @@ final class AppStore: ObservableObject {
         isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -2537,6 +3096,8 @@ final class AppStore: ObservableObject {
         isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -2577,6 +3138,7 @@ final class AppStore: ObservableObject {
     }
 
     private func ensureProjectBaseline() {
+        ensureGenerationModelSelection()
         adoptLegacyPromptIDsForBuiltIns()
         seedMissingBuiltInPrompts()
         ensureDefaultPromptSelections()
@@ -2669,6 +3231,32 @@ final class AppStore: ObservableObject {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+
+    private func normalizedModelSelection(_ models: [String]) -> [String] {
+        var output: [String] = []
+        var seen = Set<String>()
+
+        for model in models {
+            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if seen.insert(trimmed).inserted {
+                output.append(trimmed)
+            }
+        }
+
+        return output
+    }
+
+    private func ensureGenerationModelSelection() {
+        let normalized = normalizedModelSelection(project.settings.generationModelSelection)
+        if !normalized.isEmpty {
+            project.settings.generationModelSelection = normalized
+            return
+        }
+
+        let fallback = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        project.settings.generationModelSelection = fallback.isEmpty ? [] : [fallback]
     }
 
     private func isBuiltInPromptModified(_ prompt: PromptTemplate, comparedTo builtIn: PromptTemplate) -> Bool {

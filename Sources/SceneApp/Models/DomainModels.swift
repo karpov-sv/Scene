@@ -488,6 +488,8 @@ struct GenerationSettings: Codable, Equatable {
     var endpoint: String
     var apiKey: String
     var model: String
+    var generationModelSelection: [String]
+    var useInlineGeneration: Bool
     var temperature: Double
     var maxTokens: Int
     var enableStreaming: Bool
@@ -505,6 +507,8 @@ struct GenerationSettings: Codable, Equatable {
         endpoint: String,
         apiKey: String,
         model: String,
+        generationModelSelection: [String],
+        useInlineGeneration: Bool,
         temperature: Double,
         maxTokens: Int,
         enableStreaming: Bool,
@@ -515,6 +519,8 @@ struct GenerationSettings: Codable, Equatable {
         self.endpoint = endpoint
         self.apiKey = apiKey
         self.model = model
+        self.generationModelSelection = generationModelSelection
+        self.useInlineGeneration = useInlineGeneration
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.enableStreaming = enableStreaming
@@ -527,6 +533,8 @@ struct GenerationSettings: Codable, Equatable {
         case endpoint
         case apiKey
         case model
+        case generationModelSelection
+        case useInlineGeneration
         case temperature
         case maxTokens
         case enableStreaming
@@ -540,6 +548,22 @@ struct GenerationSettings: Codable, Equatable {
         endpoint = try container.decode(String.self, forKey: .endpoint)
         apiKey = try container.decode(String.self, forKey: .apiKey)
         model = try container.decode(String.self, forKey: .model)
+        let decodedSelection = try container.decodeIfPresent([String].self, forKey: .generationModelSelection) ?? []
+        let normalizedSelection = decodedSelection
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if normalizedSelection.isEmpty {
+            let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            generationModelSelection = trimmedModel.isEmpty ? [] : [trimmedModel]
+        } else {
+            var deduplicated: [String] = []
+            var seen = Set<String>()
+            for entry in normalizedSelection where seen.insert(entry).inserted {
+                deduplicated.append(entry)
+            }
+            generationModelSelection = deduplicated
+        }
+        useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
         temperature = try container.decode(Double.self, forKey: .temperature)
         maxTokens = try container.decode(Int.self, forKey: .maxTokens)
         enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? true
@@ -552,6 +576,8 @@ struct GenerationSettings: Codable, Equatable {
         endpoint: openAIDefaultEndpoint,
         apiKey: "",
         model: "gpt-4o-mini",
+        generationModelSelection: ["gpt-4o-mini"],
+        useInlineGeneration: false,
         temperature: 0.8,
         maxTokens: 700,
         enableStreaming: true,
