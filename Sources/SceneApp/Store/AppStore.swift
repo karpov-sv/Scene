@@ -1682,13 +1682,41 @@ final class AppStore: ObservableObject {
         }
 
         let request = makeRewriteRequest(selectedText: normalizedSelection, scene: scene).request
-        let rewritten = try await generateText(request)
-        let normalizedRewrite = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedRewrite.isEmpty else {
-            throw AIServiceError.badResponse("Rewrite result was empty.")
+        generationStatus = shouldUseStreaming ? "Rewriting..." : "Rewriting..."
+        proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
+
+        let rewritePartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            rewritePartialHandler = { [weak self] partial in
+                guard let self else { return }
+                self.generationStatus = "Rewriting..."
+                self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
+            }
+        } else {
+            rewritePartialHandler = nil
         }
 
-        return normalizedRewrite
+        do {
+            let result = try await generateTextResult(
+                request,
+                onPartial: rewritePartialHandler
+            )
+            let normalizedRewrite = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedRewrite.isEmpty else {
+                throw AIServiceError.badResponse("Rewrite result was empty.")
+            }
+
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalizedRewrite)
+            generationStatus = "Rewrote \(normalizedRewrite.count) characters."
+            return normalizedRewrite
+        } catch is CancellationError {
+            generationStatus = "Rewrite cancelled."
+            throw CancellationError()
+        } catch {
+            proseLiveUsage = nil
+            generationStatus = "Rewrite failed."
+            throw error
+        }
     }
 
     func summarizeSelectedScene() async throws -> String {

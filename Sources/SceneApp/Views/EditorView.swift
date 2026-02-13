@@ -222,6 +222,8 @@ struct EditorView: View {
                 .controlSize(.small)
                 .help("Underline (Cmd+U)")
 
+                Spacer(minLength: 0)
+
                 if editorSelection.hasSelection || isRewritingSelection {
                     Picker("Rewrite Prompt", selection: selectedRewritePromptBinding) {
                         ForEach(store.rewritePrompts) { prompt in
@@ -233,7 +235,7 @@ struct EditorView: View {
                     .labelsHidden()
                     .controlSize(.small)
                     .frame(width: 220)
-                    .disabled(isRewritingSelection || store.rewritePrompts.isEmpty)
+                    .disabled(isRewritingSelection || store.isGenerating || store.rewritePrompts.isEmpty)
 
                     Button {
                         if isRewritingSelection {
@@ -256,13 +258,14 @@ struct EditorView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(!isRewritingSelection && (!editorSelection.hasSelection || store.activeRewritePrompt == nil))
+                    .disabled(
+                        !isRewritingSelection
+                            && (!editorSelection.hasSelection || store.activeRewritePrompt == nil || store.isGenerating)
+                    )
                     .help(isRewritingSelection
                         ? "Stop rewriting."
                         : "Rewrite the selected text using the selected rewrite prompt.")
                 }
-
-                Spacer(minLength: 0)
             }
         }
         .padding(12)
