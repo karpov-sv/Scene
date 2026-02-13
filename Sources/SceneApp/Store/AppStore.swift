@@ -3,6 +3,85 @@ import AppKit
 
 @MainActor
 final class AppStore: ObservableObject {
+    struct PromptImportReport {
+        let importedCount: Int
+        let skippedCount: Int
+    }
+
+    struct CompendiumImportReport {
+        let importedCount: Int
+        let skippedCount: Int
+    }
+
+    private enum DataExchangeError: LocalizedError {
+        case projectNotOpen
+        case invalidPayloadType(expected: String, actual: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .projectNotOpen:
+                return "No project is currently open."
+            case let .invalidPayloadType(expected, actual):
+                return "Invalid import file type '\(actual)'. Expected '\(expected)'."
+            }
+        }
+    }
+
+    private struct PromptTransferEnvelope: Codable {
+        var version: String
+        var type: String
+        var exportedAt: Date
+        var prompts: [PromptTransferRecord]
+    }
+
+    private struct PromptTransferRecord: Codable {
+        var templateID: UUID?
+        var category: String
+        var title: String
+        var userTemplate: String
+        var systemTemplate: String
+    }
+
+    private struct CompendiumTransferEnvelope: Codable {
+        var version: String
+        var type: String
+        var exportedAt: Date
+        var entries: [CompendiumTransferRecord]
+    }
+
+    private struct CompendiumTransferRecord: Codable {
+        var category: String
+        var title: String
+        var body: String
+        var tags: [String]
+    }
+
+    private struct ProjectTransferEnvelope: Codable {
+        var version: String
+        var type: String
+        var exportedAt: Date
+        var project: StoryProject
+    }
+
+    private static let transferVersion = "1.0"
+    private static let promptTransferType = "scene-prompts"
+    private static let compendiumTransferType = "scene-compendium"
+    private static let projectTransferType = "scene-project"
+    private static let builtInPromptIDs = Set(PromptTemplate.builtInTemplates.map(\.id))
+
+    private static let transferEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    private static let transferDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
     struct SceneLocation {
         let chapterIndex: Int
         let sceneIndex: Int
@@ -712,6 +791,273 @@ final class AppStore: ObservableObject {
                 lastError = error.localizedDescription
             }
         }
+    }
+
+    // MARK: - Data Exchange
+
+    @discardableResult
+    func exportPrompts(to fileURL: URL) throws -> Int {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let builtInByID = Dictionary(uniqueKeysWithValues: PromptTemplate.builtInTemplates.map { ($0.id, $0) })
+        let exportablePrompts: [PromptTransferRecord] = project.prompts.compactMap { prompt in
+            if let builtIn = builtInByID[prompt.id],
+               !isBuiltInPromptModified(prompt, comparedTo: builtIn) {
+                return nil
+            }
+
+            return PromptTransferRecord(
+                templateID: prompt.id,
+                category: prompt.category.rawValue,
+                title: prompt.title,
+                userTemplate: prompt.userTemplate,
+                systemTemplate: prompt.systemTemplate
+            )
+        }
+
+        let envelope = PromptTransferEnvelope(
+            version: Self.transferVersion,
+            type: Self.promptTransferType,
+            exportedAt: .now,
+            prompts: exportablePrompts
+        )
+
+        let data = try Self.transferEncoder.encode(envelope)
+        try data.write(to: fileURL, options: Data.WritingOptions.atomic)
+        return exportablePrompts.count
+    }
+
+    @discardableResult
+    func importPrompts(from fileURL: URL) throws -> PromptImportReport {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        let envelope = try Self.transferDecoder.decode(PromptTransferEnvelope.self, from: data)
+        guard envelope.type == Self.promptTransferType else {
+            throw DataExchangeError.invalidPayloadType(
+                expected: Self.promptTransferType,
+                actual: envelope.type
+            )
+        }
+
+        var usedTitlesByCategory: [PromptCategory: Set<String>] = [:]
+        for category in PromptCategory.allCases {
+            let titles = project.prompts
+                .filter { $0.category == category }
+                .map { normalizedPromptTitle($0.title) }
+            usedTitlesByCategory[category] = Set(titles)
+        }
+
+        var importedCount = 0
+        var skippedCount = 0
+
+        for record in envelope.prompts {
+            guard let category = PromptCategory(rawValue: record.category) else {
+                skippedCount += 1
+                continue
+            }
+
+            if let templateID = record.templateID,
+               Self.builtInPromptIDs.contains(templateID),
+               let index = promptIndex(for: templateID) {
+                let normalizedTitle = normalizedPromptTitle(project.prompts[index].title)
+                usedTitlesByCategory[project.prompts[index].category]?.remove(normalizedTitle)
+                project.prompts[index].title = record.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? project.prompts[index].title
+                    : record.title
+                project.prompts[index].userTemplate = record.userTemplate
+                project.prompts[index].systemTemplate = record.systemTemplate
+                usedTitlesByCategory[project.prompts[index].category, default: []]
+                    .insert(normalizedPromptTitle(project.prompts[index].title))
+                importedCount += 1
+                continue
+            }
+
+            let title = makeUniqueImportedTitle(
+                baseTitle: record.title,
+                fallback: promptTitleBase(for: category),
+                usedTitles: &usedTitlesByCategory[category, default: []]
+            )
+
+            let prompt = PromptTemplate(
+                id: UUID(),
+                category: category,
+                title: title,
+                userTemplate: record.userTemplate,
+                systemTemplate: record.systemTemplate
+            )
+
+            project.prompts.append(prompt)
+            importedCount += 1
+        }
+
+        ensureProjectBaseline()
+        ensureValidSelections()
+        saveProject(forceWrite: true)
+
+        return PromptImportReport(importedCount: importedCount, skippedCount: skippedCount)
+    }
+
+    @discardableResult
+    func exportCompendium(to fileURL: URL) throws -> Int {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let entries = project.compendium.map { entry in
+            CompendiumTransferRecord(
+                category: entry.category.rawValue,
+                title: entry.title,
+                body: entry.body,
+                tags: entry.tags
+            )
+        }
+
+        let envelope = CompendiumTransferEnvelope(
+            version: Self.transferVersion,
+            type: Self.compendiumTransferType,
+            exportedAt: .now,
+            entries: entries
+        )
+
+        let data = try Self.transferEncoder.encode(envelope)
+        try data.write(to: fileURL, options: .atomic)
+        return entries.count
+    }
+
+    @discardableResult
+    func importCompendium(from fileURL: URL) throws -> CompendiumImportReport {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        let envelope = try Self.transferDecoder.decode(CompendiumTransferEnvelope.self, from: data)
+        guard envelope.type == Self.compendiumTransferType else {
+            throw DataExchangeError.invalidPayloadType(
+                expected: Self.compendiumTransferType,
+                actual: envelope.type
+            )
+        }
+
+        var usedTitlesByCategory: [CompendiumCategory: Set<String>] = [:]
+        for category in CompendiumCategory.allCases {
+            let titles = project.compendium
+                .filter { $0.category == category }
+                .map { normalizedEntryTitle($0.title) }
+            usedTitlesByCategory[category] = Set(titles)
+        }
+
+        var importedCount = 0
+        var skippedCount = 0
+
+        for record in envelope.entries {
+            guard let category = CompendiumCategory(rawValue: record.category) else {
+                skippedCount += 1
+                continue
+            }
+
+            let title = makeUniqueImportedTitle(
+                baseTitle: record.title,
+                fallback: "Imported Entry",
+                usedTitles: &usedTitlesByCategory[category, default: []]
+            )
+
+            let tags = sanitizeImportedTags(record.tags)
+            let entry = CompendiumEntry(
+                id: UUID(),
+                category: category,
+                title: title,
+                body: record.body,
+                tags: tags,
+                updatedAt: .now
+            )
+
+            project.compendium.append(entry)
+            importedCount += 1
+        }
+
+        ensureValidSelections()
+        saveProject(forceWrite: true)
+
+        return CompendiumImportReport(importedCount: importedCount, skippedCount: skippedCount)
+    }
+
+    func exportProjectExchange(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let envelope = ProjectTransferEnvelope(
+            version: Self.transferVersion,
+            type: Self.projectTransferType,
+            exportedAt: .now,
+            project: project
+        )
+
+        let data = try Self.transferEncoder.encode(envelope)
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    func importProjectExchange(from fileURL: URL) throws {
+        let data = try Data(contentsOf: fileURL)
+        let envelope = try Self.transferDecoder.decode(ProjectTransferEnvelope.self, from: data)
+        guard envelope.type == Self.projectTransferType else {
+            throw DataExchangeError.invalidPayloadType(
+                expected: Self.projectTransferType,
+                actual: envelope.type
+            )
+        }
+
+        cancelProjectTasksForSwitch()
+
+        project = envelope.project
+        isProjectOpen = true
+        workshopInput = ""
+        beatInput = ""
+        beatInputHistory = []
+        generationStatus = ""
+        workshopStatus = ""
+        isGenerating = false
+        workshopIsGenerating = false
+        proseLiveUsage = nil
+        workshopLiveUsage = nil
+        availableRemoteModels = []
+        isDiscoveringModels = false
+        modelDiscoveryStatus = ""
+
+        ensureProjectBaseline()
+        ensureValidSelections()
+
+        if project.settings.provider.supportsModelDiscovery {
+            scheduleModelDiscovery(immediate: true)
+        }
+
+        saveProject(forceWrite: true)
+    }
+
+    func exportProjectAsPlainText(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let text = makeProjectPlainTextExport()
+        let data = Data(text.utf8)
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    func exportProjectAsHTML(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let html = makeProjectHTMLExport()
+        let data = Data(html.utf8)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     // MARK: - Chapter / Scene
@@ -1943,6 +2289,155 @@ final class AppStore: ObservableObject {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+
+    private func isBuiltInPromptModified(_ prompt: PromptTemplate, comparedTo builtIn: PromptTemplate) -> Bool {
+        prompt.category != builtIn.category
+            || prompt.title != builtIn.title
+            || prompt.userTemplate != builtIn.userTemplate
+            || prompt.systemTemplate != builtIn.systemTemplate
+    }
+
+    private func normalizedEntryTitle(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private func makeUniqueImportedTitle(
+        baseTitle: String,
+        fallback: String,
+        usedTitles: inout Set<String>
+    ) -> String {
+        let trimmedBase = baseTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedBase = trimmedBase.isEmpty ? fallback : trimmedBase
+
+        var attempt = 0
+        while true {
+            let candidate: String
+            if attempt == 0 {
+                candidate = normalizedBase
+            } else if attempt == 1 {
+                candidate = "\(normalizedBase) (Imported)"
+            } else {
+                candidate = "\(normalizedBase) (Imported \(attempt))"
+            }
+
+            let normalizedCandidate = normalizedEntryTitle(candidate)
+            if usedTitles.insert(normalizedCandidate).inserted {
+                return candidate
+            }
+
+            attempt += 1
+        }
+    }
+
+    private func sanitizeImportedTags(_ rawTags: [String]) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+
+        for rawTag in rawTags {
+            let trimmed = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let normalized = trimmed.lowercased()
+            guard seen.insert(normalized).inserted else { continue }
+            output.append(trimmed)
+        }
+
+        return output
+    }
+
+    private func makeProjectPlainTextExport() -> String {
+        var lines: [String] = []
+        lines.append(currentProjectName)
+
+        for chapter in project.chapters {
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title
+            lines.append("")
+            lines.append(chapterTitle)
+
+            for scene in chapter.scenes {
+                let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Untitled Scene"
+                    : scene.title
+                lines.append("")
+                lines.append(sceneTitle)
+                lines.append(scene.content)
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeProjectHTMLExport() -> String {
+        var html: [String] = []
+        html.append("<!doctype html>")
+        html.append("<html lang=\"en\">")
+        html.append("<head>")
+        html.append("  <meta charset=\"utf-8\">")
+        html.append("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+        html.append("  <title>\(escapeHTML(currentProjectName))</title>")
+        html.append("  <style>")
+        html.append("    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem auto; max-width: 980px; line-height: 1.45; padding: 0 1rem; }")
+        html.append("    h1 { margin-bottom: 1.25rem; }")
+        html.append("    h2 { margin-top: 2rem; margin-bottom: 0.6rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }")
+        html.append("    h3 { margin-top: 1.25rem; margin-bottom: 0.45rem; }")
+        html.append("    article { margin-bottom: 1rem; }")
+        html.append("    p { margin: 0 0 0.75rem 0; }")
+        html.append("  </style>")
+        html.append("</head>")
+        html.append("<body>")
+        html.append("  <h1>\(escapeHTML(currentProjectName))</h1>")
+
+        for chapter in project.chapters {
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Untitled Chapter"
+                : chapter.title
+            html.append("  <section>")
+            html.append("    <h2>\(escapeHTML(chapterTitle))</h2>")
+
+            for scene in chapter.scenes {
+                let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Untitled Scene"
+                    : scene.title
+                html.append("    <article>")
+                html.append("      <h3>\(escapeHTML(sceneTitle))</h3>")
+                html.append(htmlParagraphs(for: scene.content, indent: "      "))
+                html.append("    </article>")
+            }
+
+            html.append("  </section>")
+        }
+
+        html.append("</body>")
+        html.append("</html>")
+
+        return html.joined(separator: "\n")
+    }
+
+    private func htmlParagraphs(for rawText: String, indent: String) -> String {
+        let normalized = rawText.replacingOccurrences(of: "\r\n", with: "\n")
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "\(indent)<p></p>"
+        }
+
+        let chunks = trimmed.components(separatedBy: "\n\n")
+        return chunks.map { chunk in
+            let escaped = escapeHTML(chunk).replacingOccurrences(of: "\n", with: "<br>")
+            return "\(indent)<p>\(escaped)</p>"
+        }.joined(separator: "\n")
+    }
+
+    private func escapeHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 
     private static func makeInitialWorkshopSession(name: String) -> WorkshopSession {

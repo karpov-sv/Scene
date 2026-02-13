@@ -89,5 +89,8 @@ struct SceneApp: App {
         }
         .windowToolbarStyle(.unified)
         .windowResizability(.contentMinSize)
+        .commands {
+            SceneFileCommands()
+        }
     }
 }

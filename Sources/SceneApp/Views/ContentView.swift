@@ -38,6 +38,7 @@ struct ContentView: View {
 
     var body: some View {
         rootContent
+            .focusedSceneValue(\.projectMenuActions, projectMenuActions)
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
                     .environmentObject(store)
@@ -237,11 +238,72 @@ struct ContentView: View {
         isConversationsVisible ? "Hide Conversations" : "Show Conversations"
     }
 
+    private var projectMenuActions: ProjectMenuActions {
+        ProjectMenuActions(
+            importProjectJSON: importProjectJSONFromMenu,
+            exportProjectJSON: exportProjectJSONFromMenu,
+            exportProjectPlainText: exportProjectPlainTextFromMenu,
+            exportProjectHTML: exportProjectHTMLFromMenu,
+            canExportProject: store.isProjectOpen
+        )
+    }
+
     private func toggleCompendiumPanel() {
         writingSidePanel = writingSidePanel == .compendium ? .none : .compendium
     }
 
     private func toggleSummaryPanel() {
         writingSidePanel = writingSidePanel == .summary ? .none : .summary
+    }
+
+    private func importProjectJSONFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectExchangeImportURL() else {
+            return
+        }
+        guard ProjectDialogs.confirmProjectImportReplacement() else {
+            return
+        }
+
+        do {
+            try store.importProjectExchange(from: fileURL)
+        } catch {
+            store.lastError = "Project import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectJSONFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectExchangeExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectExchange(to: fileURL)
+        } catch {
+            store.lastError = "Project export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectPlainTextFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectTextExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectAsPlainText(to: fileURL)
+        } catch {
+            store.lastError = "Plain text export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectHTMLFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectHTMLExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectAsHTML(to: fileURL)
+        } catch {
+            store.lastError = "HTML export failed: \(error.localizedDescription)"
+        }
     }
 }

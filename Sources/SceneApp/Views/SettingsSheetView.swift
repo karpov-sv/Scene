@@ -23,6 +23,7 @@ struct SettingsSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedPromptID: UUID?
+    @State private var dataExchangeStatus: String = ""
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -199,6 +200,55 @@ struct SettingsSheetView: View {
                     Text(store.currentProjectPathDisplay)
                         .font(.system(.footnote, design: .monospaced))
                         .textSelection(.enabled)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Data Exchange")
+                        .font(.headline)
+
+                    Text("Transfer prompt templates, compendium entries, and full projects as JSON files.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        Text("Prompts")
+                            .frame(width: 96, alignment: .leading)
+                        Button("Export...") {
+                            exportPrompts()
+                        }
+                        Button("Import...") {
+                            importPrompts()
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("Compendium")
+                            .frame(width: 96, alignment: .leading)
+                        Button("Export...") {
+                            exportCompendium()
+                        }
+                        Button("Import...") {
+                            importCompendium()
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("Project")
+                            .frame(width: 96, alignment: .leading)
+                        Button("Export...") {
+                            exportProjectExchange()
+                        }
+                        Button("Import...") {
+                            importProjectExchange()
+                        }
+                    }
+
+                    if !dataExchangeStatus.isEmpty {
+                        Text(dataExchangeStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
                 }
             }
             .padding(20)
@@ -653,5 +703,116 @@ struct SettingsSheetView: View {
             return "\(rounded / 60) min"
         }
         return "\(rounded) sec"
+    }
+
+    private func exportPrompts() {
+        guard let fileURL = ProjectDialogs.choosePromptExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            let count = try store.exportPrompts(to: fileURL)
+            dataExchangeStatus = "Exported \(count) prompt template(s)."
+        } catch {
+            store.lastError = "Prompt export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importPrompts() {
+        guard let fileURL = ProjectDialogs.choosePromptImportURL() else {
+            return
+        }
+
+        do {
+            let report = try store.importPrompts(from: fileURL)
+            dataExchangeStatus = importStatusMessage(
+                prefix: "prompt template",
+                importedCount: report.importedCount,
+                skippedCount: report.skippedCount
+            )
+
+            let hasValidSelection = selectedPromptID.flatMap { selectedID in
+                store.project.prompts.first(where: { $0.id == selectedID })
+            } != nil
+            if !hasValidSelection {
+                selectedPromptID = store.project.selectedProsePromptID ?? store.project.prompts.first?.id
+            }
+        } catch {
+            store.lastError = "Prompt import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportCompendium() {
+        guard let fileURL = ProjectDialogs.chooseCompendiumExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            let count = try store.exportCompendium(to: fileURL)
+            dataExchangeStatus = "Exported \(count) compendium entr\(count == 1 ? "y" : "ies")."
+        } catch {
+            store.lastError = "Compendium export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importCompendium() {
+        guard let fileURL = ProjectDialogs.chooseCompendiumImportURL() else {
+            return
+        }
+
+        do {
+            let report = try store.importCompendium(from: fileURL)
+            dataExchangeStatus = importStatusMessage(
+                prefix: "compendium entry",
+                importedCount: report.importedCount,
+                skippedCount: report.skippedCount
+            )
+        } catch {
+            store.lastError = "Compendium import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectExchange() {
+        guard let fileURL = ProjectDialogs.chooseProjectExchangeExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectExchange(to: fileURL)
+            dataExchangeStatus = "Exported full project JSON."
+        } catch {
+            store.lastError = "Project export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importProjectExchange() {
+        guard let fileURL = ProjectDialogs.chooseProjectExchangeImportURL() else {
+            return
+        }
+        guard ProjectDialogs.confirmProjectImportReplacement() else {
+            return
+        }
+
+        do {
+            try store.importProjectExchange(from: fileURL)
+            selectedPromptID = store.project.selectedProsePromptID
+                ?? store.project.selectedWorkshopPromptID
+                ?? store.project.prompts.first?.id
+            dataExchangeStatus = "Imported full project JSON."
+        } catch {
+            store.lastError = "Project import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importStatusMessage(
+        prefix: String,
+        importedCount: Int,
+        skippedCount: Int
+    ) -> String {
+        let importedLabel = "\(importedCount) \(prefix)\(importedCount == 1 ? "" : "s")"
+        if skippedCount > 0 {
+            return "Imported \(importedLabel), skipped \(skippedCount) invalid item(s)."
+        }
+        return "Imported \(importedLabel)."
     }
 }

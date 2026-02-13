@@ -59,6 +59,155 @@ enum ProjectDialogs {
         return selectedURL
     }
 
+    static func choosePromptExportURL(defaultProjectName: String) -> URL? {
+        chooseJSONExportURL(
+            title: "Export Prompt Templates",
+            message: "Export prompt templates as JSON (includes modified built-in templates).",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName)-prompts.json"
+        )
+    }
+
+    static func choosePromptImportURL() -> URL? {
+        chooseJSONImportURL(
+            title: "Import Prompt Templates",
+            message: "Select a prompt template export JSON file.",
+            prompt: "Import"
+        )
+    }
+
+    static func chooseCompendiumExportURL(defaultProjectName: String) -> URL? {
+        chooseJSONExportURL(
+            title: "Export Compendium",
+            message: "Export compendium entries as JSON.",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName)-compendium.json"
+        )
+    }
+
+    static func chooseCompendiumImportURL() -> URL? {
+        chooseJSONImportURL(
+            title: "Import Compendium",
+            message: "Select a compendium export JSON file.",
+            prompt: "Import"
+        )
+    }
+
+    static func chooseProjectExchangeExportURL(defaultProjectName: String) -> URL? {
+        chooseJSONExportURL(
+            title: "Export Project as JSON",
+            message: "Export the full project as a single JSON file.",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName)-project.json"
+        )
+    }
+
+    static func chooseProjectTextExportURL(defaultProjectName: String) -> URL? {
+        chooseTypedExportURL(
+            title: "Export Project as Plain Text",
+            message: "Export chapter and scene text into a single plain text file.",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName).txt",
+            contentType: .plainText
+        )
+    }
+
+    static func chooseProjectHTMLExportURL(defaultProjectName: String) -> URL? {
+        chooseTypedExportURL(
+            title: "Export Project as HTML",
+            message: "Export chapter and scene text into a single HTML file.",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName).html",
+            contentType: .html
+        )
+    }
+
+    static func chooseProjectExchangeImportURL() -> URL? {
+        chooseJSONImportURL(
+            title: "Import Project from JSON",
+            message: "Select a full-project JSON export to import.",
+            prompt: "Import"
+        )
+    }
+
+    static func confirmProjectImportReplacement() -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Replace Current Project Content?"
+        alert.informativeText = "Importing a project JSON will replace chapters, scenes, compendium, prompts, and workshop chats in the current project."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private static func chooseJSONExportURL(
+        title: String,
+        message: String,
+        prompt: String,
+        suggestedName: String
+    ) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = title
+        panel.message = message
+        panel.prompt = prompt
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = sanitizeFileName(suggestedName)
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return nil
+        }
+
+        return selectedURL
+    }
+
+    private static func chooseJSONImportURL(
+        title: String,
+        message: String,
+        prompt: String
+    ) -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.message = message
+        panel.prompt = prompt
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.allowedContentTypes = [.json]
+
+        guard panel.runModal() == .OK else {
+            return nil
+        }
+
+        return panel.urls.first
+    }
+
+    private static func chooseTypedExportURL(
+        title: String,
+        message: String,
+        prompt: String,
+        suggestedName: String,
+        contentType: UTType
+    ) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = title
+        panel.message = message
+        panel.prompt = prompt
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [contentType]
+        panel.nameFieldStringValue = sanitizeFileName(suggestedName)
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return nil
+        }
+
+        return selectedURL
+    }
+
     private static func sanitizeFileName(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = trimmed.isEmpty ? "Untitled" : trimmed
