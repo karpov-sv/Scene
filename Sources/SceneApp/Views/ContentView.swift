@@ -256,7 +256,7 @@ struct ContentView: View {
                 store.requestGlobalSearchFocus(scope: .scene)
             },
             findInProject: {
-                store.requestGlobalSearchFocus(scope: .project)
+                store.requestGlobalSearchFocus(scope: .all)
             },
             findNext: activateNextSearchResult,
             findPrevious: activatePreviousSearchResult,

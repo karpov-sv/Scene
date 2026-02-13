@@ -144,6 +144,7 @@ final class AppStore: ObservableObject {
     }
 
     enum GlobalSearchScope: String, CaseIterable, Identifiable {
+        case all
         case scene
         case project
         case compendium
@@ -154,6 +155,8 @@ final class AppStore: ObservableObject {
 
         var label: String {
             switch self {
+            case .all:
+                return "All"
             case .scene:
                 return "Scene"
             case .project:
@@ -313,13 +316,13 @@ final class AppStore: ObservableObject {
     @Published var isDiscoveringModels: Bool = false
     @Published var modelDiscoveryStatus: String = ""
     @Published var globalSearchQuery: String = ""
-    @Published var globalSearchScope: GlobalSearchScope = .project
+    @Published var globalSearchScope: GlobalSearchScope = .all
     @Published private(set) var globalSearchResults: [GlobalSearchResult] = []
     @Published private(set) var selectedGlobalSearchResultID: String?
     @Published private(set) var globalSearchFocusRequestID: UUID = UUID()
     @Published var isGlobalSearchVisible: Bool = false
     @Published private(set) var lastGlobalSearchQuery: String = ""
-    @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .project
+    @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
 
     @Published var showingSettings: Bool = false
@@ -4166,6 +4169,41 @@ final class AppStore: ObservableObject {
         var output: [GlobalSearchResult] = []
 
         switch scope {
+        case .all:
+            for chapter in project.chapters {
+                for scene in chapter.scenes {
+                    appendSceneMatches(
+                        in: chapter,
+                        scene: scene,
+                        query: normalizedQuery,
+                        options: compareOptions,
+                        maxResults: maxResults,
+                        output: &output
+                    )
+                    if output.count >= maxResults { return output }
+                }
+            }
+            appendCompendiumMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+            if output.count >= maxResults { return output }
+            appendSummaryMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+            if output.count >= maxResults { return output }
+            appendChatMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+
         case .scene:
             guard let sceneID = selectedSceneID,
                   let location = sceneLocation(for: sceneID) else {
@@ -4458,13 +4496,13 @@ final class AppStore: ObservableObject {
     private func resetGlobalSearchState() {
         searchDebounceTask?.cancel()
         globalSearchQuery = ""
-        globalSearchScope = .project
+        globalSearchScope = .all
         globalSearchResults = []
         selectedGlobalSearchResultID = nil
         pendingSceneSearchSelection = nil
         isGlobalSearchVisible = false
         lastGlobalSearchQuery = ""
-        lastGlobalSearchScope = .project
+        lastGlobalSearchScope = .all
     }
 
     private func chapterTitle(forSceneID sceneID: UUID) -> String {

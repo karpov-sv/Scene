@@ -113,8 +113,8 @@ struct BinderSidebarView: View {
     }
 
     private var searchPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
                 TextField("Search", text: searchQueryBinding)
                     .textFieldStyle(.roundedBorder)
                     .focused($isSearchFieldFocused)
@@ -125,14 +125,20 @@ struct BinderSidebarView: View {
                         closeSearchInterface()
                     }
 
-                Picker("", selection: searchScopeBinding) {
-                    ForEach(AppStore.GlobalSearchScope.allCases) { scope in
-                        Text(scope.label).tag(scope)
-                    }
+                Button {
+                    closeSearchInterface()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 128)
+                .buttonStyle(.plain)
+                .help("Close Search")
+            }
+
+            ScopeFlowLayout(spacing: 4) {
+                ForEach(AppStore.GlobalSearchScope.allCases) { scope in
+                    scopePill(scope)
+                }
             }
 
             if store.globalSearchScope == .scene && store.selectedSceneID == nil {
@@ -143,13 +149,24 @@ struct BinderSidebarView: View {
                 Text("\(store.globalSearchResults.count) result\(store.globalSearchResults.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
-                Text("Search scenes, compendium, summaries, and chats.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)
+    }
+
+    private func scopePill(_ scope: AppStore.GlobalSearchScope) -> some View {
+        let isSelected = store.globalSearchScope == scope
+        return Button {
+            store.updateGlobalSearchScope(scope)
+        } label: {
+            Text(scope.label)
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var searchResultsList: some View {
@@ -365,5 +382,65 @@ struct BinderSidebarView: View {
     private func closeSearchInterface() {
         store.dismissGlobalSearch()
         isSearchFieldFocused = false
+    }
+}
+
+private struct ScopeFlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrangeRows(proposal: proposal, subviews: subviews)
+        guard let lastRow = rows.last else { return .zero }
+        let height = lastRow.origin.y + lastRow.height
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = arrangeRows(proposal: ProposedViewSize(width: bounds.width, height: nil), subviews: subviews)
+        for row in rows {
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: bounds.minX + item.x, y: bounds.minY + row.origin.y),
+                    proposal: ProposedViewSize(item.size)
+                )
+            }
+        }
+    }
+
+    private struct RowItem {
+        let index: Int
+        let x: CGFloat
+        let size: CGSize
+    }
+
+    private struct Row {
+        var origin: CGPoint
+        var height: CGFloat
+        var items: [RowItem]
+    }
+
+    private func arrangeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [Row] = []
+        var currentRow = Row(origin: .zero, height: 0, items: [])
+        var x: CGFloat = 0
+
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if !currentRow.items.isEmpty && x + size.width > maxWidth {
+                rows.append(currentRow)
+                let nextY = currentRow.origin.y + currentRow.height + spacing
+                currentRow = Row(origin: CGPoint(x: 0, y: nextY), height: 0, items: [])
+                x = 0
+            }
+            currentRow.items.append(RowItem(index: index, x: x, size: size))
+            currentRow.height = max(currentRow.height, size.height)
+            x += size.width + spacing
+        }
+
+        if !currentRow.items.isEmpty {
+            rows.append(currentRow)
+        }
+        return rows
     }
 }
