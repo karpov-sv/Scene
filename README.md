@@ -1,12 +1,24 @@
-# Scene (Native macOS App Prototype)
+# Scene
 
-`Scene` is a standalone SwiftUI macOS writing tool prototype (no WebView) with:
+<img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" alt="Scene app icon" width="128" />
 
-- Binder-style chapter/scene navigation
-- Scene editor with AI-assisted prose generation
-- Compendium (characters, locations, lore, items, notes)
-- Workshop chat with multi-session conversations
-- Local project persistence
+`Scene` is a standalone SwiftUI macOS writing tool (no WebView).
+
+## Features
+
+- Binder-style chapter and scene navigation with reordering.
+- Rich text scene editor with bold/italic/underline formatting and keyboard shortcuts.
+- AI prose generation from story beats with streaming, cancellation, payload preview, and token usage stats.
+- AI rewrite actions (rewrite/expand/shorten) on selected text via prompt templates.
+- Scene and chapter summary workflows with editable summaries and streaming updates.
+- Compendium with categories (characters, locations, lore, items, notes).
+- Scene-local context selection using compendium entries, scene summaries, and chapter summaries.
+- Mention-based context injection in beat/chat inputs via `@tags` and `#scenes` with autocomplete.
+- Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
+- Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
+- Project-local settings for AI provider, prompt templates, and autosave.
+- Data exchange for prompts, compendium, and projects, plus plain text and HTML project export.
+- Native document workflow with `.sceneproj` project bundles.
 
 ## Requirements
 
@@ -33,14 +45,21 @@ Scene/
    │  ├─ AIService.swift
    │  ├─ OpenAICompatibleAIService.swift
    │  └─ PersistenceService.swift
+   ├─ Utilities/
+   │  ├─ MentionParsing.swift
+   │  └─ ProjectDialogs.swift
    ├─ Store/
    │  └─ AppStore.swift
    └─ Views/
+      ├─ SceneFileCommands.swift
+      ├─ ProjectMenuActions.swift
       ├─ ContentView.swift
       ├─ BinderSidebarView.swift
       ├─ EditorView.swift
+      ├─ SceneSummaryPanelView.swift
       ├─ CompendiumView.swift
       ├─ WorkshopChatView.swift
+      ├─ MentionAutocompleteListView.swift
       └─ SettingsSheetView.swift
 ```
 
@@ -48,20 +67,21 @@ Scene/
 
 - `Models/`: Codable domain objects (project, scenes, compendium, prompts, workshop sessions) and generation request/response models.
 - `Services/`: persistence and provider-specific AI integration.
+- `Utilities/`: shared helpers for native dialogs and mention parsing/autocomplete state.
 - `Store/AppStore.swift`: central app state, mutations, selection logic, and async generation/chat workflows.
-- `Views/`: SwiftUI UI composition for writing workspace, compendium, workshop, and settings.
+- `Views/`: SwiftUI UI composition for writing workspace, summary panel, compendium, workshop, settings, and app/file commands.
 
 ## Build
 
+Run commands from the `Scene` project directory.
+
 ```bash
-cd /Users/karpov/compwork/Scene
 swift build
 ```
 
 ## Run (Development)
 
 ```bash
-cd /Users/karpov/compwork/Scene
 swift run SceneApp
 ```
 
@@ -77,7 +97,6 @@ swift run SceneApp
 ### Option 2: Local release executable via SwiftPM
 
 ```bash
-cd /Users/karpov/compwork/Scene
 swift build -c release
 ```
 
@@ -94,7 +113,6 @@ You can run this executable directly from Terminal.
 Generate and build the macOS app bundle in one command:
 
 ```bash
-cd /Users/karpov/compwork/Scene
 ./scripts/build-gui-app.sh
 ```
 
@@ -130,6 +148,21 @@ Script options:
   - streaming mode
   - request timeout (default: 5 minutes)
 
+## Import & Export
+
+- `File -> Import -> Project JSON...` imports a full project snapshot from JSON.
+- `File -> Export -> Project JSON...` exports the full project as a single JSON file.
+- `File -> Export -> Project Plain Text...` exports as one `.txt` file in chapter/scene order.
+- `File -> Export -> Project HTML...` exports as one `.html` file with semantic headings and paragraphs.
+- Project Settings -> General -> Data Exchange also provides:
+  - prompt template export/import
+  - compendium export/import
+  - project JSON export/import
+- Prompt export includes:
+  - all custom templates
+  - built-in templates only when they were modified
+- Prompt import updates built-in templates by ID when present, and adds non-built-in templates with duplicate-safe naming.
+
 ## Scene Context Behavior
 
 - Scene context selection is scene-local and persisted in project data.
@@ -144,6 +177,11 @@ Script options:
 
 ## Recent Changes
 
+- Added `File` menu Import/Export submenus with native dialogs.
+- Enabled project JSON import even when no project content is currently open.
+- Added single-file project export formats for plain text and HTML.
+- Added prompt/compendium/project data exchange controls in Project Settings.
+- Updated prompt export/import to preserve modified built-in templates.
 - Added persistent scene-local context selection for scene summaries and chapter summaries.
 - Extended Scene Context sheet with searchable multi-source selection (compendium + scene summaries + chapter summaries).
 - Removed hardcoded compendium context truncation and count restrictions in Swift context construction.
@@ -158,3 +196,4 @@ Prompt templates can use:
 - `{beat}`
 - `{scene}`
 - `{context}`
+- `{conversation}`
