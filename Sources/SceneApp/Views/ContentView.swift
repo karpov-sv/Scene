@@ -108,15 +108,13 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
                     }
-                    .foregroundStyle(writingSidePanel == .compendium ? Color.accentColor : Color.primary)
                     .help(compendiumToggleHelpText)
 
                     Button {
                         toggleSummaryPanel()
                     } label: {
-                        Image(systemName: "text.alignleft")
+                        Image(systemName: writingSidePanel == .summary ? "doc.plaintext.fill" : "doc.plaintext")
                     }
-                    .foregroundStyle(writingSidePanel == .summary ? Color.accentColor : Color.primary)
                     .help(summaryToggleHelpText)
                 }
             } else {
@@ -132,48 +130,41 @@ struct ContentView: View {
         }
     }
 
-    private var workspacePanel: AnyView {
+    @ViewBuilder
+    private var workspacePanel: some View {
         if selectedTab == .writing {
             if writingSidePanel == .none {
-                return AnyView(
-                    EditorView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                )
-            }
-
-            let sidePanel: AnyView
-            switch writingSidePanel {
-            case .compendium:
-                sidePanel = AnyView(
-                    CompendiumView()
-                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
-                )
-            case .summary:
-                sidePanel = AnyView(
-                    SceneSummaryPanelView(scope: $summaryScope)
-                        .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
-                )
-            case .none:
-                sidePanel = AnyView(EmptyView())
-            }
-
-            return AnyView(
+                EditorView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
                 HSplitView {
                     EditorView()
                         .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
 
-                    sidePanel
+                    writingSidePanelContent
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            )
-        }
-
-        return AnyView(
+            }
+        } else {
             WorkshopChatView(
                 layout: .embeddedTrailingSessions,
                 showsConversationsSidebar: isConversationsVisible
             )
-        )
+        }
+    }
+
+    @ViewBuilder
+    private var writingSidePanelContent: some View {
+        switch writingSidePanel {
+        case .compendium:
+            CompendiumView()
+                .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
+        case .summary:
+            SceneSummaryPanelView(scope: $summaryScope)
+                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
+        case .none:
+            EmptyView()
+        }
     }
 
     private var closedProjectView: some View {
