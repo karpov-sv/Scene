@@ -436,13 +436,6 @@ struct SettingsSheetView: View {
             }
             .padding(20)
         }
-        .task {
-            if store.project.settings.provider.supportsModelDiscovery,
-               store.availableRemoteModels.isEmpty,
-               !store.isDiscoveringModels {
-                await store.refreshAvailableModels(showErrors: false)
-            }
-        }
     }
 
     private var promptTemplatesTab: some View {
