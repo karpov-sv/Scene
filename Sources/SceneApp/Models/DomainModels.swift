@@ -284,7 +284,7 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         category: .rewrite,
         title: "Rewrite",
         userTemplate: """
-        Rewrite the selected passage while preserving its intent and continuity.
+        Rewrite the selected passage.
 
         CHAPTER:
         {{chapter_title}}
@@ -295,20 +295,15 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         SELECTED PASSAGE:
         {{selection}}
 
-        CURRENT SCENE (RECENT EXCERPT):
-        {{scene_tail(chars=4500)}}
+        LOCAL SELECTION CONTEXT:
+        {{selection_context}}
 
-        CONTEXT:
-        {{context}}
-
-        Requirements:
-        - Keep meaning, tone, and narrative intent.
-        - Maintain POV and tense.
-        - Improve flow, clarity, and natural phrasing.
+        OPTIONAL SCENE CONTEXT:
+        {{context(max_chars=2200)}}
 
         Return only the rewritten passage.
         """,
-        systemTemplate: "You are a fiction editing assistant. Preserve intent and continuity while improving readability and style. Return only the rewritten passage."
+        systemTemplate: "You are a fiction line editor. Rephrase the selected passage while preserving meaning, narrative intent, POV, tense, and continuity. Do not introduce new facts or events. Improve clarity, flow, and natural phrasing. Return only the rewritten passage."
     )
 
     static let defaultExpandTemplate = PromptTemplate(
@@ -316,7 +311,7 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         category: .rewrite,
         title: "Expand",
         userTemplate: """
-        Expand the selected passage with richer detail while staying consistent with the scene.
+        Expand the selected passage.
 
         CHAPTER:
         {{chapter_title}}
@@ -327,20 +322,15 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         SELECTED PASSAGE:
         {{selection}}
 
-        CURRENT SCENE (RECENT EXCERPT):
-        {{scene_tail(chars=4500)}}
+        LOCAL SELECTION CONTEXT:
+        {{selection_context}}
 
-        CONTEXT:
-        {{context}}
-
-        Requirements:
-        - Keep original meaning and chronology.
-        - Add sensory detail, emotional texture, and specific action.
-        - Preserve POV, tense, and tone.
+        OPTIONAL SCENE CONTEXT:
+        {{context(max_chars=2200)}}
 
         Return only the expanded passage.
         """,
-        systemTemplate: "You are a fiction editing assistant specializing in expansion. Add detail and texture without changing narrative intent or continuity."
+        systemTemplate: "You are a fiction line editor specializing in expansion. Expand the selected passage with concrete detail, emotional texture, and specific action while preserving chronology, POV, tense, and continuity. Do not introduce contradictory or unrelated events. Return only the expanded passage."
     )
 
     static let defaultShortenTemplate = PromptTemplate(
@@ -348,7 +338,7 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         category: .rewrite,
         title: "Shorten",
         userTemplate: """
-        Shorten the selected passage while preserving key meaning and tone.
+        Shorten the selected passage.
 
         CHAPTER:
         {{chapter_title}}
@@ -359,20 +349,15 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         SELECTED PASSAGE:
         {{selection}}
 
-        CURRENT SCENE (RECENT EXCERPT):
-        {{scene_tail(chars=4500)}}
+        LOCAL SELECTION CONTEXT:
+        {{selection_context}}
 
-        CONTEXT:
-        {{context}}
-
-        Requirements:
-        - Keep essential events and implications.
-        - Remove repetition, filler, and non-essential wording.
-        - Preserve POV, tense, and continuity.
+        OPTIONAL SCENE CONTEXT:
+        {{context(max_chars=2200)}}
 
         Return only the shortened passage.
         """,
-        systemTemplate: "You are a fiction editing assistant specializing in concise prose. Compress text without losing essential meaning or continuity."
+        systemTemplate: "You are a fiction line editor specializing in compression. Shorten the selected passage by removing redundancy and non-essential wording while preserving key meaning, implications, POV, tense, tone, and continuity. Return only the shortened passage."
     )
 
     static let defaultSummaryTemplate = PromptTemplate(

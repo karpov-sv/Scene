@@ -761,8 +761,9 @@ struct SettingsSheetView: View {
             return [
                 .init(token: "{{selection}}", meaning: "Currently selected text in the editor (text to rewrite/expand/shorten)."),
                 .init(token: "{{beat}}", meaning: "Alias for `{{selection}}` for compatibility."),
-                .init(token: "{{scene}} / {{scene_tail(chars=4500)}}", meaning: "Current scene excerpt or configurable tail from full scene."),
-                .init(token: "{{context}}", meaning: "Selected scene context (compendium + summaries)."),
+                .init(token: "{{selection_context}}", meaning: "Local scene context around the selected text (before/selection/after)."),
+                .init(token: "{{scene}} / {{scene_tail(chars=4500)}}", meaning: "Current scene excerpt or configurable tail from full scene (optional)."),
+                .init(token: "{{context(max_chars=2200)}}", meaning: "Selected scene context with optional truncation."),
                 .init(token: "{{context_compendium}}", meaning: "Only selected compendium entries."),
                 .init(token: "{{context_scene_summaries}}", meaning: "Only selected scene summaries."),
                 .init(token: "{{context_chapter_summaries}}", meaning: "Only selected chapter summaries."),

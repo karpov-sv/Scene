@@ -2248,6 +2248,10 @@ final class AppStore: ObservableObject {
                 mentionSourceText: selectionPreview
             )
             let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            let localSelectionContext = selectionLocalContext(
+                selectedText: selectionPreview,
+                in: scenePreview.sceneContent
+            )
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
                 fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
@@ -2261,7 +2265,10 @@ final class AppStore: ObservableObject {
                 conversation: "",
                 conversationTurns: [],
                 summaryScope: "",
-                source: selectionPreview
+                source: selectionPreview,
+                extraVariables: [
+                    "selection_context": localSelectionContext
+                ]
             )
 
         case .summary:
@@ -2927,6 +2934,10 @@ final class AppStore: ObservableObject {
         let prompt = activeRewritePrompt ?? defaultPromptTemplate(for: .rewrite)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id)
         let sceneContext = String(scene.content.suffix(4500))
+        let localSelectionContext = selectionLocalContext(
+            selectedText: selectedText,
+            in: scene.content
+        )
 
         let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
@@ -2941,7 +2952,10 @@ final class AppStore: ObservableObject {
             conversation: "",
             conversationTurns: [],
             summaryScope: "",
-            source: selectedText
+            source: selectedText,
+            extraVariables: [
+                "selection_context": localSelectionContext
+            ]
         )
 
         let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2958,6 +2972,62 @@ final class AppStore: ObservableObject {
             ),
             renderWarnings: promptResult.warnings
         )
+    }
+
+    private func selectionLocalContext(
+        selectedText: String,
+        in sceneText: String,
+        surroundingCharacters: Int = 700
+    ) -> String {
+        let normalizedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedScene = sceneText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSelection.isEmpty, !normalizedScene.isEmpty else {
+            return ""
+        }
+
+        let sceneNSString = sceneText as NSString
+        let selectionRange = sceneNSString.range(
+            of: normalizedSelection,
+            options: [.caseInsensitive, .diacriticInsensitive]
+        )
+
+        if selectionRange.location == NSNotFound {
+            let fallbackLength = min(max(0, surroundingCharacters * 2), sceneNSString.length)
+            guard fallbackLength > 0 else { return "" }
+            let fallbackLocation = max(0, sceneNSString.length - fallbackLength)
+            return sceneNSString.substring(
+                with: NSRange(location: fallbackLocation, length: fallbackLength)
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let beforeLocation = max(0, selectionRange.location - surroundingCharacters)
+        let beforeLength = selectionRange.location - beforeLocation
+        let afterLocation = selectionRange.location + selectionRange.length
+        let afterLength = max(0, min(surroundingCharacters, sceneNSString.length - afterLocation))
+
+        let beforeText = beforeLength > 0
+            ? sceneNSString.substring(with: NSRange(location: beforeLocation, length: beforeLength))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+
+        let selectedSceneText = sceneNSString.substring(with: selectionRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let afterText = afterLength > 0
+            ? sceneNSString.substring(with: NSRange(location: afterLocation, length: afterLength))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+
+        var sections: [String] = []
+        if !beforeText.isEmpty {
+            sections.append("Before:\n\(beforeText)")
+        }
+        sections.append("Selection:\n\(selectedSceneText)")
+        if !afterText.isEmpty {
+            sections.append("After:\n\(afterText)")
+        }
+
+        return sections.joined(separator: "\n\n")
     }
 
     private func makeSummaryRequest(scene: Scene) -> PromptRequestBuildResult {
