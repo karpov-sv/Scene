@@ -1535,40 +1535,9 @@ final class AppStore: ObservableObject {
         case .workshop:
             return PromptTemplate.defaultWorkshopTemplate
         case .rewrite:
-            return PromptTemplate(
-                category: .rewrite,
-                title: "Rewrite",
-                userTemplate: """
-                Rewrite the selected passage according to the style and continuity of the scene.
-
-                SELECTED PASSAGE:
-                {beat}
-
-                CURRENT SCENE:
-                {scene}
-
-                CONTEXT:
-                {context}
-
-                Return only the rewritten passage.
-                """,
-                systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
-            )
+            return PromptTemplate.defaultRewriteTemplate
         case .summary:
-            return PromptTemplate(
-                category: .summary,
-                title: "Summary",
-                userTemplate: """
-                Summarize the current material clearly and concisely.
-
-                CURRENT SCENE:
-                {scene}
-
-                CONTEXT:
-                {context}
-                """,
-                systemTemplate: "You summarize fiction drafts with accurate details and continuity awareness."
-            )
+            return PromptTemplate.defaultSummaryTemplate
         }
     }
 
@@ -1709,12 +1678,13 @@ final class AppStore: ObservableObject {
         let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
         let sceneContext = String(scene.content.suffix(4500))
         let compendiumContext = buildCompendiumContext(for: scene.id)
+        let scopeContext = "Scope: scene summary\n\(compendiumContext)"
 
         let userPrompt = expandPrompt(
             template: prompt.userTemplate,
             beat: "",
             scene: sceneContext,
-            context: compendiumContext,
+            context: scopeContext,
             conversation: ""
         )
 
@@ -1736,6 +1706,7 @@ final class AppStore: ObservableObject {
         let sceneSummaryContext = buildChapterSceneSummaryContext(chapter: chapter)
         let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let chapterContext = """
+        Scope: chapter summary from scene summaries
         Chapter: \(chapterTitle.isEmpty ? "Untitled Chapter" : chapterTitle)
         Scene count: \(chapter.scenes.count)
         """
@@ -1880,35 +1851,98 @@ final class AppStore: ObservableObject {
     }
 
     private func ensureProjectBaseline() {
-        if !project.prompts.contains(where: { $0.category == .rewrite }) {
-            let rewritePrompt = defaultPromptTemplate(for: .rewrite)
-            project.prompts.append(rewritePrompt)
-            if project.selectedRewritePromptID == nil {
-                project.selectedRewritePromptID = rewritePrompt.id
-            }
-        }
-
-        if !project.prompts.contains(where: { $0.category == .summary }) {
-            let summaryPrompt = defaultPromptTemplate(for: .summary)
-            project.prompts.append(summaryPrompt)
-            if project.selectedSummaryPromptID == nil {
-                project.selectedSummaryPromptID = summaryPrompt.id
-            }
-        }
-
-        if !project.prompts.contains(where: { $0.category == .workshop }) {
-            let workshopPrompt = PromptTemplate.defaultWorkshopTemplate
-            project.prompts.append(workshopPrompt)
-            if project.selectedWorkshopPromptID == nil {
-                project.selectedWorkshopPromptID = workshopPrompt.id
-            }
-        }
+        adoptLegacyPromptIDsForBuiltIns()
+        seedMissingBuiltInPrompts()
+        ensureDefaultPromptSelections()
 
         if project.workshopSessions.isEmpty {
             let session = Self.makeInitialWorkshopSession(name: "Chat 1")
             project.workshopSessions = [session]
             project.selectedWorkshopSessionID = session.id
         }
+    }
+
+    private func adoptLegacyPromptIDsForBuiltIns() {
+        var takenPromptIDs = Set(project.prompts.map(\.id))
+
+        for builtIn in PromptTemplate.builtInTemplates {
+            guard !takenPromptIDs.contains(builtIn.id) else { continue }
+
+            guard let legacyIndex = project.prompts.firstIndex(where: { prompt in
+                prompt.category == builtIn.category
+                    && normalizedPromptTitle(prompt.title) == normalizedPromptTitle(builtIn.title)
+            }) else {
+                continue
+            }
+
+            let previousID = project.prompts[legacyIndex].id
+            project.prompts[legacyIndex].id = builtIn.id
+
+            if project.selectedProsePromptID == previousID {
+                project.selectedProsePromptID = builtIn.id
+            }
+            if project.selectedRewritePromptID == previousID {
+                project.selectedRewritePromptID = builtIn.id
+            }
+            if project.selectedSummaryPromptID == previousID {
+                project.selectedSummaryPromptID = builtIn.id
+            }
+            if project.selectedWorkshopPromptID == previousID {
+                project.selectedWorkshopPromptID = builtIn.id
+            }
+
+            takenPromptIDs.remove(previousID)
+            takenPromptIDs.insert(builtIn.id)
+
+            if project.prompts[legacyIndex].userTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                project.prompts[legacyIndex].userTemplate = builtIn.userTemplate
+            }
+
+            if project.prompts[legacyIndex].systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                project.prompts[legacyIndex].systemTemplate = builtIn.systemTemplate
+            }
+        }
+    }
+
+    private func seedMissingBuiltInPrompts() {
+        var existingIDs = Set(project.prompts.map(\.id))
+        for builtIn in PromptTemplate.builtInTemplates where !existingIDs.contains(builtIn.id) {
+            project.prompts.append(builtIn)
+            existingIDs.insert(builtIn.id)
+        }
+    }
+
+    private func ensureDefaultPromptSelections() {
+        let proseIDs = Set(prosePrompts.map(\.id))
+        let rewriteIDs = Set(rewritePrompts.map(\.id))
+        let summaryIDs = Set(summaryPrompts.map(\.id))
+        let workshopIDs = Set(workshopPrompts.map(\.id))
+
+        if project.selectedProsePromptID.map({ proseIDs.contains($0) }) != true {
+            project.selectedProsePromptID = prosePrompts.first(where: { $0.id == PromptTemplate.defaultProseTemplate.id })?.id
+                ?? prosePrompts.first?.id
+        }
+
+        if project.selectedRewritePromptID.map({ rewriteIDs.contains($0) }) != true {
+            project.selectedRewritePromptID = rewritePrompts.first(where: { $0.id == PromptTemplate.defaultRewriteTemplate.id })?.id
+                ?? rewritePrompts.first?.id
+        }
+
+        if project.selectedSummaryPromptID.map({ summaryIDs.contains($0) }) != true {
+            project.selectedSummaryPromptID = summaryPrompts.first(where: { $0.id == PromptTemplate.defaultSummaryTemplate.id })?.id
+                ?? summaryPrompts.first?.id
+        }
+
+        if project.selectedWorkshopPromptID.map({ workshopIDs.contains($0) }) != true {
+            project.selectedWorkshopPromptID = workshopPrompts.first(where: { $0.id == PromptTemplate.defaultWorkshopTemplate.id })?.id
+                ?? workshopPrompts.first?.id
+        }
+    }
+
+    private func normalizedPromptTitle(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
 
     private static func makeInitialWorkshopSession(name: String) -> WorkshopSession {
@@ -2520,45 +2554,161 @@ final class AppStore: ObservableObject {
             .replacingOccurrences(of: "{conversation}", with: conversation)
     }
 
+    private struct GenerationAppendBase {
+        let content: String
+        let richTextData: Data?
+    }
+
+    private struct GeneratedSceneContent {
+        let content: String
+        let richTextData: Data?
+    }
+
     private func appendGeneratedText(_ generatedText: String) {
         guard let selectedSceneID,
+              let base = makeGenerationAppendBase(for: selectedSceneID),
               let location = sceneLocation(for: selectedSceneID) else {
             return
         }
 
-        var current = project.chapters[location.chapterIndex].scenes[location.sceneIndex].content
         let trimmedIncoming = generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedIncoming.isEmpty else { return }
 
-        if !current.isEmpty && !current.hasSuffix("\n") {
-            current += "\n\n"
-        }
-
-        current += trimmedIncoming
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = current
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = nil
+        let updatedContent = buildGeneratedSceneContent(base: base, generated: trimmedIncoming)
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = updatedContent.content
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = updatedContent.richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
     }
 
-    private func makeGenerationAppendBase(for sceneID: UUID) -> String? {
+    private func makeGenerationAppendBase(for sceneID: UUID) -> GenerationAppendBase? {
         guard let location = sceneLocation(for: sceneID) else {
             return nil
         }
 
-        var current = project.chapters[location.chapterIndex].scenes[location.sceneIndex].content
+        let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+        var current = scene.content
+        var currentRichTextData = scene.contentRTFData
+
         if !current.isEmpty && !current.hasSuffix("\n") {
             current += "\n\n"
+
+            let attributed = makeAttributedSceneContent(
+                plainText: scene.content,
+                richTextData: scene.contentRTFData
+            )
+            attributed.append(
+                NSAttributedString(
+                    string: "\n\n",
+                    attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
+                )
+            )
+            currentRichTextData = makeRTFData(from: attributed)
         }
-        return current
+
+        return GenerationAppendBase(content: current, richTextData: currentRichTextData)
     }
 
-    private func setGeneratedTextPreview(sceneID: UUID, base: String, generated: String) {
+    private func setGeneratedTextPreview(sceneID: UUID, base: GenerationAppendBase, generated: String) {
         guard let location = sceneLocation(for: sceneID) else {
             return
         }
 
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = base + generated
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = nil
+        let updatedContent = buildGeneratedSceneContent(base: base, generated: generated)
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = updatedContent.content
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = updatedContent.richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+    }
+
+    private func buildGeneratedSceneContent(base: GenerationAppendBase, generated: String) -> GeneratedSceneContent {
+        let composed = makeAttributedSceneContent(
+            plainText: base.content,
+            richTextData: base.richTextData
+        )
+
+        if !generated.isEmpty {
+            composed.append(
+                makeGeneratedMarkdownAttributedText(
+                    from: generated,
+                    baseFont: NSFont.preferredFont(forTextStyle: .body)
+                )
+            )
+        }
+
+        return GeneratedSceneContent(
+            content: composed.string,
+            richTextData: makeRTFData(from: composed)
+        )
+    }
+
+    private func makeGeneratedMarkdownAttributedText(from text: String, baseFont: NSFont) -> NSAttributedString {
+        let markdownOptions = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+
+        if let parsed = try? AttributedString(markdown: text, options: markdownOptions) {
+            return normalizeMarkdownFonts(
+                NSAttributedString(parsed),
+                baseFont: baseFont
+            )
+        }
+
+        return NSAttributedString(string: text, attributes: [.font: baseFont])
+    }
+
+    private func normalizeMarkdownFonts(_ attributed: NSAttributedString, baseFont: NSFont) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+
+        mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+            let adjustedFont: NSFont
+            if let parsedFont = value as? NSFont {
+                adjustedFont = mapMarkdownFontTraits(parsedFont, onto: baseFont)
+            } else {
+                adjustedFont = baseFont
+            }
+            mutable.addAttribute(.font, value: adjustedFont, range: range)
+        }
+
+        return mutable
+    }
+
+    private func mapMarkdownFontTraits(_ parsedFont: NSFont, onto baseFont: NSFont) -> NSFont {
+        let fontManager = NSFontManager.shared
+        let traits = fontManager.traits(of: parsedFont)
+        var mapped = baseFont
+
+        if traits.contains(.boldFontMask) {
+            mapped = fontManager.convert(mapped, toHaveTrait: .boldFontMask)
+        }
+        if traits.contains(.italicFontMask) {
+            mapped = fontManager.convert(mapped, toHaveTrait: .italicFontMask)
+        }
+
+        return mapped
+    }
+
+    private func makeAttributedSceneContent(plainText: String, richTextData: Data?) -> NSMutableAttributedString {
+        if let richTextData,
+           let attributed = try? NSAttributedString(
+            data: richTextData,
+            options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil
+           ) {
+            return NSMutableAttributedString(attributedString: attributed)
+        }
+
+        return NSMutableAttributedString(
+            string: plainText,
+            attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
+        )
+    }
+
+    private func makeRTFData(from attributed: NSAttributedString) -> Data? {
+        let range = NSRange(location: 0, length: attributed.length)
+        return try? attributed.data(
+            from: range,
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
     }
 
     private func sceneLocation(for sceneID: UUID) -> SceneLocation? {

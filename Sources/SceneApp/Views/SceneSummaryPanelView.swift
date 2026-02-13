@@ -3,7 +3,7 @@ import SwiftUI
 struct SceneSummaryPanelView: View {
     @EnvironmentObject private var store: AppStore
     @Binding private var scope: SummaryScope
-    @State private var isSummarizing: Bool = false
+    @State private var summaryTask: Task<Void, Never>?
 
     init(scope: Binding<SummaryScope>) {
         self._scope = scope
@@ -80,6 +80,10 @@ struct SceneSummaryPanelView: View {
         return !summaryBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var isSummarizing: Bool {
+        summaryTask != nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -119,14 +123,18 @@ struct SceneSummaryPanelView: View {
                     .disabled(!canClearCurrentScope)
 
                     Button {
-                        summarizeCurrentScope()
+                        if isSummarizing {
+                            cancelSummarization()
+                        } else {
+                            summarizeCurrentScope()
+                        }
                     } label: {
                         Group {
                             if isSummarizing {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.small)
-                                    Text("Summarizing \(scope.title)")
+                                    Text("Stop")
                                 }
                             } else {
                                 Label("Summarize", systemImage: "text.insert")
@@ -134,10 +142,13 @@ struct SceneSummaryPanelView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(isSummarizing ? .red : .accentColor)
                     .disabled(
-                        isSummarizing
-                        || !canSummarizeCurrentScope
-                        || store.activeSummaryPrompt == nil
+                        !isSummarizing
+                            && (
+                                !canSummarizeCurrentScope
+                                || store.activeSummaryPrompt == nil
+                            )
                     )
                 }
             }
@@ -165,6 +176,9 @@ struct SceneSummaryPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onDisappear {
+            cancelSummarization()
+        }
     }
 
     private var header: some View {
@@ -183,11 +197,10 @@ struct SceneSummaryPanelView: View {
         guard !isSummarizing else { return }
         guard canSummarizeCurrentScope else { return }
 
-        isSummarizing = true
         let targetScope = scope
-        Task { @MainActor in
+        summaryTask = Task { @MainActor in
             defer {
-                isSummarizing = false
+                summaryTask = nil
             }
 
             do {
@@ -203,6 +216,10 @@ struct SceneSummaryPanelView: View {
                 store.lastError = error.localizedDescription
             }
         }
+    }
+
+    private func cancelSummarization() {
+        summaryTask?.cancel()
     }
 
     private func clearCurrentScope() {

@@ -238,10 +238,18 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         self.systemTemplate = systemTemplate
     }
 
+    static let cinematicProseID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+    static let rewriteID = UUID(uuidString: "00000000-0000-0000-0000-000000000201")!
+    static let expandID = UUID(uuidString: "00000000-0000-0000-0000-000000000202")!
+    static let shortenID = UUID(uuidString: "00000000-0000-0000-0000-000000000203")!
+    static let summaryID = UUID(uuidString: "00000000-0000-0000-0000-000000000301")!
+    static let workshopID = UUID(uuidString: "00000000-0000-0000-0000-000000000401")!
+
     static let defaultProseTemplate = PromptTemplate(
+        id: cinematicProseID,
         title: "Cinematic Prose",
         userTemplate: """
-        Continue the scene from this beat.
+        Continue this scene from the provided beat.
 
         BEAT:
         {beat}
@@ -252,12 +260,120 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         CONTEXT:
         {context}
 
-        Write the next passage only.
+        Requirements:
+        - Continue only the immediate next passage.
+        - Preserve POV, tense, and voice consistency.
+        - Avoid tidy scene conclusions unless explicitly requested.
+
+        Return only the generated prose passage.
         """,
-        systemTemplate: "You are a fiction writing assistant. Preserve continuity, voice, and factual consistency. Return prose only."
+        systemTemplate: "You are an expert fiction writing assistant. Preserve continuity, character voice, and factual consistency. Show, do not tell. Avoid cliche phrasing. Return prose only."
+    )
+
+    static let defaultRewriteTemplate = PromptTemplate(
+        id: rewriteID,
+        category: .rewrite,
+        title: "Rewrite",
+        userTemplate: """
+        Rewrite the selected passage while preserving its intent and continuity.
+
+        SELECTED PASSAGE:
+        {beat}
+
+        CURRENT SCENE:
+        {scene}
+
+        CONTEXT:
+        {context}
+
+        Requirements:
+        - Keep meaning, tone, and narrative intent.
+        - Maintain POV and tense.
+        - Improve flow, clarity, and natural phrasing.
+
+        Return only the rewritten passage.
+        """,
+        systemTemplate: "You are a fiction editing assistant. Preserve intent and continuity while improving readability and style. Return only the rewritten passage."
+    )
+
+    static let defaultExpandTemplate = PromptTemplate(
+        id: expandID,
+        category: .rewrite,
+        title: "Expand",
+        userTemplate: """
+        Expand the selected passage with richer detail while staying consistent with the scene.
+
+        SELECTED PASSAGE:
+        {beat}
+
+        CURRENT SCENE:
+        {scene}
+
+        CONTEXT:
+        {context}
+
+        Requirements:
+        - Keep original meaning and chronology.
+        - Add sensory detail, emotional texture, and specific action.
+        - Preserve POV, tense, and tone.
+
+        Return only the expanded passage.
+        """,
+        systemTemplate: "You are a fiction editing assistant specializing in expansion. Add detail and texture without changing narrative intent or continuity."
+    )
+
+    static let defaultShortenTemplate = PromptTemplate(
+        id: shortenID,
+        category: .rewrite,
+        title: "Shorten",
+        userTemplate: """
+        Shorten the selected passage while preserving key meaning and tone.
+
+        SELECTED PASSAGE:
+        {beat}
+
+        CURRENT SCENE:
+        {scene}
+
+        CONTEXT:
+        {context}
+
+        Requirements:
+        - Keep essential events and implications.
+        - Remove repetition, filler, and non-essential wording.
+        - Preserve POV, tense, and continuity.
+
+        Return only the shortened passage.
+        """,
+        systemTemplate: "You are a fiction editing assistant specializing in concise prose. Compress text without losing essential meaning or continuity."
+    )
+
+    static let defaultSummaryTemplate = PromptTemplate(
+        id: summaryID,
+        category: .summary,
+        title: "Summary",
+        userTemplate: """
+        Create a concise narrative summary from the source material.
+
+        SOURCE MATERIAL:
+        {scene}
+
+        SUPPORTING CONTEXT:
+        {context}
+
+        Requirements:
+        - Use third-person narrative.
+        - Keep chronology and causality clear.
+        - Cover key events, character decisions, and unresolved threads.
+        - Do not invent facts that are not present in the source/context.
+
+        Return only the summary text.
+        """,
+        systemTemplate: "You summarize fiction drafts accurately and concisely. Preserve continuity, avoid hallucinations, and return plain summary prose only."
     )
 
     static let defaultWorkshopTemplate = PromptTemplate(
+        id: workshopID,
         category: .workshop,
         title: "Story Workshop",
         userTemplate: """
@@ -274,6 +390,17 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         """,
         systemTemplate: "You are an experienced writing coach helping the user improve scenes, pacing, structure, and character work. Be practical and specific."
     )
+
+    static var builtInTemplates: [PromptTemplate] {
+        [
+            defaultProseTemplate,
+            defaultRewriteTemplate,
+            defaultExpandTemplate,
+            defaultShortenTemplate,
+            defaultSummaryTemplate,
+            defaultWorkshopTemplate,
+        ]
+    }
 }
 
 enum WorkshopRole: String, Codable {
@@ -515,44 +642,6 @@ struct StoryProject: Codable, Identifiable, Equatable {
             )
         ]
 
-        let defaultPrompt = PromptTemplate.defaultProseTemplate
-        let defaultRewritePrompt = PromptTemplate(
-            category: .rewrite,
-            title: "Rewrite",
-            userTemplate: """
-            Rewrite the selected passage according to the style and continuity of the scene.
-
-            SELECTED PASSAGE:
-            {beat}
-
-            CURRENT SCENE:
-            {scene}
-
-            CONTEXT:
-            {context}
-
-            Return only the rewritten passage.
-            """,
-            systemTemplate: "You are a fiction editing assistant. Keep intent and continuity while improving clarity and style."
-        )
-        let defaultSummaryPrompt = PromptTemplate(
-            category: .summary,
-            title: "Summary",
-            userTemplate: """
-            Summarize this scene with focus on key events, intent, character motivation, and unresolved threads.
-
-            CURRENT SCENE:
-            {scene}
-
-            CONTEXT:
-            {context}
-
-            Return only the summary text.
-            """,
-            systemTemplate: "You summarize fiction drafts with accurate details and continuity awareness."
-        )
-        let defaultWorkshopPrompt = PromptTemplate.defaultWorkshopTemplate
-
         let workshopSession = WorkshopSession(
             name: "Chat 1",
             messages: [
@@ -569,13 +658,13 @@ struct StoryProject: Codable, Identifiable, Equatable {
             autosaveEnabled: true,
             chapters: [firstChapter],
             compendium: compendium,
-            prompts: [defaultPrompt, defaultRewritePrompt, defaultSummaryPrompt, defaultWorkshopPrompt],
-            selectedProsePromptID: defaultPrompt.id,
-            selectedRewritePromptID: defaultRewritePrompt.id,
-            selectedSummaryPromptID: defaultSummaryPrompt.id,
+            prompts: PromptTemplate.builtInTemplates,
+            selectedProsePromptID: PromptTemplate.defaultProseTemplate.id,
+            selectedRewritePromptID: PromptTemplate.defaultRewriteTemplate.id,
+            selectedSummaryPromptID: PromptTemplate.defaultSummaryTemplate.id,
             workshopSessions: [workshopSession],
             selectedWorkshopSessionID: workshopSession.id,
-            selectedWorkshopPromptID: defaultWorkshopPrompt.id,
+            selectedWorkshopPromptID: PromptTemplate.defaultWorkshopTemplate.id,
             sceneContextCompendiumSelection: [:],
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
