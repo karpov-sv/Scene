@@ -28,6 +28,8 @@ private struct SceneEditorSelection: Equatable {
 
 private struct SceneEditorCommand: Equatable {
     enum Action: Equatable {
+        case undo
+        case redo
         case toggleBoldface
         case toggleItalics
         case toggleUnderline
@@ -45,6 +47,9 @@ struct EditorView: View {
     @State private var sceneEditorCommand: SceneEditorCommand?
     @State private var editorSelection: SceneEditorSelection = .empty
     @State private var isRewritingSelection: Bool = false
+    @State private var rewriteTask: Task<Void, Never>?
+    @State private var canUndoInSceneEditor: Bool = false
+    @State private var canRedoInSceneEditor: Bool = false
     @State private var beatMentionQuery: MentionAutocompleteQuery?
     @State private var beatMentionSelectionIndex: Int = 0
     @State private var beatMentionQueryIdentity: String = ""
@@ -171,6 +176,26 @@ struct EditorView: View {
 
             HStack(spacing: 8) {
                 Button {
+                    sceneEditorCommand = SceneEditorCommand(action: .undo)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canUndoInSceneEditor)
+                .help("Undo (Cmd+Z)")
+
+                Button {
+                    sceneEditorCommand = SceneEditorCommand(action: .redo)
+                } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canRedoInSceneEditor)
+                .help("Redo (Shift+Cmd+Z)")
+
+                Button {
                     sceneEditorCommand = SceneEditorCommand(action: .toggleBoldface)
                 } label: {
                     Image(systemName: "bold")
@@ -197,7 +222,7 @@ struct EditorView: View {
                 .controlSize(.small)
                 .help("Underline (Cmd+U)")
 
-                if editorSelection.hasSelection {
+                if editorSelection.hasSelection || isRewritingSelection {
                     Picker("Rewrite Prompt", selection: selectedRewritePromptBinding) {
                         ForEach(store.rewritePrompts) { prompt in
                             Text(prompt.title)
@@ -211,14 +236,18 @@ struct EditorView: View {
                     .disabled(isRewritingSelection || store.rewritePrompts.isEmpty)
 
                     Button {
-                        rewriteSelectedText()
+                        if isRewritingSelection {
+                            cancelRewriteSelection()
+                        } else {
+                            rewriteSelectedText()
+                        }
                     } label: {
                         Group {
                             if isRewritingSelection {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.small)
-                                    Text("Rewriting")
+                                    Text("Stop")
                                 }
                             } else {
                                 Label("Rewrite", systemImage: "text.redaction")
@@ -227,8 +256,10 @@ struct EditorView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(isRewritingSelection || !editorSelection.hasSelection || store.activeRewritePrompt == nil)
-                    .help("Rewrite the selected text using the selected rewrite prompt.")
+                    .disabled(!isRewritingSelection && (!editorSelection.hasSelection || store.activeRewritePrompt == nil))
+                    .help(isRewritingSelection
+                        ? "Stop rewriting."
+                        : "Rewrite the selected text using the selected rewrite prompt.")
                 }
 
                 Spacer(minLength: 0)
@@ -258,6 +289,10 @@ struct EditorView: View {
             shouldAutoScrollExternalUpdates: store.isGenerating,
             onSelectionChange: { selection in
                 editorSelection = selection
+            },
+            onUndoRedoAvailabilityChange: { canUndo, canRedo in
+                canUndoInSceneEditor = canUndo
+                canRedoInSceneEditor = canRedo
             }
         ) { plainText, richTextData in
             store.updateSelectedSceneContent(plainText, richTextData: richTextData)
@@ -578,10 +613,10 @@ struct EditorView: View {
         guard selectionSnapshot.hasSelection else { return }
 
         isRewritingSelection = true
-
-        Task { @MainActor in
+        rewriteTask = Task { @MainActor in
             defer {
                 isRewritingSelection = false
+                rewriteTask = nil
             }
 
             do {
@@ -600,6 +635,10 @@ struct EditorView: View {
             }
         }
     }
+
+    private func cancelRewriteSelection() {
+        rewriteTask?.cancel()
+    }
 }
 
 private struct SceneRichTextEditorView: NSViewRepresentable {
@@ -609,6 +648,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let command: SceneEditorCommand?
     let shouldAutoScrollExternalUpdates: Bool
     let onSelectionChange: (SceneEditorSelection) -> Void
+    let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
     let onChange: (String, Data?) -> Void
 
     private final class SceneEditorTextView: NSTextView {
@@ -701,19 +741,29 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onSelectionChange: onSelectionChange, onChange: onChange)
+        Coordinator(
+            onSelectionChange: onSelectionChange,
+            onUndoRedoAvailabilityChange: onUndoRedoAvailabilityChange,
+            onChange: onChange
+        )
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         private let onSelectionChange: (SceneEditorSelection) -> Void
+        private let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
         private let onChange: (String, Data?) -> Void
         private var isApplyingProgrammaticChange: Bool = false
         private var lastSceneID: UUID?
         private var lastHandledCommandID: UUID?
 
-        init(onSelectionChange: @escaping (SceneEditorSelection) -> Void, onChange: @escaping (String, Data?) -> Void) {
+        init(
+            onSelectionChange: @escaping (SceneEditorSelection) -> Void,
+            onUndoRedoAvailabilityChange: @escaping (Bool, Bool) -> Void,
+            onChange: @escaping (String, Data?) -> Void
+        ) {
             self.onSelectionChange = onSelectionChange
+            self.onUndoRedoAvailabilityChange = onUndoRedoAvailabilityChange
             self.onChange = onChange
         }
 
@@ -763,6 +813,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             isApplyingProgrammaticChange = false
             lastSceneID = sceneID
             publishSelection(from: textView)
+            publishUndoRedoState(from: textView)
         }
 
         func textDidChange(_ notification: Notification) {
@@ -770,6 +821,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             publishChange(from: textView)
             publishSelection(from: textView)
+            publishUndoRedoState(from: textView)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -785,6 +837,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             lastHandledCommandID = command.id
             textView.window?.makeFirstResponder(textView)
             switch command.action {
+            case .undo:
+                textView.undoManager?.undo()
+            case .redo:
+                textView.undoManager?.redo()
             case .toggleBoldface, .toggleItalics, .toggleUnderline:
                 applyFormatting(command.action, to: textView)
             case let .replaceSelection(rewrittenText, targetRange, emphasizeWithItalics):
@@ -797,12 +853,14 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             }
             publishChange(from: textView)
             publishSelection(from: textView)
+            publishUndoRedoState(from: textView)
         }
 
         func applyFormattingShortcut(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
             applyFormatting(action, to: textView)
             publishChange(from: textView)
             publishSelection(from: textView)
+            publishUndoRedoState(from: textView)
         }
 
         private func publishChange(from textView: NSTextView) {
@@ -832,6 +890,14 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             )
         }
 
+        private func publishUndoRedoState(from textView: NSTextView) {
+            let undoManager = textView.undoManager
+            onUndoRedoAvailabilityChange(
+                undoManager?.canUndo ?? false,
+                undoManager?.canRedo ?? false
+            )
+        }
+
         private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
             switch action {
             case .toggleBoldface:
@@ -840,7 +906,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 toggleFontTrait(.italicFontMask, in: textView)
             case .toggleUnderline:
                 toggleUnderline(in: textView)
-            case .replaceSelection:
+            case .undo, .redo, .replaceSelection:
                 break
             }
         }
