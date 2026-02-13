@@ -317,6 +317,9 @@ final class AppStore: ObservableObject {
     @Published private(set) var globalSearchResults: [GlobalSearchResult] = []
     @Published private(set) var selectedGlobalSearchResultID: String?
     @Published private(set) var globalSearchFocusRequestID: UUID = UUID()
+    @Published var isGlobalSearchVisible: Bool = false
+    @Published private(set) var lastGlobalSearchQuery: String = ""
+    @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .project
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
 
     @Published var showingSettings: Bool = false
@@ -332,6 +335,7 @@ final class AppStore: ObservableObject {
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
     private var proseRequestTask: Task<Void, Never>?
+    private var searchDebounceTask: Task<Void, Never>?
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
 
     init(
@@ -675,7 +679,17 @@ final class AppStore: ObservableObject {
 
     func updateGlobalSearchQuery(_ query: String, maxResults: Int = 300) {
         globalSearchQuery = query
-        refreshGlobalSearchResults(maxResults: maxResults)
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            lastGlobalSearchQuery = trimmed
+            lastGlobalSearchScope = globalSearchScope
+        }
+        searchDebounceTask?.cancel()
+        searchDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            refreshGlobalSearchResults(maxResults: maxResults)
+        }
     }
 
     func updateGlobalSearchScope(_ scope: GlobalSearchScope, maxResults: Int = 300) {
@@ -684,6 +698,7 @@ final class AppStore: ObservableObject {
     }
 
     func requestGlobalSearchFocus(scope: GlobalSearchScope, maxResults: Int = 300) {
+        isGlobalSearchVisible = true
         updateGlobalSearchScope(scope, maxResults: maxResults)
         globalSearchFocusRequestID = UUID()
     }
@@ -708,6 +723,26 @@ final class AppStore: ObservableObject {
 
     func setSelectedGlobalSearchResultID(_ id: String?) {
         selectedGlobalSearchResultID = id
+    }
+
+    func dismissGlobalSearch() {
+        searchDebounceTask?.cancel()
+        isGlobalSearchVisible = false
+        globalSearchQuery = ""
+        globalSearchResults = []
+        selectedGlobalSearchResultID = nil
+    }
+
+    func restoreLastSearchIfNeeded() {
+        guard globalSearchResults.isEmpty,
+              !lastGlobalSearchQuery.isEmpty else { return }
+        let restored = searchGlobalContent(
+            lastGlobalSearchQuery,
+            scope: lastGlobalSearchScope,
+            caseSensitive: false,
+            maxResults: 300
+        )
+        globalSearchResults = restored
     }
 
     func selectedGlobalSearchResult() -> GlobalSearchResult? {
@@ -4421,11 +4456,15 @@ final class AppStore: ObservableObject {
     }
 
     private func resetGlobalSearchState() {
+        searchDebounceTask?.cancel()
         globalSearchQuery = ""
         globalSearchScope = .project
         globalSearchResults = []
         selectedGlobalSearchResultID = nil
         pendingSceneSearchSelection = nil
+        isGlobalSearchVisible = false
+        lastGlobalSearchQuery = ""
+        lastGlobalSearchScope = .project
     }
 
     private func chapterTitle(forSceneID sceneID: UUID) -> String {

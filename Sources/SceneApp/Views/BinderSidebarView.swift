@@ -37,8 +37,11 @@ struct BinderSidebarView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            searchPanel
-            Divider()
+
+            if store.isGlobalSearchVisible {
+                searchPanel
+                Divider()
+            }
 
             if isShowingSearchResults {
                 searchResultsList
@@ -69,9 +72,6 @@ struct BinderSidebarView: View {
         }
         .onChange(of: store.globalSearchFocusRequestID) { _, _ in
             isSearchFieldFocused = true
-        }
-        .onExitCommand {
-            closeSearchInterface()
         }
     }
 
@@ -109,7 +109,7 @@ struct BinderSidebarView: View {
     }
 
     private var isShowingSearchResults: Bool {
-        !trimmedSearchQuery.isEmpty
+        store.isGlobalSearchVisible && !trimmedSearchQuery.isEmpty
     }
 
     private var searchPanel: some View {
@@ -135,7 +135,11 @@ struct BinderSidebarView: View {
                 .frame(width: 128)
             }
 
-            if isShowingSearchResults {
+            if store.globalSearchScope == .scene && store.selectedSceneID == nil {
+                Text("Select a scene to search within it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if isShowingSearchResults {
                 Text("\(store.globalSearchResults.count) result\(store.globalSearchResults.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -155,38 +159,37 @@ struct BinderSidebarView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(store.globalSearchResults) { result in
-                    Button {
-                        store.setSelectedGlobalSearchResultID(result.id)
-                        onActivateSearchResult?(result)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Image(systemName: searchResultIcon(for: result.kind))
-                                    .foregroundStyle(.secondary)
-                                Text(result.title)
-                                    .lineLimit(1)
-                            }
-
-                            Text(result.subtitle)
-                                .font(.caption)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Image(systemName: searchResultIcon(for: result.kind))
                                 .foregroundStyle(.secondary)
+                            Text(result.title)
                                 .lineLimit(1)
-
-                            Text(result.snippet)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 2)
+
+                        Text(result.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+
+                        Text(result.snippet)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
-                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
                     .tag(Optional(result.id))
                     .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
                 }
             }
         }
         .listStyle(.sidebar)
+        .onChange(of: store.selectedGlobalSearchResultID) { _, newID in
+            guard let newID,
+                  let result = store.globalSearchResults.first(where: { $0.id == newID }) else { return }
+            onActivateSearchResult?(result)
+        }
     }
 
     private var footerActions: some View {
@@ -360,9 +363,7 @@ struct BinderSidebarView: View {
     }
 
     private func closeSearchInterface() {
-        guard isShowingSearchResults else { return }
-        store.setSelectedGlobalSearchResultID(nil)
-        store.updateGlobalSearchQuery("")
+        store.dismissGlobalSearch()
         isSearchFieldFocused = false
     }
 }

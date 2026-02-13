@@ -82,10 +82,6 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
         } detail: {
             workspacePanel
-                .contentShape(Rectangle())
-                .simultaneousGesture(TapGesture().onEnded {
-                    dismissGlobalSearchIfNeeded()
-                })
                 .navigationSplitViewColumnWidth(min: 860, ideal: 1080, max: 2400)
         }
         .navigationSplitViewStyle(.balanced)
@@ -266,17 +262,23 @@ struct ContentView: View {
             findPrevious: activatePreviousSearchResult,
             canFindInScene: store.isProjectOpen && store.selectedScene != nil,
             canFindInProject: store.isProjectOpen,
-            canFindNext: !store.globalSearchResults.isEmpty,
-            canFindPrevious: !store.globalSearchResults.isEmpty
+            canFindNext: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty,
+            canFindPrevious: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty
         )
     }
 
     private func activateNextSearchResult() {
+        if store.globalSearchResults.isEmpty {
+            store.restoreLastSearchIfNeeded()
+        }
         guard let result = store.selectNextGlobalSearchResult() else { return }
         activateSearchResult(result)
     }
 
     private func activatePreviousSearchResult() {
+        if store.globalSearchResults.isEmpty {
+            store.restoreLastSearchIfNeeded()
+        }
         guard let result = store.selectPreviousGlobalSearchResult() else { return }
         activateSearchResult(result)
     }
@@ -325,13 +327,6 @@ struct ContentView: View {
             isConversationsVisible = true
             store.selectWorkshopSession(sessionID)
         }
-    }
-
-    private func dismissGlobalSearchIfNeeded() {
-        let trimmed = store.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        store.setSelectedGlobalSearchResultID(nil)
-        store.updateGlobalSearchQuery("")
     }
 
     private func toggleCompendiumPanel() {
