@@ -172,6 +172,21 @@ struct SceneSummaryPanelView: View {
                         Rectangle()
                             .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                     )
+                    .overlay {
+                        if isSummarizing {
+                            ZStack {
+                                Color(nsColor: .textBackgroundColor).opacity(0.7)
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Generating summary...")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .disabled(isSummarizing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

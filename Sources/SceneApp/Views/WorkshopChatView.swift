@@ -91,7 +91,9 @@ struct WorkshopChatView: View {
 
     var body: some View {
         rootLayout
-            .sheet(item: $payloadPreview) { payloadPreview in
+            .sheet(item: $payloadPreview, onDismiss: {
+                shouldStickToBottom = true
+            }) { payloadPreview in
                 WorkshopPayloadPreviewSheet(preview: payloadPreview)
             }
     }

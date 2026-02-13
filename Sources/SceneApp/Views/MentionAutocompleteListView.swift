@@ -67,7 +67,7 @@ struct MentionAutocompleteListView: View {
                                 let dy = current.y - lastMouseScreenLocation.y
                                 let distance = (dx * dx + dy * dy).squareRoot()
                                 lastMouseScreenLocation = current
-                                if distance > 0.75 {
+                                if distance > 3.0 {
                                     onHighlight(index)
                                 }
                             case .ended:

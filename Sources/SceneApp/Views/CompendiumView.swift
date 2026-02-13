@@ -72,6 +72,7 @@ struct CompendiumView: View {
                     .tag(Optional(entry.id))
                 }
             }
+            .scrollIndicators(.automatic)
             .frame(minHeight: 180)
 
             Divider()

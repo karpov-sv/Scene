@@ -217,6 +217,7 @@ struct SettingsSheetView: View {
                                 .labelsHidden()
                                 .toggleStyle(.switch)
                                 .accessibilityLabel("Autosave project changes")
+                                .help("Automatically save project changes to disk")
                         }
                     }
                     .padding(.top, 4)
@@ -232,6 +233,7 @@ struct SettingsSheetView: View {
                                 .labelsHidden()
                                 .toggleStyle(.switch)
                                 .accessibilityLabel("Mark rewritten text as italics")
+                                .help("Italicize AI-rewritten text to distinguish it from original")
                         }
                     }
                     .padding(.top, 4)
@@ -389,6 +391,7 @@ struct SettingsSheetView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .accessibilityLabel("Enable Streaming Responses")
+                            .help("Stream AI responses token by token as they are generated")
                     }
                 }
 
