@@ -61,6 +61,8 @@ struct EditorView: View {
     @State private var beatMentionSelectionIndex: Int = 0
     @State private var beatMentionQueryIdentity: String = ""
     @State private var beatMentionAnchor: CGPoint?
+    @State private var isEditingSceneTitle: Bool = false
+    @FocusState private var isSceneTitleFocused: Bool
 
     private let generationButtonWidth: CGFloat = 150
     private let generationButtonHeight: CGFloat = 30
@@ -170,6 +172,7 @@ struct EditorView: View {
             applyPendingSceneSearchSelectionIfNeeded()
         }
         .onChange(of: store.selectedSceneID) { _, _ in
+            isEditingSceneTitle = false
             applyPendingSceneSearchSelectionIfNeeded()
         }
         .onAppear {
@@ -187,9 +190,34 @@ struct EditorView: View {
 
     private var sceneHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Scene title", text: sceneTitleBinding)
-                .textFieldStyle(.roundedBorder)
-                .font(.title3.weight(.semibold))
+            if isEditingSceneTitle {
+                TextField("Scene title", text: sceneTitleBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3.weight(.semibold))
+                    .focused($isSceneTitleFocused)
+                    .onSubmit {
+                        isEditingSceneTitle = false
+                    }
+                    .onExitCommand {
+                        isEditingSceneTitle = false
+                    }
+                    .onChange(of: isSceneTitleFocused) { _, focused in
+                        if !focused {
+                            isEditingSceneTitle = false
+                        }
+                    }
+            } else {
+                Text(store.selectedScene?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? store.selectedScene!.title : "Untitled Scene")
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        isEditingSceneTitle = true
+                        DispatchQueue.main.async {
+                            isSceneTitleFocused = true
+                        }
+                    }
+            }
 
             HStack(spacing: 8) {
                 Button {

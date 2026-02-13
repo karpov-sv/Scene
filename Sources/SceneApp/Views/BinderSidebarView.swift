@@ -7,6 +7,7 @@ struct BinderSidebarView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var editingChapterID: UUID?
     @State private var editingSceneID: UUID?
+    @State private var isEditingProjectTitle: Bool = false
     @State private var editingTitle: String = ""
     @FocusState private var isRenameFieldFocused: Bool
     let onOpenSceneSummary: ((UUID, UUID) -> Void)?
@@ -92,7 +93,9 @@ struct BinderSidebarView: View {
         }
         .onChange(of: isRenameFieldFocused) { _, focused in
             if !focused {
-                if let chapterID = editingChapterID {
+                if isEditingProjectTitle {
+                    commitProjectRename()
+                } else if let chapterID = editingChapterID {
                     commitChapterRename(chapterID)
                 } else if let sceneID = editingSceneID {
                     commitSceneRename(sceneID)
@@ -102,9 +105,35 @@ struct BinderSidebarView: View {
     }
 
     private var header: some View {
-        Text(projectTitle)
-            .font(.headline)
-            .lineLimit(1)
+        Group {
+            if isEditingProjectTitle {
+                TextField("Project Title", text: $editingTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.headline)
+                    .focused($isRenameFieldFocused)
+                    .onSubmit {
+                        commitProjectRename()
+                    }
+                    .onExitCommand {
+                        cancelRename()
+                    }
+            } else {
+                Text(projectTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        beginProjectRename()
+                    }
+                    .contextMenu {
+                        Button {
+                            beginProjectRename()
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                    }
+            }
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
     }
@@ -335,8 +364,27 @@ struct BinderSidebarView: View {
 
     // MARK: - Rename Helpers
 
+    private func beginProjectRename() {
+        editingChapterID = nil
+        editingSceneID = nil
+        isEditingProjectTitle = true
+        editingTitle = store.project.title
+        DispatchQueue.main.async {
+            isRenameFieldFocused = true
+        }
+    }
+
+    private func commitProjectRename() {
+        let trimmed = editingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            store.updateProjectTitle(trimmed)
+        }
+        isEditingProjectTitle = false
+    }
+
     private func beginChapterRename(_ chapter: Chapter) {
         editingSceneID = nil
+        isEditingProjectTitle = false
         editingChapterID = chapter.id
         editingTitle = chapter.title
         DispatchQueue.main.async {
@@ -346,6 +394,7 @@ struct BinderSidebarView: View {
 
     private func beginSceneRename(_ scene: Scene) {
         editingChapterID = nil
+        isEditingProjectTitle = false
         editingSceneID = scene.id
         editingTitle = scene.title
         DispatchQueue.main.async {
@@ -372,6 +421,7 @@ struct BinderSidebarView: View {
     private func cancelRename() {
         editingChapterID = nil
         editingSceneID = nil
+        isEditingProjectTitle = false
     }
 
     // MARK: - Drag & Drop Helpers
