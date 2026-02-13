@@ -251,14 +251,23 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Continue this scene from the provided beat.
 
-        BEAT:
-        {beat}
+        PROJECT:
+        {{project_title}}
 
-        CURRENT SCENE:
-        {scene}
+        CHAPTER:
+        {{chapter_title}}
+
+        SCENE:
+        {{scene_title}}
+
+        BEAT:
+        {{beat}}
+
+        CURRENT SCENE (RECENT EXCERPT):
+        {{scene_tail(chars=4500)}}
 
         CONTEXT:
-        {context}
+        {{context}}
 
         Requirements:
         - Continue only the immediate next passage.
@@ -277,14 +286,20 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Rewrite the selected passage while preserving its intent and continuity.
 
-        SELECTED PASSAGE:
-        {beat}
+        CHAPTER:
+        {{chapter_title}}
 
-        CURRENT SCENE:
-        {scene}
+        SCENE:
+        {{scene_title}}
+
+        SELECTED PASSAGE:
+        {{selection}}
+
+        CURRENT SCENE (RECENT EXCERPT):
+        {{scene_tail(chars=4500)}}
 
         CONTEXT:
-        {context}
+        {{context}}
 
         Requirements:
         - Keep meaning, tone, and narrative intent.
@@ -303,14 +318,20 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Expand the selected passage with richer detail while staying consistent with the scene.
 
-        SELECTED PASSAGE:
-        {beat}
+        CHAPTER:
+        {{chapter_title}}
 
-        CURRENT SCENE:
-        {scene}
+        SCENE:
+        {{scene_title}}
+
+        SELECTED PASSAGE:
+        {{selection}}
+
+        CURRENT SCENE (RECENT EXCERPT):
+        {{scene_tail(chars=4500)}}
 
         CONTEXT:
-        {context}
+        {{context}}
 
         Requirements:
         - Keep original meaning and chronology.
@@ -329,14 +350,20 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Shorten the selected passage while preserving key meaning and tone.
 
-        SELECTED PASSAGE:
-        {beat}
+        CHAPTER:
+        {{chapter_title}}
 
-        CURRENT SCENE:
-        {scene}
+        SCENE:
+        {{scene_title}}
+
+        SELECTED PASSAGE:
+        {{selection}}
+
+        CURRENT SCENE (RECENT EXCERPT):
+        {{scene_tail(chars=4500)}}
 
         CONTEXT:
-        {context}
+        {{context}}
 
         Requirements:
         - Keep essential events and implications.
@@ -355,11 +382,20 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Create a concise narrative summary from the source material.
 
+        SCOPE:
+        {{summary_scope}}
+
+        CHAPTER:
+        {{chapter_title}}
+
+        SCENE:
+        {{scene_title}}
+
         SOURCE MATERIAL:
-        {scene}
+        {{source}}
 
         SUPPORTING CONTEXT:
-        {context}
+        {{context}}
 
         Requirements:
         - Use third-person narrative.
@@ -379,14 +415,17 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         userTemplate: """
         Work with me on this story problem.
 
+        CHAT:
+        {{chat_name}}
+
         CONTEXT:
-        {context}
+        {{context}}
 
         CURRENT SCENE:
-        {scene}
+        {{scene_tail(chars=2400)}}
 
         CONVERSATION:
-        {conversation}
+        {{chat_history(turns=14)}}
         """,
         systemTemplate: "You are an experienced writing coach helping the user improve scenes, pacing, structure, and character work. Be practical and specific."
     )

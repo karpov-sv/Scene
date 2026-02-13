@@ -188,12 +188,41 @@ Script options:
 - Added chapter-level summary workflow (from scene summaries) alongside scene-level summaries.
 - Added streaming support, live token usage reporting, inline workshop message actions, and improved auto-scroll behavior in workshop chat.
 - Added rich text editor support in the writing panel (bold/italic/underline + keyboard shortcuts).
+- Added structured prompt rendering with canonical `{{variable}}` and `{{function(...)}}` syntax (legacy `{variable}` remains supported), plus template warnings in payload previews.
 
-## Prompt Placeholders
+## Prompt Template Variables
 
-Prompt templates can use:
+Prompt templates support canonical syntax:
 
-- `{beat}`
-- `{scene}`
-- `{context}`
-- `{conversation}`
+- `{{variable}}`
+- `{{function(arg=value)}}`
+
+Legacy placeholders like `{beat}` remain supported for compatibility.
+
+Common variables:
+
+- `{{beat}}`
+- `{{selection}}`
+- `{{scene}}`
+- `{{scene_title}}`
+- `{{chapter_title}}`
+- `{{project_title}}`
+- `{{context}}`
+- `{{context_compendium}}`
+- `{{context_scene_summaries}}`
+- `{{context_chapter_summaries}}`
+- `{{conversation}}`
+- `{{chat_name}}`
+- `{{last_user_message}}`
+- `{{last_assistant_message}}`
+- `{{summary_scope}}`
+- `{{source}}`
+
+Built-in functions:
+
+- `{{scene_tail(chars=4500)}}`
+- `{{chat_history(turns=8)}}`
+- `{{context(max_chars=4000)}}`
+- `{{context_compendium(max_chars=4000)}}`
+- `{{context_scene_summaries(max_chars=4000)}}`
+- `{{context_chapter_summaries(max_chars=4000)}}`

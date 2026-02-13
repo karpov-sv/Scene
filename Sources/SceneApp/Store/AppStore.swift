@@ -97,6 +97,41 @@ final class AppStore: ObservableObject {
         let notes: [String]
     }
 
+    struct PromptTemplateRenderPreview: Identifiable {
+        let id: UUID = UUID()
+        let title: String
+        let category: PromptCategory
+        let renderedUserPrompt: String
+        let resolvedSystemPrompt: String
+        let notes: [String]
+        let warnings: [String]
+    }
+
+    struct BuiltInPromptRefreshResult {
+        let updatedCount: Int
+        let addedCount: Int
+    }
+
+    private struct PromptRequestBuildResult {
+        let request: TextGenerationRequest
+        let renderWarnings: [String]
+    }
+
+    private struct SceneContextSections {
+        let combined: String
+        let compendium: String
+        let sceneSummaries: String
+        let chapterSummaries: String
+    }
+
+    private struct PromptPreviewSceneContext {
+        let sceneID: UUID?
+        let sceneTitle: String
+        let chapterTitle: String
+        let sceneContent: String
+        let note: String?
+    }
+
     @Published private(set) var project: StoryProject
     @Published private(set) var isProjectOpen: Bool = false
     @Published private(set) var currentProjectURL: URL?
@@ -128,6 +163,7 @@ final class AppStore: ObservableObject {
     private let persistence: ProjectPersistence
     private let openAIService: OpenAICompatibleAIService
     private let anthropicService: AnthropicAIService
+    private let promptRenderer: PromptRenderer
     private let isDocumentBacked: Bool
     private var documentChangeHandler: ((StoryProject) -> Void)?
 
@@ -139,11 +175,13 @@ final class AppStore: ObservableObject {
     init(
         persistence: ProjectPersistence = .shared,
         openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService(),
-        anthropicService: AnthropicAIService = AnthropicAIService()
+        anthropicService: AnthropicAIService = AnthropicAIService(),
+        promptRenderer: PromptRenderer = PromptRenderer()
     ) {
         self.persistence = persistence
         self.openAIService = openAIService
         self.anthropicService = anthropicService
+        self.promptRenderer = promptRenderer
         self.isDocumentBacked = false
         self.documentChangeHandler = nil
 
@@ -167,11 +205,13 @@ final class AppStore: ObservableObject {
         projectURL: URL?,
         persistence: ProjectPersistence = .shared,
         openAIService: OpenAICompatibleAIService = OpenAICompatibleAIService(),
-        anthropicService: AnthropicAIService = AnthropicAIService()
+        anthropicService: AnthropicAIService = AnthropicAIService(),
+        promptRenderer: PromptRenderer = PromptRenderer()
     ) {
         self.persistence = persistence
         self.openAIService = openAIService
         self.anthropicService = anthropicService
+        self.promptRenderer = promptRenderer
         self.isDocumentBacked = true
         self.documentChangeHandler = nil
         self.project = documentProject
@@ -1357,7 +1397,16 @@ final class AppStore: ObservableObject {
             throw AIServiceError.badResponse("Select a scene first.")
         }
 
-        let request = makeProseGenerationRequest(beat: beat, scene: scene)
+        let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene)
+        let request = requestBuild.request
+        let notes = previewNotes(
+            base: [
+                "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
+                "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+            ],
+            renderWarnings: requestBuild.renderWarnings
+        )
 
         switch project.settings.provider {
         case .anthropic:
@@ -1368,11 +1417,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
-                notes: [
-                    "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
-                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-                ]
+                notes: notes
             )
         case .openAI, .openRouter, .lmStudio, .openAICompatible:
             let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
@@ -1382,11 +1427,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
-                notes: [
-                    "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
-                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-                ]
+                notes: notes
             )
         }
     }
@@ -1400,7 +1441,7 @@ final class AppStore: ObservableObject {
             throw AIServiceError.badResponse("Select a scene first.")
         }
 
-        let request = makeRewriteRequest(selectedText: normalizedSelection, scene: scene)
+        let request = makeRewriteRequest(selectedText: normalizedSelection, scene: scene).request
         let rewritten = try await generateText(request)
         let normalizedRewrite = rewritten.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedRewrite.isEmpty else {
@@ -1416,7 +1457,7 @@ final class AppStore: ObservableObject {
         }
 
         let sceneID = scene.id
-        let request = makeSummaryRequest(scene: scene)
+        let request = makeSummaryRequest(scene: scene).request
         updateSceneSummary(sceneID: sceneID, summary: "", debounced: true)
 
         let summaryPartialHandler: (@MainActor (String) -> Void)?
@@ -1445,7 +1486,7 @@ final class AppStore: ObservableObject {
         }
 
         let chapterID = chapter.id
-        let request = makeChapterSummaryRequest(chapter: chapter)
+        let request = makeChapterSummaryRequest(chapter: chapter).request
         updateChapterSummary(chapterID: chapterID, summary: "", debounced: true)
 
         let summaryPartialHandler: (@MainActor (String) -> Void)?
@@ -1484,12 +1525,22 @@ final class AppStore: ObservableObject {
             throw AIServiceError.badResponse("Type a message to preview payload.")
         }
 
+        let promptResult = buildWorkshopUserPrompt(sessionID: sessionID, pendingUserInput: pendingUserInput)
+
         let request = TextGenerationRequest(
             systemPrompt: resolvedWorkshopSystemPrompt(),
-            userPrompt: buildWorkshopUserPrompt(sessionID: sessionID, pendingUserInput: pendingUserInput),
+            userPrompt: promptResult.renderedText,
             model: project.settings.model,
             temperature: project.settings.temperature,
             maxTokens: project.settings.maxTokens
+        )
+
+        let notes = previewNotes(
+            base: [
+                "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+            ],
+            renderWarnings: promptResult.warnings
         )
 
         switch project.settings.provider {
@@ -1501,10 +1552,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
-                notes: [
-                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-                ]
+                notes: notes
             )
         case .openAI, .openRouter, .lmStudio, .openAICompatible:
             let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
@@ -1514,10 +1562,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
-                notes: [
-                    "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                    "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-                ]
+                notes: notes
             )
         }
     }
@@ -1661,7 +1706,7 @@ final class AppStore: ObservableObject {
         workshopLiveUsage = nil
         workshopStatus = shouldUseStreaming ? "Streaming..." : "Thinking..."
 
-        let prompt = buildWorkshopUserPrompt(sessionID: sessionID)
+        let prompt = buildWorkshopUserPrompt(sessionID: sessionID).renderedText
         let systemPrompt = resolvedWorkshopSystemPrompt()
 
         var streamingAssistantMessageID: UUID?
@@ -1874,6 +1919,284 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func makePromptTemplateRenderPreview(promptID: UUID) throws -> PromptTemplateRenderPreview {
+        guard let index = promptIndex(for: promptID) else {
+            throw AIServiceError.badResponse("Select a prompt template first.")
+        }
+
+        let prompt = project.prompts[index]
+        let promptTitle = prompt.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Untitled Prompt"
+            : prompt.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var notes: [String] = []
+        let scenePreview = resolvePromptPreviewSceneContext()
+        if let sceneNote = scenePreview.note {
+            notes.append(sceneNote)
+        }
+
+        let beatPreviewInput = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let beatPreview = beatPreviewInput.isEmpty
+            ? "A quiet promise turns into a dangerous obligation."
+            : beatPreviewInput
+        if beatPreviewInput.isEmpty && (prompt.category == .prose || prompt.category == .rewrite) {
+            notes.append("Beat input is empty. Preview used sample beat text.")
+        }
+
+        let selectionPreview = beatPreviewInput.isEmpty
+            ? "She stared at the letter, then folded it into her coat."
+            : beatPreviewInput
+        if beatPreviewInput.isEmpty && prompt.category == .rewrite {
+            notes.append("Rewrite preview used sample selected text.")
+        }
+
+        let renderedUser: PromptRenderer.Result
+        switch prompt.category {
+        case .prose:
+            let contextSections = buildCompendiumContextSections(
+                for: scenePreview.sceneID,
+                mentionSourceText: beatPreview
+            )
+            let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            renderedUser = renderPromptTemplate(
+                template: prompt.userTemplate,
+                fallbackTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
+                beat: beatPreview,
+                selection: "",
+                sceneExcerpt: sceneExcerpt,
+                sceneFullText: scenePreview.sceneContent,
+                sceneTitle: scenePreview.sceneTitle,
+                chapterTitle: scenePreview.chapterTitle,
+                contextSections: contextSections,
+                conversation: "",
+                conversationTurns: [],
+                summaryScope: "",
+                source: sceneExcerpt
+            )
+
+        case .rewrite:
+            let contextSections = buildCompendiumContextSections(
+                for: scenePreview.sceneID,
+                mentionSourceText: selectionPreview
+            )
+            let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            renderedUser = renderPromptTemplate(
+                template: prompt.userTemplate,
+                fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
+                beat: selectionPreview,
+                selection: selectionPreview,
+                sceneExcerpt: sceneExcerpt,
+                sceneFullText: scenePreview.sceneContent,
+                sceneTitle: scenePreview.sceneTitle,
+                chapterTitle: scenePreview.chapterTitle,
+                contextSections: contextSections,
+                conversation: "",
+                conversationTurns: [],
+                summaryScope: "",
+                source: selectionPreview
+            )
+
+        case .summary:
+            if scenePreview.sceneID != nil {
+                let contextSections = buildCompendiumContextSections(for: scenePreview.sceneID)
+                let scopeContext = """
+                Scope: scene summary
+                \(contextSections.combined)
+                """
+                let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+                notes.append("Summary preview scope: scene.")
+                renderedUser = renderPromptTemplate(
+                    template: prompt.userTemplate,
+                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    beat: "",
+                    selection: "",
+                    sceneExcerpt: sceneExcerpt,
+                    sceneFullText: scenePreview.sceneContent,
+                    sceneTitle: scenePreview.sceneTitle,
+                    chapterTitle: scenePreview.chapterTitle,
+                    contextSections: SceneContextSections(
+                        combined: scopeContext,
+                        compendium: contextSections.compendium,
+                        sceneSummaries: contextSections.sceneSummaries,
+                        chapterSummaries: contextSections.chapterSummaries
+                    ),
+                    conversation: "",
+                    conversationTurns: [],
+                    summaryScope: "scene",
+                    source: sceneExcerpt
+                )
+            } else if let chapter = selectedChapter ?? project.chapters.first {
+                let chapterTitle = displayChapterTitle(chapter)
+                let sceneSummaryContext = buildChapterSceneSummaryContext(chapter: chapter)
+                let chapterContext = """
+                Scope: chapter summary from scene summaries
+                Chapter: \(chapterTitle)
+                Scene count: \(chapter.scenes.count)
+                """
+                notes.append("Summary preview scope: chapter.")
+                renderedUser = renderPromptTemplate(
+                    template: prompt.userTemplate,
+                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    beat: "",
+                    selection: "",
+                    sceneExcerpt: sceneSummaryContext,
+                    sceneFullText: sceneSummaryContext,
+                    sceneTitle: "Chapter Summary Input",
+                    chapterTitle: chapterTitle,
+                    contextSections: SceneContextSections(
+                        combined: chapterContext,
+                        compendium: "",
+                        sceneSummaries: sceneSummaryContext,
+                        chapterSummaries: ""
+                    ),
+                    conversation: "",
+                    conversationTurns: [],
+                    summaryScope: "chapter",
+                    source: sceneSummaryContext
+                )
+            } else {
+                notes.append("No scene or chapter found. Summary preview uses placeholder source text.")
+                renderedUser = renderPromptTemplate(
+                    template: prompt.userTemplate,
+                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    beat: "",
+                    selection: "",
+                    sceneExcerpt: "No source text available.",
+                    sceneFullText: "No source text available.",
+                    sceneTitle: "No Scene",
+                    chapterTitle: "No Chapter",
+                    contextSections: SceneContextSections(
+                        combined: "Scope: scene summary\nNo context available.",
+                        compendium: "",
+                        sceneSummaries: "",
+                        chapterSummaries: ""
+                    ),
+                    conversation: "",
+                    conversationTurns: [],
+                    summaryScope: "scene",
+                    source: "No source text available."
+                )
+            }
+
+        case .workshop:
+            var messages = (selectedWorkshopSession ?? project.workshopSessions.first)?.messages ?? []
+            if messages.isEmpty {
+                notes.append("Chat history is empty.")
+            }
+
+            let pendingInputRaw = workshopInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pendingInput = pendingInputRaw.isEmpty
+                ? "Give three options to raise tension in this scene."
+                : pendingInputRaw
+            if pendingInputRaw.isEmpty {
+                notes.append("Chat input is empty. Preview appended sample user input.")
+            }
+            messages.append(.init(role: .user, content: pendingInput))
+
+            let transcript = messages
+                .suffix(14)
+                .map { message in
+                    let label = message.role == .user ? "User" : "Assistant"
+                    return "\(label): \(message.content)"
+                }
+                .joined(separator: "\n\n")
+            let conversationTurns = messages.map { message in
+                PromptRenderer.ChatTurn(
+                    roleLabel: message.role == .user ? "User" : "Assistant",
+                    content: message.content
+                )
+            }
+
+            let sceneContext = workshopUseSceneContext
+                ? String(scenePreview.sceneContent.suffix(2400))
+                : "Scene context disabled."
+
+            let contextSections: SceneContextSections
+            if workshopUseCompendiumContext {
+                contextSections = buildCompendiumContextSections(
+                    for: scenePreview.sceneID,
+                    mentionSourceText: pendingInput
+                )
+            } else {
+                contextSections = SceneContextSections(
+                    combined: "Compendium context disabled.",
+                    compendium: "Compendium context disabled.",
+                    sceneSummaries: "Compendium context disabled.",
+                    chapterSummaries: "Compendium context disabled."
+                )
+            }
+
+            let sessionName = (selectedWorkshopSession ?? project.workshopSessions.first)?.name
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedSessionName = (sessionName?.isEmpty == false) ? (sessionName ?? "") : "Untitled Chat"
+
+            renderedUser = renderPromptTemplate(
+                template: prompt.userTemplate,
+                fallbackTemplate: PromptTemplate.defaultWorkshopTemplate.userTemplate,
+                beat: "",
+                selection: pendingInput,
+                sceneExcerpt: sceneContext,
+                sceneFullText: scenePreview.sceneContent,
+                sceneTitle: scenePreview.sceneTitle,
+                chapterTitle: scenePreview.chapterTitle,
+                contextSections: contextSections,
+                conversation: transcript,
+                conversationTurns: conversationTurns,
+                summaryScope: "",
+                source: transcript,
+                extraVariables: [
+                    "chat_name": resolvedSessionName,
+                    "last_user_message": messages.reversed().first(where: { $0.role == .user })?.content ?? "",
+                    "last_assistant_message": messages.reversed().first(where: { $0.role == .assistant })?.content ?? ""
+                ]
+            )
+        }
+
+        let resolvedSystemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? project.settings.defaultSystemPrompt
+            : prompt.systemTemplate
+        if prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            notes.append("System template is empty. Preview uses project default system prompt.")
+        }
+
+        return PromptTemplateRenderPreview(
+            title: promptTitle,
+            category: prompt.category,
+            renderedUserPrompt: renderedUser.renderedText,
+            resolvedSystemPrompt: resolvedSystemPrompt,
+            notes: notes,
+            warnings: renderedUser.warnings
+        )
+    }
+
+    @discardableResult
+    func refreshBuiltInPromptTemplatesToLatest() -> BuiltInPromptRefreshResult {
+        var updatedCount = 0
+        var addedCount = 0
+
+        for builtIn in PromptTemplate.builtInTemplates {
+            if let index = promptIndex(for: builtIn.id) {
+                if project.prompts[index] != builtIn {
+                    project.prompts[index] = builtIn
+                    updatedCount += 1
+                }
+            } else {
+                project.prompts.append(builtIn)
+                addedCount += 1
+            }
+        }
+
+        ensureDefaultPromptSelections()
+        if updatedCount > 0 || addedCount > 0 {
+            saveProject()
+        }
+
+        return BuiltInPromptRefreshResult(
+            updatedCount: updatedCount,
+            addedCount: addedCount
+        )
+    }
+
     private func defaultPromptTemplate(for category: PromptCategory) -> PromptTemplate {
         switch category {
         case .prose:
@@ -1914,7 +2237,7 @@ final class AppStore: ObservableObject {
             return
         }
 
-        let request = makeProseGenerationRequest(beat: beat, scene: scene)
+        let request = makeProseGenerationRequest(beat: beat, scene: scene).request
         rememberBeatInputHistory(beat)
 
         isGenerating = true
@@ -1968,86 +2291,127 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func makeProseGenerationRequest(beat: String, scene: Scene) -> TextGenerationRequest {
+    private func makeProseGenerationRequest(beat: String, scene: Scene) -> PromptRequestBuildResult {
         let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
         let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(for: scene.id, mentionSourceText: beat)
 
-        let userPrompt = expandPrompt(
+        let promptResult = renderPromptTemplate(
             template: activePrompt.userTemplate,
+            fallbackTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
             beat: beat,
-            scene: sceneContext,
-            context: compendiumContext,
-            conversation: ""
+            selection: "",
+            sceneExcerpt: sceneContext,
+            sceneFullText: scene.content,
+            sceneTitle: displaySceneTitle(scene),
+            chapterTitle: chapterTitle(forSceneID: scene.id),
+            contextSections: sceneContextSections,
+            conversation: "",
+            conversationTurns: [],
+            summaryScope: "",
+            source: sceneContext
         )
 
         let systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
             : activePrompt.systemTemplate
 
-        return TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: project.settings.model,
-            temperature: project.settings.temperature,
-            maxTokens: project.settings.maxTokens
+        return PromptRequestBuildResult(
+            request: TextGenerationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: promptResult.renderedText,
+                model: project.settings.model,
+                temperature: project.settings.temperature,
+                maxTokens: project.settings.maxTokens
+            ),
+            renderWarnings: promptResult.warnings
         )
     }
 
-    private func makeRewriteRequest(selectedText: String, scene: Scene) -> TextGenerationRequest {
+    private func makeRewriteRequest(selectedText: String, scene: Scene) -> PromptRequestBuildResult {
         let prompt = activeRewritePrompt ?? defaultPromptTemplate(for: .rewrite)
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id)
         let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(for: scene.id)
 
-        let userPrompt = expandPrompt(
+        let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
+            fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
             beat: selectedText,
-            scene: sceneContext,
-            context: compendiumContext,
-            conversation: ""
+            selection: selectedText,
+            sceneExcerpt: sceneContext,
+            sceneFullText: scene.content,
+            sceneTitle: displaySceneTitle(scene),
+            chapterTitle: chapterTitle(forSceneID: scene.id),
+            contextSections: sceneContextSections,
+            conversation: "",
+            conversationTurns: [],
+            summaryScope: "",
+            source: selectedText
         )
 
         let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
             : prompt.systemTemplate
 
-        return TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: project.settings.model,
-            temperature: project.settings.temperature,
-            maxTokens: project.settings.maxTokens
+        return PromptRequestBuildResult(
+            request: TextGenerationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: promptResult.renderedText,
+                model: project.settings.model,
+                temperature: project.settings.temperature,
+                maxTokens: project.settings.maxTokens
+            ),
+            renderWarnings: promptResult.warnings
         )
     }
 
-    private func makeSummaryRequest(scene: Scene) -> TextGenerationRequest {
+    private func makeSummaryRequest(scene: Scene) -> PromptRequestBuildResult {
         let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id)
         let sceneContext = String(scene.content.suffix(4500))
-        let compendiumContext = buildCompendiumContext(for: scene.id)
-        let scopeContext = "Scope: scene summary\n\(compendiumContext)"
+        let scopeContext = """
+        Scope: scene summary
+        \(sceneContextSections.combined)
+        """
 
-        let userPrompt = expandPrompt(
+        let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
+            fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
             beat: "",
-            scene: sceneContext,
-            context: scopeContext,
-            conversation: ""
+            selection: "",
+            sceneExcerpt: sceneContext,
+            sceneFullText: scene.content,
+            sceneTitle: displaySceneTitle(scene),
+            chapterTitle: chapterTitle(forSceneID: scene.id),
+            contextSections: SceneContextSections(
+                combined: scopeContext,
+                compendium: sceneContextSections.compendium,
+                sceneSummaries: sceneContextSections.sceneSummaries,
+                chapterSummaries: sceneContextSections.chapterSummaries
+            ),
+            conversation: "",
+            conversationTurns: [],
+            summaryScope: "scene",
+            source: sceneContext
         )
 
         let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
             : prompt.systemTemplate
 
-        return TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: project.settings.model,
-            temperature: project.settings.temperature,
-            maxTokens: project.settings.maxTokens
+        return PromptRequestBuildResult(
+            request: TextGenerationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: promptResult.renderedText,
+                model: project.settings.model,
+                temperature: project.settings.temperature,
+                maxTokens: project.settings.maxTokens
+            ),
+            renderWarnings: promptResult.warnings
         )
     }
 
-    private func makeChapterSummaryRequest(chapter: Chapter) -> TextGenerationRequest {
+    private func makeChapterSummaryRequest(chapter: Chapter) -> PromptRequestBuildResult {
         let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
         let sceneSummaryContext = buildChapterSceneSummaryContext(chapter: chapter)
         let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2057,24 +2421,40 @@ final class AppStore: ObservableObject {
         Scene count: \(chapter.scenes.count)
         """
 
-        let userPrompt = expandPrompt(
+        let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
+            fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
             beat: "",
-            scene: sceneSummaryContext,
-            context: chapterContext,
-            conversation: ""
+            selection: "",
+            sceneExcerpt: sceneSummaryContext,
+            sceneFullText: sceneSummaryContext,
+            sceneTitle: "Chapter Summary Input",
+            chapterTitle: chapterTitle.isEmpty ? "Untitled Chapter" : chapterTitle,
+            contextSections: SceneContextSections(
+                combined: chapterContext,
+                compendium: "",
+                sceneSummaries: sceneSummaryContext,
+                chapterSummaries: ""
+            ),
+            conversation: "",
+            conversationTurns: [],
+            summaryScope: "chapter",
+            source: sceneSummaryContext
         )
 
         let systemPrompt = prompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
             : prompt.systemTemplate
 
-        return TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: project.settings.model,
-            temperature: project.settings.temperature,
-            maxTokens: project.settings.maxTokens
+        return PromptRequestBuildResult(
+            request: TextGenerationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: promptResult.renderedText,
+                model: project.settings.model,
+                temperature: project.settings.temperature,
+                maxTokens: project.settings.maxTokens
+            ),
+            renderWarnings: promptResult.warnings
         )
     }
 
@@ -2532,9 +2912,9 @@ final class AppStore: ObservableObject {
         return max(1, max(characterBasedEstimate, wordBasedEstimate))
     }
 
-    private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> String {
+    private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> PromptRenderer.Result {
         guard let sessionIndex = workshopSessionIndex(for: sessionID) else {
-            return ""
+            return PromptRenderer.Result(renderedText: "", warnings: [])
         }
 
         var messages = project.workshopSessions[sessionIndex].messages
@@ -2550,13 +2930,20 @@ final class AppStore: ObservableObject {
             mentionSourceText = messages.reversed().first(where: { $0.role == .user })?.content
         }
 
-        let transcript = messages
-            .suffix(14)
+        let recentMessages = messages.suffix(14)
+        let transcript = recentMessages
             .map { msg in
                 let prefix = msg.role == .user ? "User" : "Assistant"
                 return "\(prefix): \(msg.content)"
             }
             .joined(separator: "\n\n")
+
+        let conversationTurns = messages.map { message in
+            PromptRenderer.ChatTurn(
+                roleLabel: message.role == .user ? "User" : "Assistant",
+                content: message.content
+            )
+        }
 
         let sceneContext: String
         if workshopUseSceneContext {
@@ -2565,26 +2952,48 @@ final class AppStore: ObservableObject {
             sceneContext = "Scene context disabled."
         }
 
-        let compendiumContext: String
+        let contextSections: SceneContextSections
         if workshopUseCompendiumContext {
-            compendiumContext = buildCompendiumContext(
+            contextSections = buildCompendiumContextSections(
                 for: selectedScene?.id,
                 mentionSourceText: mentionSourceText
             )
         } else {
-            compendiumContext = "Compendium context disabled."
+            contextSections = SceneContextSections(
+                combined: "Compendium context disabled.",
+                compendium: "Compendium context disabled.",
+                sceneSummaries: "Compendium context disabled.",
+                chapterSummaries: "Compendium context disabled."
+            )
         }
 
         let template = activeWorkshopPrompt?.userTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? activeWorkshopPrompt!.userTemplate
             : PromptTemplate.defaultWorkshopTemplate.userTemplate
 
-        return expandPrompt(
+        let sceneTitle = selectedScene.map { displaySceneTitle($0) } ?? "No scene selected"
+        let chapterTitleText = selectedScene.map { self.chapterTitle(forSceneID: $0.id) } ?? "No chapter selected"
+        let selectedSessionName = project.workshopSessions[sessionIndex].name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return renderPromptTemplate(
             template: template,
+            fallbackTemplate: PromptTemplate.defaultWorkshopTemplate.userTemplate,
             beat: "",
-            scene: sceneContext,
-            context: compendiumContext,
-            conversation: transcript
+            selection: trimmedPending ?? "",
+            sceneExcerpt: sceneContext,
+            sceneFullText: selectedScene?.content ?? sceneContext,
+            sceneTitle: sceneTitle,
+            chapterTitle: chapterTitleText,
+            contextSections: contextSections,
+            conversation: transcript,
+            conversationTurns: conversationTurns,
+            summaryScope: "",
+            source: transcript,
+            extraVariables: [
+                "chat_name": selectedSessionName.isEmpty ? "Untitled Chat" : selectedSessionName,
+                "last_user_message": messages.reversed().first(where: { $0.role == .user })?.content ?? "",
+                "last_assistant_message": messages.reversed().first(where: { $0.role == .assistant })?.content ?? ""
+            ]
         )
     }
 
@@ -2649,10 +3058,10 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func buildCompendiumContext(
+    private func buildCompendiumContextSections(
         for sceneID: UUID?,
         mentionSourceText: String? = nil
-    ) -> String {
+    ) -> SceneContextSections {
         let selectedEntryIDs = compendiumContextIDs(for: sceneID)
         let selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
         let selectedSceneSummaryIDs = sceneSummaryContextIDs(for: sceneID)
@@ -2670,37 +3079,148 @@ final class AppStore: ObservableObject {
             mentionContext.sceneReferences
         )
 
-        return formattedCompendiumContext(
-            compendiumEntries: mergedCompendiumEntries,
-            sceneSummaries: mergedSceneSummaries,
-            chapterSummaries: selectedChapterSummaries
-        )
-    }
-
-    private func formattedCompendiumContext(
-        compendiumEntries: [CompendiumEntry],
-        sceneSummaries: [(chapterTitle: String, sceneTitle: String, summary: String)],
-        chapterSummaries: [(chapterTitle: String, summary: String)]
-    ) -> String {
-        var excerpt = compendiumEntries.map { entry in
+        let compendiumText = mergedCompendiumEntries.map { entry in
             let body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
             let tags = entry.tags.isEmpty ? "" : " [tags: \(entry.tags.joined(separator: ", "))]"
             return "- [\(entry.category.label)] \(entry.title)\(tags): \(body)"
         }
 
-        excerpt.append(contentsOf: sceneSummaries.map { item in
+        let sceneSummariesText = mergedSceneSummaries.map { item in
             "- [Scene Summary] \(item.chapterTitle) / \(item.sceneTitle): \(item.summary)"
-        })
-
-        excerpt.append(contentsOf: chapterSummaries.map { item in
-            "- [Chapter Summary] \(item.chapterTitle): \(item.summary)"
-        })
-
-        if excerpt.isEmpty {
-            return "No scene context selected for this scene."
         }
 
-        return excerpt.joined(separator: "\n")
+        let chapterSummariesText = selectedChapterSummaries.map { item in
+            "- [Chapter Summary] \(item.chapterTitle): \(item.summary)"
+        }
+
+        var combinedLines: [String] = []
+        combinedLines.append(contentsOf: compendiumText)
+        combinedLines.append(contentsOf: sceneSummariesText)
+        combinedLines.append(contentsOf: chapterSummariesText)
+
+        let combined = combinedLines.isEmpty
+            ? "No scene context selected for this scene."
+            : combinedLines.joined(separator: "\n")
+
+        return SceneContextSections(
+            combined: combined,
+            compendium: compendiumText.joined(separator: "\n"),
+            sceneSummaries: sceneSummariesText.joined(separator: "\n"),
+            chapterSummaries: chapterSummariesText.joined(separator: "\n")
+        )
+    }
+
+    private func previewNotes(base: [String], renderWarnings: [String]) -> [String] {
+        guard !renderWarnings.isEmpty else {
+            return base
+        }
+        let warningNotes = renderWarnings.map { warning in
+            "Template warning: \(warning)"
+        }
+        return base + warningNotes
+    }
+
+    private func displaySceneTitle(_ scene: Scene) -> String {
+        let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Scene" : trimmed
+    }
+
+    private func displayChapterTitle(_ chapter: Chapter) -> String {
+        let trimmed = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Chapter" : trimmed
+    }
+
+    private func chapterTitle(forSceneID sceneID: UUID) -> String {
+        guard let location = sceneLocation(for: sceneID) else {
+            return "Untitled Chapter"
+        }
+        return displayChapterTitle(project.chapters[location.chapterIndex])
+    }
+
+    private func resolvePromptPreviewSceneContext() -> PromptPreviewSceneContext {
+        if let selectedScene {
+            return PromptPreviewSceneContext(
+                sceneID: selectedScene.id,
+                sceneTitle: displaySceneTitle(selectedScene),
+                chapterTitle: chapterTitle(forSceneID: selectedScene.id),
+                sceneContent: selectedScene.content,
+                note: nil
+            )
+        }
+
+        for chapter in project.chapters {
+            if let firstScene = chapter.scenes.first {
+                return PromptPreviewSceneContext(
+                    sceneID: firstScene.id,
+                    sceneTitle: displaySceneTitle(firstScene),
+                    chapterTitle: displayChapterTitle(chapter),
+                    sceneContent: firstScene.content,
+                    note: "No scene selected. Preview used the first scene in the project."
+                )
+            }
+        }
+
+        return PromptPreviewSceneContext(
+            sceneID: nil,
+            sceneTitle: "No Scene",
+            chapterTitle: "No Chapter",
+            sceneContent: "No scene text available.",
+            note: "Project has no scenes. Preview used placeholder scene text."
+        )
+    }
+
+    private func renderPromptTemplate(
+        template: String,
+        fallbackTemplate: String,
+        beat: String,
+        selection: String,
+        sceneExcerpt: String,
+        sceneFullText: String,
+        sceneTitle: String,
+        chapterTitle: String,
+        contextSections: SceneContextSections,
+        conversation: String,
+        conversationTurns: [PromptRenderer.ChatTurn],
+        summaryScope: String,
+        source: String,
+        extraVariables: [String: String] = [:]
+    ) -> PromptRenderer.Result {
+        var variables: [String: String] = [
+            "beat": beat,
+            "selection": selection,
+            "scene": sceneExcerpt,
+            "scene_full": sceneFullText,
+            "scene_title": sceneTitle,
+            "chapter_title": chapterTitle,
+            "context": contextSections.combined,
+            "context_compendium": contextSections.compendium,
+            "context_scene_summaries": contextSections.sceneSummaries,
+            "context_chapter_summaries": contextSections.chapterSummaries,
+            "conversation": conversation,
+            "summary_scope": summaryScope,
+            "source": source,
+            "project_title": currentProjectName
+        ]
+
+        for (key, value) in extraVariables {
+            variables[key] = value
+        }
+
+        return promptRenderer.render(
+            template: template,
+            fallbackTemplate: fallbackTemplate,
+            context: PromptRenderer.Context(
+                variables: variables,
+                sceneFullText: sceneFullText,
+                conversationTurns: conversationTurns,
+                contextSections: [
+                    "context": contextSections.combined,
+                    "context_compendium": contextSections.compendium,
+                    "context_scene_summaries": contextSections.sceneSummaries,
+                    "context_chapter_summaries": contextSections.chapterSummaries
+                ]
+            )
+        )
     }
 
     private func resolveMentionContext(from sourceText: String?) -> MentionResolvedContext {
@@ -3035,18 +3555,6 @@ final class AppStore: ObservableObject {
             }
         }
         project.sceneContextChapterSummarySelection = sanitizedChapterSummaries
-    }
-
-    private func expandPrompt(template: String, beat: String, scene: String, context: String, conversation: String) -> String {
-        let normalizedTemplate = template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? PromptTemplate.defaultProseTemplate.userTemplate
-            : template
-
-        return normalizedTemplate
-            .replacingOccurrences(of: "{beat}", with: beat)
-            .replacingOccurrences(of: "{scene}", with: scene)
-            .replacingOccurrences(of: "{context}", with: context)
-            .replacingOccurrences(of: "{conversation}", with: conversation)
     }
 
     private struct GenerationAppendBase {

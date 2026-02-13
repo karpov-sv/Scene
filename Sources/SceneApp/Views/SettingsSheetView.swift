@@ -24,6 +24,9 @@ struct SettingsSheetView: View {
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedPromptID: UUID?
     @State private var dataExchangeStatus: String = ""
+    @State private var promptTemplateStatus: String = ""
+    @State private var promptRenderPreview: AppStore.PromptTemplateRenderPreview?
+    @State private var showBuiltInTemplateResetConfirmation: Bool = false
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -161,6 +164,21 @@ struct SettingsSheetView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, idealWidth: 940, minHeight: 640, idealHeight: 720)
+        .sheet(item: $promptRenderPreview) { preview in
+            PromptTemplateRenderPreviewSheet(preview: preview)
+        }
+        .confirmationDialog(
+            "Update built-in templates to latest defaults?",
+            isPresented: $showBuiltInTemplateResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Update Built-ins", role: .destructive) {
+                refreshBuiltInTemplates()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This overwrites all built-in templates in this project with the newest defaults. Custom templates are not changed.")
+        }
     }
 
     private var header: some View {
@@ -422,6 +440,12 @@ struct SettingsSheetView: View {
                         Label("Add Template", systemImage: "plus")
                     }
 
+                    Button {
+                        showBuiltInTemplateResetConfirmation = true
+                    } label: {
+                        Label("Update Built-ins", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
                     Spacer(minLength: 0)
 
                     Button {
@@ -443,6 +467,15 @@ struct SettingsSheetView: View {
                     .disabled(!canDeleteSelectedPrompt)
                 }
                 .padding(12)
+
+                if !promptTemplateStatus.isEmpty {
+                    Text(promptTemplateStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 10)
+                }
             }
             .frame(minWidth: 250, idealWidth: 280, maxWidth: 320)
 
@@ -515,6 +548,14 @@ struct SettingsSheetView: View {
                                     .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                             )
                             .frame(minHeight: 180)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            testRenderSelectedPrompt()
+                        } label: {
+                            Label("Test Render", systemImage: "play.rectangle")
+                        }
                     }
 
                     promptVariableHelp(currentCategory: prompt.category)
@@ -630,7 +671,7 @@ struct SettingsSheetView: View {
             Text("Template Variable Help")
                 .font(.headline)
 
-            Text("Available placeholders by mode. If a value is unavailable in a mode, the placeholder resolves to an empty string.")
+            Text("Use `{{variable}}` or `{{function(...)}}`. Legacy `{variable}` placeholders are still supported.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -642,7 +683,7 @@ struct SettingsSheetView: View {
                     HStack(alignment: .top, spacing: 10) {
                         Text(item.token)
                             .font(.system(.caption, design: .monospaced))
-                            .frame(width: 120, alignment: .leading)
+                            .frame(width: 240, alignment: .leading)
                             .foregroundStyle(.secondary)
 
                         Text(item.meaning)
@@ -668,31 +709,48 @@ struct SettingsSheetView: View {
         switch category {
         case .prose:
             return [
-                .init(token: "{beat}", meaning: "Text from the \"Generate from beat\" input."),
-                .init(token: "{scene}", meaning: "Current scene text (recent portion) for continuity."),
-                .init(token: "{context}", meaning: "Selected/mentioned scene context from compendium and summaries."),
-                .init(token: "{conversation}", meaning: "Empty in writing generation mode."),
+                .init(token: "{{beat}}", meaning: "Text from the \"Generate from beat\" input."),
+                .init(token: "{{scene}}", meaning: "Current scene excerpt for continuity."),
+                .init(token: "{{scene_tail(chars=4500)}}", meaning: "Tail of full scene text; `chars` is configurable."),
+                .init(token: "{{context}}", meaning: "Selected/mentioned scene context (compendium + summaries)."),
+                .init(token: "{{context_compendium}}", meaning: "Only selected/mentioned compendium entries."),
+                .init(token: "{{context_scene_summaries}}", meaning: "Only selected/mentioned scene summaries."),
+                .init(token: "{{context_chapter_summaries}}", meaning: "Only selected chapter summaries."),
+                .init(token: "{{scene_title}} / {{chapter_title}}", meaning: "Current scene/chapter names."),
+                .init(token: "{{project_title}}", meaning: "Current project title."),
             ]
         case .rewrite:
             return [
-                .init(token: "{beat}", meaning: "Currently selected text in the editor (the text to rewrite/expand/shorten)."),
-                .init(token: "{scene}", meaning: "Current scene text (recent portion) for continuity."),
-                .init(token: "{context}", meaning: "Selected scene context from compendium and summaries."),
-                .init(token: "{conversation}", meaning: "Empty in rewrite mode."),
+                .init(token: "{{selection}}", meaning: "Currently selected text in the editor (text to rewrite/expand/shorten)."),
+                .init(token: "{{beat}}", meaning: "Alias for `{{selection}}` for compatibility."),
+                .init(token: "{{scene}} / {{scene_tail(chars=4500)}}", meaning: "Current scene excerpt or configurable tail from full scene."),
+                .init(token: "{{context}}", meaning: "Selected scene context (compendium + summaries)."),
+                .init(token: "{{context_compendium}}", meaning: "Only selected compendium entries."),
+                .init(token: "{{context_scene_summaries}}", meaning: "Only selected scene summaries."),
+                .init(token: "{{context_chapter_summaries}}", meaning: "Only selected chapter summaries."),
+                .init(token: "{{scene_title}} / {{chapter_title}}", meaning: "Current scene/chapter names."),
             ]
         case .summary:
             return [
-                .init(token: "{scene}", meaning: "Source material being summarized: scene text (scene scope) or scene summaries list (chapter scope)."),
-                .init(token: "{context}", meaning: "Additional metadata/context: selected scene context (scene scope) or chapter metadata (chapter scope)."),
-                .init(token: "{beat}", meaning: "Empty in summary mode."),
-                .init(token: "{conversation}", meaning: "Empty in summary mode."),
+                .init(token: "{{source}}", meaning: "Summary source input: scene excerpt (scene scope) or scene summaries list (chapter scope)."),
+                .init(token: "{{summary_scope}}", meaning: "Current summary scope (`scene` or `chapter`)."),
+                .init(token: "{{context}}", meaning: "Scope metadata and supporting context."),
+                .init(token: "{{scene}}", meaning: "Same source text currently assigned to summary input."),
+                .init(token: "{{context_scene_summaries}}", meaning: "Selected scene summaries (scene scope support)."),
+                .init(token: "{{context_chapter_summaries}}", meaning: "Selected chapter summaries (scene scope support)."),
+                .init(token: "{{scene_title}} / {{chapter_title}}", meaning: "Current scene/chapter labels."),
             ]
         case .workshop:
             return [
-                .init(token: "{scene}", meaning: "Current scene excerpt, if scene context is enabled."),
-                .init(token: "{context}", meaning: "Selected/mentioned compendium and summary context, if enabled."),
-                .init(token: "{conversation}", meaning: "Recent workshop chat transcript (user/assistant turns)."),
-                .init(token: "{beat}", meaning: "Empty in workshop mode."),
+                .init(token: "{{chat_name}}", meaning: "Current workshop chat name."),
+                .init(token: "{{conversation}}", meaning: "Recent transcript string (last 14 messages)."),
+                .init(token: "{{chat_history(turns=8)}}", meaning: "Conversation built from actual turns, configurable by `turns`."),
+                .init(token: "{{last_user_message}} / {{last_assistant_message}}", meaning: "Most recent user or assistant turn."),
+                .init(token: "{{scene}} / {{scene_tail(chars=2400)}}", meaning: "Scene excerpt when scene context is enabled."),
+                .init(token: "{{context}}", meaning: "Selected/mentioned compendium and summary context."),
+                .init(token: "{{context_compendium(max_chars=4000)}}", meaning: "Compendium-only context with optional truncation."),
+                .init(token: "{{context_scene_summaries(max_chars=4000)}}", meaning: "Scene-summary context with optional truncation."),
+                .init(token: "{{context_chapter_summaries(max_chars=4000)}}", meaning: "Chapter-summary context with optional truncation."),
             ]
         }
     }
@@ -814,5 +872,123 @@ struct SettingsSheetView: View {
             return "Imported \(importedLabel), skipped \(skippedCount) invalid item(s)."
         }
         return "Imported \(importedLabel)."
+    }
+
+    private func testRenderSelectedPrompt() {
+        guard let selectedPromptID else { return }
+        do {
+            promptRenderPreview = try store.makePromptTemplateRenderPreview(promptID: selectedPromptID)
+        } catch {
+            store.lastError = "Prompt preview failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func refreshBuiltInTemplates() {
+        let result = store.refreshBuiltInPromptTemplatesToLatest()
+        if result.updatedCount == 0, result.addedCount == 0 {
+            promptTemplateStatus = "Built-in templates are already up to date."
+            return
+        }
+
+        promptTemplateStatus = "Built-in templates updated: \(result.updatedCount) replaced, \(result.addedCount) added."
+    }
+}
+
+private struct PromptTemplateRenderPreviewSheet: View {
+    let preview: AppStore.PromptTemplateRenderPreview
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Template Test Render")
+                        .font(.title3.weight(.semibold))
+                    Text(preview.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    GroupBox("Mode") {
+                        Text(modeLabel(preview.category))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if !preview.notes.isEmpty {
+                        GroupBox("Render Notes") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(preview.notes.enumerated()), id: \.offset) { _, note in
+                                    Text(note)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if !preview.warnings.isEmpty {
+                        GroupBox("Template Warnings") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(preview.warnings.enumerated()), id: \.offset) { _, warning in
+                                    Text(warning)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    GroupBox("Resolved System Prompt") {
+                        Text(preview.resolvedSystemPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+
+                    GroupBox("Rendered User Prompt") {
+                        Text(preview.renderedUserPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 860, minHeight: 660)
+    }
+
+    private func modeLabel(_ category: PromptCategory) -> String {
+        switch category {
+        case .prose:
+            return "Writing"
+        case .rewrite:
+            return "Rewrite"
+        case .summary:
+            return "Summary"
+        case .workshop:
+            return "Workshop Chat"
+        }
     }
 }
