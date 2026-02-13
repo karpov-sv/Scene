@@ -27,9 +27,16 @@ private struct SceneEditorSelection: Equatable {
 }
 
 private struct SceneEditorCommand: Equatable {
+    enum FindDirection: Equatable {
+        case forward
+        case backward
+    }
+
     enum Action: Equatable {
         case undo
         case redo
+        case find(query: String, direction: FindDirection, caseSensitive: Bool)
+        case selectRange(targetRange: SceneEditorRange)
         case toggleBoldface
         case toggleItalics
         case toggleUnderline
@@ -157,6 +164,16 @@ struct EditorView: View {
         .sheet(isPresented: proseGenerationReviewPresented) {
             ProseGenerationReviewSheet()
                 .environmentObject(store)
+        }
+        .onChange(of: store.pendingSceneSearchSelection?.requestID) { _, requestID in
+            guard requestID != nil else { return }
+            applyPendingSceneSearchSelectionIfNeeded()
+        }
+        .onChange(of: store.selectedSceneID) { _, _ in
+            applyPendingSceneSearchSelectionIfNeeded()
+        }
+        .onAppear {
+            applyPendingSceneSearchSelectionIfNeeded()
         }
     }
 
@@ -296,7 +313,8 @@ struct EditorView: View {
             onUndoRedoAvailabilityChange: { canUndo, canRedo in
                 canUndoInSceneEditor = canUndo
                 canRedoInSceneEditor = canRedo
-            }
+            },
+            onFindResult: { _ in }
         ) { plainText, richTextData in
             store.updateSelectedSceneContent(plainText, richTextData: richTextData)
         }
@@ -610,6 +628,17 @@ struct EditorView: View {
         beatMentionAnchor = anchor
     }
 
+    private func applyPendingSceneSearchSelectionIfNeeded() {
+        guard let pending = store.pendingSceneSearchSelection else { return }
+        guard store.selectedSceneID == pending.sceneID else { return }
+
+        let targetRange = SceneEditorRange(
+            range: NSRange(location: pending.location, length: pending.length)
+        )
+        sceneEditorCommand = SceneEditorCommand(action: .selectRange(targetRange: targetRange))
+        store.consumeSceneSearchSelectionRequest(pending.requestID)
+    }
+
     private func rewriteSelectedText() {
         guard !isRewritingSelection else { return }
         let selectionSnapshot = editorSelection
@@ -653,6 +682,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let shouldAutoScrollExternalUpdates: Bool
     let onSelectionChange: (SceneEditorSelection) -> Void
     let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
+    let onFindResult: (Bool) -> Void
     let onChange: (String, Data?) -> Void
 
     private final class SceneEditorTextView: NSTextView {
@@ -748,6 +778,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         Coordinator(
             onSelectionChange: onSelectionChange,
             onUndoRedoAvailabilityChange: onUndoRedoAvailabilityChange,
+            onFindResult: onFindResult,
             onChange: onChange
         )
     }
@@ -756,6 +787,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         private let onSelectionChange: (SceneEditorSelection) -> Void
         private let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
+        private let onFindResult: (Bool) -> Void
         private let onChange: (String, Data?) -> Void
         private var isApplyingProgrammaticChange: Bool = false
         private var lastSceneID: UUID?
@@ -764,10 +796,12 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         init(
             onSelectionChange: @escaping (SceneEditorSelection) -> Void,
             onUndoRedoAvailabilityChange: @escaping (Bool, Bool) -> Void,
+            onFindResult: @escaping (Bool) -> Void,
             onChange: @escaping (String, Data?) -> Void
         ) {
             self.onSelectionChange = onSelectionChange
             self.onUndoRedoAvailabilityChange = onUndoRedoAvailabilityChange
+            self.onFindResult = onFindResult
             self.onChange = onChange
         }
 
@@ -840,13 +874,27 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
 
             lastHandledCommandID = command.id
             textView.window?.makeFirstResponder(textView)
+            var didMutateText = false
             switch command.action {
             case .undo:
                 textView.undoManager?.undo()
+                didMutateText = true
             case .redo:
                 textView.undoManager?.redo()
+                didMutateText = true
+            case let .find(query, direction, caseSensitive):
+                let found = find(
+                    query: query,
+                    direction: direction,
+                    caseSensitive: caseSensitive,
+                    in: textView
+                )
+                onFindResult(found)
+            case let .selectRange(targetRange):
+                selectRange(targetRange, in: textView)
             case .toggleBoldface, .toggleItalics, .toggleUnderline:
                 applyFormatting(command.action, to: textView)
+                didMutateText = true
             case let .replaceSelection(rewrittenText, targetRange, emphasizeWithItalics):
                 replaceSelection(
                     in: textView,
@@ -854,8 +902,11 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                     with: rewrittenText,
                     emphasizeWithItalics: emphasizeWithItalics
                 )
+                didMutateText = true
             }
-            publishChange(from: textView)
+            if didMutateText {
+                publishChange(from: textView)
+            }
             publishSelection(from: textView)
             publishUndoRedoState(from: textView)
         }
@@ -910,9 +961,123 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 toggleFontTrait(.italicFontMask, in: textView)
             case .toggleUnderline:
                 toggleUnderline(in: textView)
-            case .undo, .redo, .replaceSelection:
+            case .undo, .redo:
+                break
+            case .find(query: _, direction: _, caseSensitive: _):
+                break
+            case .selectRange(targetRange: _):
+                break
+            case .replaceSelection(rewrittenText: _, targetRange: _, emphasizeWithItalics: _):
                 break
             }
+        }
+
+        private func selectRange(_ targetRange: SceneEditorRange, in textView: NSTextView) {
+            let clamped = clampedRangeForStorage(targetRange.nsRange, textView: textView)
+            textView.setSelectedRange(clamped)
+            textView.scrollRangeToVisible(clamped)
+        }
+
+        private func find(
+            query: String,
+            direction: SceneEditorCommand.FindDirection,
+            caseSensitive: Bool,
+            in textView: NSTextView
+        ) -> Bool {
+            let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedQuery.isEmpty else { return false }
+
+            let text = textView.string as NSString
+            guard text.length > 0 else { return false }
+
+            let selectedRange = clampedRangeForStorage(textView.selectedRange(), textView: textView)
+            let options: NSString.CompareOptions = caseSensitive
+                ? []
+                : [.caseInsensitive, .diacriticInsensitive]
+
+            switch direction {
+            case .forward:
+                let forwardStart = min(text.length, selectedRange.location + max(selectedRange.length, 1))
+                if let found = findForward(
+                    text: text,
+                    query: normalizedQuery,
+                    from: forwardStart,
+                    options: options
+                ) {
+                    textView.setSelectedRange(found)
+                    textView.scrollRangeToVisible(found)
+                    return true
+                }
+            case .backward:
+                let backwardStart = max(0, selectedRange.location - 1)
+                if let found = findBackward(
+                    text: text,
+                    query: normalizedQuery,
+                    from: backwardStart,
+                    options: options
+                ) {
+                    textView.setSelectedRange(found)
+                    textView.scrollRangeToVisible(found)
+                    return true
+                }
+            }
+
+            return false
+        }
+
+        private func findForward(
+            text: NSString,
+            query: String,
+            from location: Int,
+            options: NSString.CompareOptions
+        ) -> NSRange? {
+            if location < text.length {
+                let range = NSRange(location: location, length: text.length - location)
+                let found = text.range(of: query, options: options, range: range)
+                if found.location != NSNotFound {
+                    return found
+                }
+            }
+
+            let wrapLength = min(max(0, location), text.length)
+            if wrapLength > 0 {
+                let wrapRange = NSRange(location: 0, length: wrapLength)
+                let wrapFound = text.range(of: query, options: options, range: wrapRange)
+                if wrapFound.location != NSNotFound {
+                    return wrapFound
+                }
+            }
+
+            return nil
+        }
+
+        private func findBackward(
+            text: NSString,
+            query: String,
+            from location: Int,
+            options: NSString.CompareOptions
+        ) -> NSRange? {
+            if text.length == 0 { return nil }
+
+            let searchLocation = max(0, min(location, text.length - 1))
+            let headRange = NSRange(location: 0, length: searchLocation + 1)
+            let backwardOptions = options.union(.backwards)
+
+            let found = text.range(of: query, options: backwardOptions, range: headRange)
+            if found.location != NSNotFound {
+                return found
+            }
+
+            let tailStart = searchLocation + 1
+            if tailStart < text.length {
+                let tailRange = NSRange(location: tailStart, length: text.length - tailStart)
+                let wrapFound = text.range(of: query, options: backwardOptions, range: tailRange)
+                if wrapFound.location != NSNotFound {
+                    return wrapFound
+                }
+            }
+
+            return nil
         }
 
         private func replaceSelection(

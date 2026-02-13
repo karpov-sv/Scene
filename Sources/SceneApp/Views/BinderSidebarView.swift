@@ -3,15 +3,19 @@ import SwiftUI
 struct BinderSidebarView: View {
     @EnvironmentObject private var store: AppStore
     @State private var collapsedChapterIDs: Set<UUID> = []
+    @FocusState private var isSearchFieldFocused: Bool
     let onOpenSceneSummary: ((UUID, UUID) -> Void)?
     let onOpenChapterSummary: ((UUID) -> Void)?
+    let onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)?
 
     init(
         onOpenSceneSummary: ((UUID, UUID) -> Void)? = nil,
-        onOpenChapterSummary: ((UUID) -> Void)? = nil
+        onOpenChapterSummary: ((UUID) -> Void)? = nil,
+        onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)? = nil
     ) {
         self.onOpenSceneSummary = onOpenSceneSummary
         self.onOpenChapterSummary = onOpenChapterSummary
+        self.onActivateSearchResult = onActivateSearchResult
     }
 
     private var selectedSceneBinding: Binding<UUID?> {
@@ -33,8 +37,12 @@ struct BinderSidebarView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            searchPanel
+            Divider()
 
-            if store.chapters.isEmpty {
+            if isShowingSearchResults {
+                searchResultsList
+            } else if store.chapters.isEmpty {
                 ContentUnavailableView("No Chapters", systemImage: "folder", description: Text("Create a chapter to start building your binder."))
             } else {
                 List(selection: selectedSceneBinding) {
@@ -59,6 +67,12 @@ struct BinderSidebarView: View {
             Divider()
             footerActions
         }
+        .onChange(of: store.globalSearchFocusRequestID) { _, _ in
+            isSearchFieldFocused = true
+        }
+        .onExitCommand {
+            closeSearchInterface()
+        }
     }
 
     private var header: some View {
@@ -67,6 +81,112 @@ struct BinderSidebarView: View {
             .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
+    }
+
+    private var searchQueryBinding: Binding<String> {
+        Binding(
+            get: { store.globalSearchQuery },
+            set: { store.updateGlobalSearchQuery($0) }
+        )
+    }
+
+    private var searchScopeBinding: Binding<AppStore.GlobalSearchScope> {
+        Binding(
+            get: { store.globalSearchScope },
+            set: { store.updateGlobalSearchScope($0) }
+        )
+    }
+
+    private var selectedSearchResultBinding: Binding<String?> {
+        Binding(
+            get: { store.selectedGlobalSearchResultID },
+            set: { store.setSelectedGlobalSearchResultID($0) }
+        )
+    }
+
+    private var trimmedSearchQuery: String {
+        store.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isShowingSearchResults: Bool {
+        !trimmedSearchQuery.isEmpty
+    }
+
+    private var searchPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("Search", text: searchQueryBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isSearchFieldFocused)
+                    .onSubmit {
+                        activateNextSearchResultFromField()
+                    }
+                    .onExitCommand {
+                        closeSearchInterface()
+                    }
+
+                Picker("", selection: searchScopeBinding) {
+                    ForEach(AppStore.GlobalSearchScope.allCases) { scope in
+                        Text(scope.label).tag(scope)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 128)
+            }
+
+            if isShowingSearchResults {
+                Text("\(store.globalSearchResults.count) result\(store.globalSearchResults.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Search scenes, compendium, summaries, and chats.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+    }
+
+    private var searchResultsList: some View {
+        List(selection: selectedSearchResultBinding) {
+            if store.globalSearchResults.isEmpty {
+                Text("No matches found.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(store.globalSearchResults) { result in
+                    Button {
+                        store.setSelectedGlobalSearchResultID(result.id)
+                        onActivateSearchResult?(result)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Image(systemName: searchResultIcon(for: result.kind))
+                                    .foregroundStyle(.secondary)
+                                Text(result.title)
+                                    .lineLimit(1)
+                            }
+
+                            Text(result.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+
+                            Text(result.snippet)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
+                    }
+                    .buttonStyle(.plain)
+                    .tag(Optional(result.id))
+                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+                }
+            }
+        }
+        .listStyle(.sidebar)
     }
 
     private var footerActions: some View {
@@ -199,6 +319,19 @@ struct BinderSidebarView: View {
         return trimmed.isEmpty ? "Untitled Scene" : trimmed
     }
 
+    private func searchResultIcon(for kind: AppStore.GlobalSearchResult.Kind) -> String {
+        switch kind {
+        case .scene:
+            return "doc.text.magnifyingglass"
+        case .compendium:
+            return "books.vertical"
+        case .sceneSummary, .chapterSummary:
+            return "text.alignleft"
+        case .chatMessage:
+            return "bubble.left.and.bubble.right"
+        }
+    }
+
     private var projectTitle: String {
         let trimmed = store.project.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Project" : trimmed
@@ -215,5 +348,21 @@ struct BinderSidebarView: View {
                 }
             }
         )
+    }
+
+    private func activateNextSearchResultFromField() {
+        if let result = store.selectNextGlobalSearchResult() {
+            onActivateSearchResult?(result)
+        }
+        DispatchQueue.main.async {
+            isSearchFieldFocused = true
+        }
+    }
+
+    private func closeSearchInterface() {
+        guard isShowingSearchResults else { return }
+        store.setSelectedGlobalSearchResultID(nil)
+        store.updateGlobalSearchQuery("")
+        isSearchFieldFocused = false
     }
 }

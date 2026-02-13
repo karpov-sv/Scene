@@ -39,6 +39,7 @@ struct ContentView: View {
     var body: some View {
         rootContent
             .focusedSceneValue(\.projectMenuActions, projectMenuActions)
+            .focusedSceneValue(\.searchMenuActions, searchMenuActions)
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
                     .environmentObject(store)
@@ -75,11 +76,16 @@ struct ContentView: View {
                     summaryScope = .chapter
                     selectedTab = .writing
                     writingSidePanel = .summary
-                }
+                },
+                onActivateSearchResult: activateSearchResult
             )
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
         } detail: {
             workspacePanel
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded {
+                    dismissGlobalSearchIfNeeded()
+                })
                 .navigationSplitViewColumnWidth(min: 860, ideal: 1080, max: 2400)
         }
         .navigationSplitViewStyle(.balanced)
@@ -246,6 +252,86 @@ struct ContentView: View {
             exportProjectHTML: exportProjectHTMLFromMenu,
             canExportProject: store.isProjectOpen
         )
+    }
+
+    private var searchMenuActions: SearchMenuActions {
+        SearchMenuActions(
+            findInScene: {
+                store.requestGlobalSearchFocus(scope: .scene)
+            },
+            findInProject: {
+                store.requestGlobalSearchFocus(scope: .project)
+            },
+            findNext: activateNextSearchResult,
+            findPrevious: activatePreviousSearchResult,
+            canFindInScene: store.isProjectOpen && store.selectedScene != nil,
+            canFindInProject: store.isProjectOpen,
+            canFindNext: !store.globalSearchResults.isEmpty,
+            canFindPrevious: !store.globalSearchResults.isEmpty
+        )
+    }
+
+    private func activateNextSearchResult() {
+        guard let result = store.selectNextGlobalSearchResult() else { return }
+        activateSearchResult(result)
+    }
+
+    private func activatePreviousSearchResult() {
+        guard let result = store.selectPreviousGlobalSearchResult() else { return }
+        activateSearchResult(result)
+    }
+
+    private func activateSearchResult(_ result: AppStore.GlobalSearchResult) {
+        switch result.kind {
+        case .scene:
+            guard let chapterID = result.chapterID,
+                  let sceneID = result.sceneID else {
+                return
+            }
+            selectedTab = .writing
+            store.revealSceneSearchMatch(
+                chapterID: chapterID,
+                sceneID: sceneID,
+                location: result.location ?? 0,
+                length: result.length ?? 0
+            )
+
+        case .compendium:
+            guard let entryID = result.compendiumEntryID else { return }
+            selectedTab = .writing
+            writingSidePanel = .compendium
+            store.selectCompendiumEntry(entryID)
+
+        case .sceneSummary:
+            guard let chapterID = result.chapterID,
+                  let sceneID = result.sceneID else {
+                return
+            }
+            selectedTab = .writing
+            writingSidePanel = .summary
+            summaryScope = .scene
+            store.selectScene(sceneID, chapterID: chapterID)
+
+        case .chapterSummary:
+            guard let chapterID = result.chapterID else { return }
+            selectedTab = .writing
+            writingSidePanel = .summary
+            summaryScope = .chapter
+            store.selectChapter(chapterID)
+
+        case .chatMessage:
+            guard let sessionID = result.workshopSessionID else { return }
+            selectedTab = .workshop
+            isConversationsVisible = true
+            store.selectWorkshopSession(sessionID)
+        }
+    }
+
+    private func dismissGlobalSearchIfNeeded() {
+        let trimmed = store.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        store.setSelectedGlobalSearchResultID(nil)
+        store.updateGlobalSearchQuery("")
     }
 
     private func toggleCompendiumPanel() {

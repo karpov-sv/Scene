@@ -1,0 +1,23 @@
+import SwiftUI
+
+struct SearchMenuActions {
+    let findInScene: () -> Void
+    let findInProject: () -> Void
+    let findNext: () -> Void
+    let findPrevious: () -> Void
+    let canFindInScene: Bool
+    let canFindInProject: Bool
+    let canFindNext: Bool
+    let canFindPrevious: Bool
+}
+
+private struct SearchMenuActionsKey: FocusedValueKey {
+    typealias Value = SearchMenuActions
+}
+
+extension FocusedValues {
+    var searchMenuActions: SearchMenuActions? {
+        get { self[SearchMenuActionsKey.self] }
+        set { self[SearchMenuActionsKey.self] = newValue }
+    }
+}

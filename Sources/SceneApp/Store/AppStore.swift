@@ -112,6 +112,92 @@ final class AppStore: ObservableObject {
         let addedCount: Int
     }
 
+    struct SceneSearchResult: Identifiable, Equatable {
+        let id: UUID
+        let chapterID: UUID
+        let sceneID: UUID
+        let chapterTitle: String
+        let sceneTitle: String
+        let location: Int
+        let length: Int
+        let snippet: String
+
+        init(
+            id: UUID = UUID(),
+            chapterID: UUID,
+            sceneID: UUID,
+            chapterTitle: String,
+            sceneTitle: String,
+            location: Int,
+            length: Int,
+            snippet: String
+        ) {
+            self.id = id
+            self.chapterID = chapterID
+            self.sceneID = sceneID
+            self.chapterTitle = chapterTitle
+            self.sceneTitle = sceneTitle
+            self.location = location
+            self.length = length
+            self.snippet = snippet
+        }
+    }
+
+    enum GlobalSearchScope: String, CaseIterable, Identifiable {
+        case scene
+        case project
+        case compendium
+        case summaries
+        case chats
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .scene:
+                return "Scene"
+            case .project:
+                return "Project"
+            case .compendium:
+                return "Compendium"
+            case .summaries:
+                return "Summaries"
+            case .chats:
+                return "Chats"
+            }
+        }
+    }
+
+    struct GlobalSearchResult: Identifiable, Equatable {
+        enum Kind: String, Equatable {
+            case scene
+            case compendium
+            case sceneSummary
+            case chapterSummary
+            case chatMessage
+        }
+
+        let id: String
+        let kind: Kind
+        let title: String
+        let subtitle: String
+        let snippet: String
+        let chapterID: UUID?
+        let sceneID: UUID?
+        let compendiumEntryID: UUID?
+        let workshopSessionID: UUID?
+        let workshopMessageID: UUID?
+        let location: Int?
+        let length: Int?
+    }
+
+    struct SceneSearchSelectionRequest: Equatable {
+        let requestID: UUID = UUID()
+        let sceneID: UUID
+        let location: Int
+        let length: Int
+    }
+
     struct ProseGenerationCandidate: Identifiable, Equatable {
         enum Status: String, Equatable {
             case queued
@@ -226,6 +312,12 @@ final class AppStore: ObservableObject {
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
     @Published var modelDiscoveryStatus: String = ""
+    @Published var globalSearchQuery: String = ""
+    @Published var globalSearchScope: GlobalSearchScope = .project
+    @Published private(set) var globalSearchResults: [GlobalSearchResult] = []
+    @Published private(set) var selectedGlobalSearchResultID: String?
+    @Published private(set) var globalSearchFocusRequestID: UUID = UUID()
+    @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
 
     @Published var showingSettings: Bool = false
 
@@ -581,6 +673,143 @@ final class AppStore: ObservableObject {
         proseLiveUsage
     }
 
+    func updateGlobalSearchQuery(_ query: String, maxResults: Int = 300) {
+        globalSearchQuery = query
+        refreshGlobalSearchResults(maxResults: maxResults)
+    }
+
+    func updateGlobalSearchScope(_ scope: GlobalSearchScope, maxResults: Int = 300) {
+        globalSearchScope = scope
+        refreshGlobalSearchResults(maxResults: maxResults)
+    }
+
+    func requestGlobalSearchFocus(scope: GlobalSearchScope, maxResults: Int = 300) {
+        updateGlobalSearchScope(scope, maxResults: maxResults)
+        globalSearchFocusRequestID = UUID()
+    }
+
+    func refreshGlobalSearchResults(maxResults: Int = 300) {
+        let previousSelectionID = selectedGlobalSearchResultID
+        let refreshed = searchGlobalContent(
+            globalSearchQuery,
+            scope: globalSearchScope,
+            caseSensitive: false,
+            maxResults: maxResults
+        )
+        globalSearchResults = refreshed
+
+        if let previousSelectionID,
+           refreshed.contains(where: { $0.id == previousSelectionID }) {
+            selectedGlobalSearchResultID = previousSelectionID
+        } else {
+            selectedGlobalSearchResultID = nil
+        }
+    }
+
+    func setSelectedGlobalSearchResultID(_ id: String?) {
+        selectedGlobalSearchResultID = id
+    }
+
+    func selectedGlobalSearchResult() -> GlobalSearchResult? {
+        guard let selectedGlobalSearchResultID else { return nil }
+        return globalSearchResults.first(where: { $0.id == selectedGlobalSearchResultID })
+    }
+
+    @discardableResult
+    func selectNextGlobalSearchResult() -> GlobalSearchResult? {
+        selectGlobalSearchResult(step: 1)
+    }
+
+    @discardableResult
+    func selectPreviousGlobalSearchResult() -> GlobalSearchResult? {
+        selectGlobalSearchResult(step: -1)
+    }
+
+    func revealSceneSearchMatch(
+        chapterID: UUID,
+        sceneID: UUID,
+        location: Int,
+        length: Int
+    ) {
+        guard isProjectOpen else { return }
+        selectScene(sceneID, chapterID: chapterID)
+        pendingSceneSearchSelection = SceneSearchSelectionRequest(
+            sceneID: sceneID,
+            location: max(0, location),
+            length: max(0, length)
+        )
+    }
+
+    func consumeSceneSearchSelectionRequest(_ requestID: UUID) {
+        guard pendingSceneSearchSelection?.requestID == requestID else { return }
+        pendingSceneSearchSelection = nil
+    }
+
+    func searchScenes(
+        _ query: String,
+        caseSensitive: Bool = false,
+        maxResults: Int = 300
+    ) -> [SceneSearchResult] {
+        guard isProjectOpen else { return [] }
+
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return [] }
+
+        let compareOptions: NSString.CompareOptions = caseSensitive
+            ? []
+            : [.caseInsensitive, .diacriticInsensitive]
+
+        var output: [SceneSearchResult] = []
+
+        for chapter in project.chapters {
+            let chapterTitle = displayChapterTitle(chapter)
+
+            for scene in chapter.scenes {
+                let sceneTitle = displaySceneTitle(scene)
+                let sceneText = scene.content
+                let sceneNSString = sceneText as NSString
+                guard sceneNSString.length > 0 else { continue }
+
+                var searchStart = 0
+                while searchStart < sceneNSString.length {
+                    let searchRange = NSRange(
+                        location: searchStart,
+                        length: sceneNSString.length - searchStart
+                    )
+                    let foundRange = sceneNSString.range(
+                        of: normalizedQuery,
+                        options: compareOptions,
+                        range: searchRange
+                    )
+                    guard foundRange.location != NSNotFound else { break }
+
+                    output.append(
+                        SceneSearchResult(
+                            chapterID: chapter.id,
+                            sceneID: scene.id,
+                            chapterTitle: chapterTitle,
+                            sceneTitle: sceneTitle,
+                            location: foundRange.location,
+                            length: foundRange.length,
+                            snippet: searchSnippet(
+                                in: sceneNSString,
+                                matchRange: foundRange
+                            )
+                        )
+                    )
+
+                    if output.count >= maxResults {
+                        return output
+                    }
+
+                    searchStart = foundRange.location + max(foundRange.length, 1)
+                }
+            }
+        }
+
+        return output
+    }
+
     var generationModelOptions: [String] {
         var output: [String] = []
         var seen = Set<String>()
@@ -726,6 +955,7 @@ final class AppStore: ObservableObject {
         self.project = project
         ensureProjectBaseline()
         ensureValidSelections()
+        refreshGlobalSearchResults()
 
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
@@ -1244,6 +1474,7 @@ final class AppStore: ObservableObject {
         availableRemoteModels = []
         isDiscoveringModels = false
         modelDiscoveryStatus = ""
+        resetGlobalSearchState()
 
         ensureProjectBaseline()
         ensureValidSelections()
@@ -3210,6 +3441,7 @@ final class AppStore: ObservableObject {
         availableRemoteModels = []
         isDiscoveringModels = false
         modelDiscoveryStatus = ""
+        resetGlobalSearchState()
 
         if clearLastOpenedReference {
             persistence.clearLastOpenedProjectURL()
@@ -3821,9 +4053,379 @@ final class AppStore: ObservableObject {
         return trimmed.isEmpty ? "Untitled Scene" : trimmed
     }
 
+    private func searchSnippet(
+        in searchText: NSString,
+        matchRange: NSRange,
+        contextCharacters: Int = 70
+    ) -> String {
+        let lowerBound = max(0, matchRange.location - contextCharacters)
+        let upperBound = min(
+            searchText.length,
+            matchRange.location + matchRange.length + contextCharacters
+        )
+        let windowRange = NSRange(
+            location: lowerBound,
+            length: max(0, upperBound - lowerBound)
+        )
+        let windowText = searchText.substring(with: windowRange)
+        let compact = windowText
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let prefix = lowerBound > 0 ? "…" : ""
+        let suffix = upperBound < searchText.length ? "…" : ""
+        return prefix + compact + suffix
+    }
+
     private func displayChapterTitle(_ chapter: Chapter) -> String {
         let trimmed = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Chapter" : trimmed
+    }
+
+    private func displayCompendiumEntryTitle(_ entry: CompendiumEntry) -> String {
+        let trimmed = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Entry" : trimmed
+    }
+
+    private func displayWorkshopSessionTitle(_ session: WorkshopSession) -> String {
+        let trimmed = session.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Chat" : trimmed
+    }
+
+    private func selectGlobalSearchResult(step: Int) -> GlobalSearchResult? {
+        guard !globalSearchResults.isEmpty else {
+            selectedGlobalSearchResultID = nil
+            return nil
+        }
+
+        let selectedIndex: Int
+        if let selectedGlobalSearchResultID,
+           let index = globalSearchResults.firstIndex(where: { $0.id == selectedGlobalSearchResultID }) {
+            selectedIndex = index
+        } else {
+            selectedIndex = step >= 0 ? -1 : 0
+        }
+
+        let resultCount = globalSearchResults.count
+        let nextIndex = (selectedIndex + step + resultCount) % resultCount
+        let nextResult = globalSearchResults[nextIndex]
+        selectedGlobalSearchResultID = nextResult.id
+        return nextResult
+    }
+
+    private func searchGlobalContent(
+        _ query: String,
+        scope: GlobalSearchScope,
+        caseSensitive: Bool = false,
+        maxResults: Int = 300
+    ) -> [GlobalSearchResult] {
+        guard isProjectOpen else { return [] }
+
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return [] }
+
+        let compareOptions: NSString.CompareOptions = caseSensitive
+            ? []
+            : [.caseInsensitive, .diacriticInsensitive]
+
+        var output: [GlobalSearchResult] = []
+
+        switch scope {
+        case .scene:
+            guard let sceneID = selectedSceneID,
+                  let location = sceneLocation(for: sceneID) else {
+                return []
+            }
+            let chapter = project.chapters[location.chapterIndex]
+            let scene = chapter.scenes[location.sceneIndex]
+            appendSceneMatches(
+                in: chapter,
+                scene: scene,
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+
+        case .project:
+            for chapter in project.chapters {
+                for scene in chapter.scenes {
+                    appendSceneMatches(
+                        in: chapter,
+                        scene: scene,
+                        query: normalizedQuery,
+                        options: compareOptions,
+                        maxResults: maxResults,
+                        output: &output
+                    )
+                    if output.count >= maxResults {
+                        return output
+                    }
+                }
+            }
+
+        case .compendium:
+            appendCompendiumMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+
+        case .summaries:
+            appendSummaryMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+
+        case .chats:
+            appendChatMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+        }
+
+        return output
+    }
+
+    private func appendSearchMatches(
+        query: String,
+        in searchableText: String,
+        options: NSString.CompareOptions,
+        output: inout [GlobalSearchResult],
+        maxResults: Int,
+        makeResult: (NSRange, NSString) -> GlobalSearchResult
+    ) {
+        let searchableNSString = searchableText as NSString
+        guard searchableNSString.length > 0 else { return }
+
+        var searchStart = 0
+        while searchStart < searchableNSString.length {
+            guard output.count < maxResults else { return }
+
+            let searchRange = NSRange(
+                location: searchStart,
+                length: searchableNSString.length - searchStart
+            )
+            let foundRange = searchableNSString.range(
+                of: query,
+                options: options,
+                range: searchRange
+            )
+            guard foundRange.location != NSNotFound else { break }
+
+            output.append(makeResult(foundRange, searchableNSString))
+            searchStart = foundRange.location + max(foundRange.length, 1)
+        }
+    }
+
+    private func appendSceneMatches(
+        in chapter: Chapter,
+        scene: Scene,
+        query: String,
+        options: NSString.CompareOptions,
+        maxResults: Int,
+        output: inout [GlobalSearchResult]
+    ) {
+        let chapterTitle = displayChapterTitle(chapter)
+        let sceneTitle = displaySceneTitle(scene)
+        appendSearchMatches(
+            query: query,
+            in: scene.content,
+            options: options,
+            output: &output,
+            maxResults: maxResults
+        ) { foundRange, sceneText in
+            GlobalSearchResult(
+                id: "scene:\(scene.id.uuidString):\(foundRange.location)",
+                kind: .scene,
+                title: sceneTitle,
+                subtitle: chapterTitle,
+                snippet: searchSnippet(in: sceneText, matchRange: foundRange),
+                chapterID: chapter.id,
+                sceneID: scene.id,
+                compendiumEntryID: nil,
+                workshopSessionID: nil,
+                workshopMessageID: nil,
+                location: foundRange.location,
+                length: foundRange.length
+            )
+        }
+    }
+
+    private func appendCompendiumMatches(
+        query: String,
+        options: NSString.CompareOptions,
+        maxResults: Int,
+        output: inout [GlobalSearchResult]
+    ) {
+        for entry in project.compendium {
+            let searchableText = [
+                displayCompendiumEntryTitle(entry),
+                entry.body,
+                entry.tags.joined(separator: " ")
+            ]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+
+            appendSearchMatches(
+                query: query,
+                in: searchableText,
+                options: options,
+                output: &output,
+                maxResults: maxResults
+            ) { foundRange, searchableNSString in
+                GlobalSearchResult(
+                    id: "compendium:\(entry.id.uuidString):\(foundRange.location)",
+                    kind: .compendium,
+                    title: displayCompendiumEntryTitle(entry),
+                    subtitle: "Compendium • \(entry.category.label)",
+                    snippet: searchSnippet(in: searchableNSString, matchRange: foundRange),
+                    chapterID: nil,
+                    sceneID: nil,
+                    compendiumEntryID: entry.id,
+                    workshopSessionID: nil,
+                    workshopMessageID: nil,
+                    location: foundRange.location,
+                    length: foundRange.length
+                )
+            }
+
+            if output.count >= maxResults {
+                return
+            }
+        }
+    }
+
+    private func appendSummaryMatches(
+        query: String,
+        options: NSString.CompareOptions,
+        maxResults: Int,
+        output: inout [GlobalSearchResult]
+    ) {
+        for chapter in project.chapters {
+            let chapterTitle = displayChapterTitle(chapter)
+            let chapterSummary = chapter.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !chapterSummary.isEmpty {
+                appendSearchMatches(
+                    query: query,
+                    in: chapterSummary,
+                    options: options,
+                    output: &output,
+                    maxResults: maxResults
+                ) { foundRange, summaryText in
+                    GlobalSearchResult(
+                        id: "chapter-summary:\(chapter.id.uuidString):\(foundRange.location)",
+                        kind: .chapterSummary,
+                        title: chapterTitle,
+                        subtitle: "Chapter Summary",
+                        snippet: searchSnippet(in: summaryText, matchRange: foundRange),
+                        chapterID: chapter.id,
+                        sceneID: nil,
+                        compendiumEntryID: nil,
+                        workshopSessionID: nil,
+                        workshopMessageID: nil,
+                        location: foundRange.location,
+                        length: foundRange.length
+                    )
+                }
+            }
+
+            if output.count >= maxResults {
+                return
+            }
+
+            for scene in chapter.scenes {
+                let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !sceneSummary.isEmpty else { continue }
+
+                let sceneTitle = displaySceneTitle(scene)
+                appendSearchMatches(
+                    query: query,
+                    in: sceneSummary,
+                    options: options,
+                    output: &output,
+                    maxResults: maxResults
+                ) { foundRange, summaryText in
+                    GlobalSearchResult(
+                        id: "scene-summary:\(scene.id.uuidString):\(foundRange.location)",
+                        kind: .sceneSummary,
+                        title: sceneTitle,
+                        subtitle: "\(chapterTitle) • Scene Summary",
+                        snippet: searchSnippet(in: summaryText, matchRange: foundRange),
+                        chapterID: chapter.id,
+                        sceneID: scene.id,
+                        compendiumEntryID: nil,
+                        workshopSessionID: nil,
+                        workshopMessageID: nil,
+                        location: foundRange.location,
+                        length: foundRange.length
+                    )
+                }
+
+                if output.count >= maxResults {
+                    return
+                }
+            }
+        }
+    }
+
+    private func appendChatMatches(
+        query: String,
+        options: NSString.CompareOptions,
+        maxResults: Int,
+        output: inout [GlobalSearchResult]
+    ) {
+        for session in project.workshopSessions {
+            let sessionTitle = displayWorkshopSessionTitle(session)
+
+            for message in session.messages {
+                let messageText = message.content
+                guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+
+                let roleLabel = message.role == .assistant ? "Assistant" : "You"
+                appendSearchMatches(
+                    query: query,
+                    in: messageText,
+                    options: options,
+                    output: &output,
+                    maxResults: maxResults
+                ) { foundRange, searchableNSString in
+                    GlobalSearchResult(
+                        id: "chat:\(session.id.uuidString):\(message.id.uuidString):\(foundRange.location)",
+                        kind: .chatMessage,
+                        title: sessionTitle,
+                        subtitle: "Chat • \(roleLabel)",
+                        snippet: searchSnippet(in: searchableNSString, matchRange: foundRange),
+                        chapterID: nil,
+                        sceneID: nil,
+                        compendiumEntryID: nil,
+                        workshopSessionID: session.id,
+                        workshopMessageID: message.id,
+                        location: foundRange.location,
+                        length: foundRange.length
+                    )
+                }
+
+                if output.count >= maxResults {
+                    return
+                }
+            }
+        }
+    }
+
+    private func resetGlobalSearchState() {
+        globalSearchQuery = ""
+        globalSearchScope = .project
+        globalSearchResults = []
+        selectedGlobalSearchResultID = nil
+        pendingSceneSearchSelection = nil
     }
 
     private func chapterTitle(forSceneID sceneID: UUID) -> String {

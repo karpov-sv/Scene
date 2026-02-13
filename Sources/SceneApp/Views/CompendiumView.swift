@@ -138,7 +138,11 @@ struct CompendiumView: View {
                 store.selectCompendiumEntry(filteredEntries.first?.id)
             }
         }
+        .onChange(of: store.selectedCompendiumID) { _, _ in
+            syncCategoryWithSelectedEntry()
+        }
         .onAppear {
+            syncCategoryWithSelectedEntry()
             if store.selectedCompendiumEntry == nil {
                 store.selectCompendiumEntry(filteredEntries.first?.id)
             }
@@ -160,5 +164,12 @@ struct CompendiumView: View {
     private func entryTitle(_ entry: CompendiumEntry) -> String {
         let trimmed = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Entry" : trimmed
+    }
+
+    private func syncCategoryWithSelectedEntry() {
+        guard let selected = store.selectedCompendiumEntry else { return }
+        if selected.category != selectedCategory {
+            selectedCategory = selected.category
+        }
     }
 }
