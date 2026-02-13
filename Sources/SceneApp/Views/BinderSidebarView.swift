@@ -317,6 +317,8 @@ struct BinderSidebarView: View {
             .disabled(store.selectedChapterID == nil)
             .help("New Scene")
 
+            Spacer(minLength: 0)
+
             Button {
                 store.showingSettings = true
             } label: {
@@ -324,8 +326,6 @@ struct BinderSidebarView: View {
             }
             .buttonStyle(.borderless)
             .help("Preferences")
-
-            Spacer(minLength: 0)
         }
         .font(.system(size: 14, weight: .medium))
         .padding(12)

@@ -195,9 +195,14 @@ struct SettingsSheetView: View {
             Text("Project Settings")
                 .font(.title3.weight(.semibold))
             Spacer()
-            Button("Done") {
+            Button {
                 dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.title2)
             }
+            .buttonStyle(.borderless)
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
