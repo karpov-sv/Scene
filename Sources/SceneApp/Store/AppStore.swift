@@ -1803,11 +1803,38 @@ final class AppStore: ObservableObject {
         saveProject()
     }
 
+    func duplicateSelectedCompendiumEntry() {
+        guard let selectedCompendiumID,
+              let source = project.compendium.first(where: { $0.id == selectedCompendiumID }) else {
+            return
+        }
+
+        let copy = CompendiumEntry(
+            category: source.category,
+            title: source.title + " Copy",
+            body: source.body,
+            tags: source.tags
+        )
+
+        project.compendium.append(copy)
+        self.selectedCompendiumID = copy.id
+        saveProject()
+    }
+
     func deleteSelectedCompendiumEntry() {
         guard let selectedCompendiumID else { return }
         project.compendium.removeAll { $0.id == selectedCompendiumID }
         removeCompendiumEntryFromSceneContextSelections(selectedCompendiumID)
         self.selectedCompendiumID = project.compendium.first?.id
+        saveProject()
+    }
+
+    func clearCompendium() {
+        for entry in project.compendium {
+            removeCompendiumEntryFromSceneContextSelections(entry.id)
+        }
+        project.compendium.removeAll()
+        selectedCompendiumID = nil
         saveProject()
     }
 

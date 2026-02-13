@@ -7,6 +7,8 @@ struct BinderSidebarView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var editingChapterID: UUID?
     @State private var editingSceneID: UUID?
+    @State private var chapterToDelete: Chapter?
+    @State private var sceneToDelete: (scene: Scene, chapterID: UUID)?
     @State private var isEditingProjectTitle: Bool = false
     @State private var editingTitle: String = ""
     @FocusState private var isRenameFieldFocused: Bool
@@ -101,6 +103,38 @@ struct BinderSidebarView: View {
                     commitSceneRename(sceneID)
                 }
             }
+        }
+        .alert("Delete Chapter", isPresented: Binding(
+            get: { chapterToDelete != nil },
+            set: { if !$0 { chapterToDelete = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let chapter = chapterToDelete {
+                    store.deleteChapter(chapter.id)
+                    chapterToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                chapterToDelete = nil
+            }
+        } message: {
+            Text("Are you sure you want to delete \"\(chapterToDelete?.title ?? "")\" and all its scenes?")
+        }
+        .alert("Delete Scene", isPresented: Binding(
+            get: { sceneToDelete != nil },
+            set: { if !$0 { sceneToDelete = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let info = sceneToDelete {
+                    store.deleteScene(info.scene.id)
+                    sceneToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                sceneToDelete = nil
+            }
+        } message: {
+            Text("Are you sure you want to delete \"\(sceneToDelete?.scene.title ?? "")\"?")
         }
     }
 
@@ -558,7 +592,7 @@ struct BinderSidebarView: View {
         .disabled(!store.canMoveChapterDown(chapter.id))
 
         Button(role: .destructive) {
-            store.deleteChapter(chapter.id)
+            chapterToDelete = chapter
         } label: {
             Label("Delete Chapter", systemImage: "trash")
         }
@@ -593,7 +627,7 @@ struct BinderSidebarView: View {
         .disabled(!store.canMoveSceneDown(scene.id))
 
         Button(role: .destructive) {
-            store.deleteScene(scene.id)
+            sceneToDelete = (scene, chapterID)
         } label: {
             Label("Delete Scene", systemImage: "trash")
         }

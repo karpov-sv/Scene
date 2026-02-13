@@ -4,6 +4,8 @@ import AppKit
 struct CompendiumView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedCategory: CompendiumCategory = .characters
+    @State private var confirmDeleteEntry = false
+    @State private var confirmClearCompendium = false
 
     private var filteredEntries: [CompendiumEntry] {
         store.entries(in: selectedCategory)
@@ -77,24 +79,53 @@ struct CompendiumView: View {
 
             Divider()
 
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Button {
                     store.addCompendiumEntry(category: selectedCategory)
                 } label: {
-                    Label("New Entry", systemImage: "plus")
+                    Image(systemName: "plus")
                 }
+                .help("New Entry")
 
-                Button(role: .destructive) {
-                    store.deleteSelectedCompendiumEntry()
+                Button {
+                    store.duplicateSelectedCompendiumEntry()
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Image(systemName: "plus.square.on.square")
                 }
                 .disabled(store.selectedCompendiumEntry == nil)
+                .help("Duplicate Entry")
+
+                Button {
+                    confirmDeleteEntry = true
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(store.selectedCompendiumEntry == nil)
+                .help("Delete Entry")
+
+                Spacer()
+
+                Menu {
+                    Button("Export Compendium…") {
+                        exportCompendium()
+                    }
+                    Button("Import Compendium…") {
+                        importCompendium()
+                    }
+                    Divider()
+                    Button("Clear Compendium…", role: .destructive) {
+                        confirmClearCompendium = true
+                    }
+                    .disabled(store.project.compendium.isEmpty)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuIndicator(.hidden)
+                .help("Compendium Actions")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .buttonStyle(.borderless)
+            .font(.system(size: 14, weight: .medium))
+            .padding(12)
 
             Divider()
 
@@ -132,6 +163,22 @@ struct CompendiumView: View {
                 ContentUnavailableView("No Entry Selected", systemImage: "books.vertical", description: Text("Select or add a compendium entry."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .alert("Delete Entry", isPresented: $confirmDeleteEntry) {
+            Button("Delete", role: .destructive) {
+                store.deleteSelectedCompendiumEntry()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete \"\(store.selectedCompendiumEntry?.title ?? "")\"?")
+        }
+        .alert("Clear Compendium", isPresented: $confirmClearCompendium) {
+            Button("Clear All", role: .destructive) {
+                store.clearCompendium()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete all \(store.project.compendium.count) compendium entries? This cannot be undone.")
         }
         .onChange(of: selectedCategory) { _, _ in
             if let selected = store.selectedCompendiumEntry,
@@ -171,6 +218,28 @@ struct CompendiumView: View {
         guard let selected = store.selectedCompendiumEntry else { return }
         if selected.category != selectedCategory {
             selectedCategory = selected.category
+        }
+    }
+
+    private func exportCompendium() {
+        guard let fileURL = ProjectDialogs.chooseCompendiumExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+        do {
+            _ = try store.exportCompendium(to: fileURL)
+        } catch {
+            store.lastError = "Compendium export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importCompendium() {
+        guard let fileURL = ProjectDialogs.chooseCompendiumImportURL() else {
+            return
+        }
+        do {
+            _ = try store.importCompendium(from: fileURL)
+        } catch {
+            store.lastError = "Compendium import failed: \(error.localizedDescription)"
         }
     }
 }
