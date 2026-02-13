@@ -27,6 +27,8 @@ struct SettingsSheetView: View {
     @State private var promptTemplateStatus: String = ""
     @State private var promptRenderPreview: AppStore.PromptTemplateRenderPreview?
     @State private var showBuiltInTemplateResetConfirmation: Bool = false
+    @State private var confirmDeletePrompt: Bool = false
+    @State private var confirmClearPrompts: Bool = false
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -468,7 +470,7 @@ struct SettingsSheetView: View {
 
                 Divider()
 
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     Menu {
                         ForEach(PromptCategory.allCases, id: \.self) { category in
                             Button("Add \(promptCategoryName(for: category)) Template") {
@@ -478,35 +480,45 @@ struct SettingsSheetView: View {
                             }
                         }
                     } label: {
-                        Label("Add Template", systemImage: "plus")
+                        Image(systemName: "plus")
                     }
+                    .menuIndicator(.hidden)
+                    .help("Add Template")
 
                     Button {
-                        showBuiltInTemplateResetConfirmation = true
+                        confirmDeletePrompt = true
                     } label: {
-                        Label("Update Built-ins", systemImage: "arrow.triangle.2.circlepath")
+                        Image(systemName: "minus")
                     }
+                    .disabled(!canDeleteSelectedPrompt)
+                    .help("Delete Template")
 
                     Spacer(minLength: 0)
 
-                    Button {
-                        guard let selectedPromptID else { return }
-                        let selectedCategory = activePromptForEditor?.category
-                        guard store.deletePrompt(selectedPromptID) else { return }
-
-                        if let selectedCategory,
-                           let replacement = store.prompts(in: selectedCategory).first {
-                            self.selectedPromptID = replacement.id
-                        } else {
-                            self.selectedPromptID = store.project.prompts.first?.id
+                    Menu {
+                        Button("Export Prompts…") {
+                            exportPrompts()
                         }
-
-                        syncRuntimePromptSelection(from: self.selectedPromptID)
+                        Button("Import Prompts…") {
+                            importPrompts()
+                        }
+                        Divider()
+                        Button("Update Built-in Templates…") {
+                            showBuiltInTemplateResetConfirmation = true
+                        }
+                        Divider()
+                        Button("Clear All Prompts…", role: .destructive) {
+                            confirmClearPrompts = true
+                        }
+                        .disabled(store.project.prompts.isEmpty)
                     } label: {
-                        Label("Delete Template", systemImage: "trash")
+                        Image(systemName: "ellipsis.circle")
                     }
-                    .disabled(!canDeleteSelectedPrompt)
+                    .menuIndicator(.hidden)
+                    .help("Prompt Actions")
                 }
+                .buttonStyle(.borderless)
+                .font(.system(size: 14, weight: .medium))
                 .padding(12)
 
                 if !promptTemplateStatus.isEmpty {
@@ -534,6 +546,23 @@ struct SettingsSheetView: View {
         }
         .onChange(of: selectedPromptID) { _, newValue in
             syncRuntimePromptSelection(from: newValue)
+        }
+        .alert("Delete Template", isPresented: $confirmDeletePrompt) {
+            Button("Delete", role: .destructive) {
+                deleteSelectedPrompt()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete \"\(activePromptForEditor?.title ?? "")\"?")
+        }
+        .alert("Clear All Prompts", isPresented: $confirmClearPrompts) {
+            Button("Clear All", role: .destructive) {
+                store.clearPrompts()
+                selectedPromptID = nil
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete all \(store.project.prompts.count) prompt templates? This cannot be undone.")
         }
     }
 
@@ -803,6 +832,21 @@ struct SettingsSheetView: View {
             return "\(rounded / 60) min"
         }
         return "\(rounded) sec"
+    }
+
+    private func deleteSelectedPrompt() {
+        guard let selectedPromptID else { return }
+        let selectedCategory = activePromptForEditor?.category
+        guard store.deletePrompt(selectedPromptID) else { return }
+
+        if let selectedCategory,
+           let replacement = store.prompts(in: selectedCategory).first {
+            self.selectedPromptID = replacement.id
+        } else {
+            self.selectedPromptID = store.project.prompts.first?.id
+        }
+
+        syncRuntimePromptSelection(from: self.selectedPromptID)
     }
 
     private func exportPrompts() {

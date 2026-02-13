@@ -2489,6 +2489,15 @@ final class AppStore: ObservableObject {
         return true
     }
 
+    func clearPrompts() {
+        project.prompts.removeAll()
+        project.selectedProsePromptID = nil
+        project.selectedRewritePromptID = nil
+        project.selectedSummaryPromptID = nil
+        project.selectedWorkshopPromptID = nil
+        saveProject()
+    }
+
     func addProsePrompt() {
         _ = addPrompt(category: .prose)
     }
