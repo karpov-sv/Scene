@@ -22,6 +22,12 @@ struct WorkshopChatView: View {
     @State private var workshopMentionSelectionIndex: Int = 0
     @State private var workshopMentionQueryIdentity: String = ""
     @State private var workshopMentionAnchor: CGPoint?
+    @State private var isEditingChatTitle: Bool = false
+    @FocusState private var isChatTitleFocused: Bool
+    @State private var editingSessionID: UUID?
+    @State private var editingSessionName: String = ""
+    @FocusState private var isSessionRenameFocused: Bool
+    @State private var confirmDeleteChat: Bool = false
     private let actionButtonWidth: CGFloat = 126
     private let actionButtonHeight: CGFloat = 30
     private let actionButtonSpacing: CGFloat = 8
@@ -146,15 +152,40 @@ struct WorkshopChatView: View {
             List(selection: sessionSelectionBinding) {
                 Section("Conversations") {
                     ForEach(store.workshopSessions) { session in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(sessionTitle(session))
-                                .lineLimit(1)
-                            Text("\(session.messages.count) messages")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        Group {
+                            if editingSessionID == session.id {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    TextField("Session name", text: $editingSessionName)
+                                        .textFieldStyle(.roundedBorder)
+                                        .focused($isSessionRenameFocused)
+                                        .onSubmit {
+                                            commitSessionRename(session.id)
+                                        }
+                                        .onExitCommand {
+                                            editingSessionID = nil
+                                        }
+                                    Text("\(session.messages.count) messages")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(sessionTitle(session))
+                                        .lineLimit(1)
+                                    Text("\(session.messages.count) messages")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                         .tag(Optional(session.id))
                         .contextMenu {
+                            Button {
+                                beginSessionRename(session)
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+
                             Button {
                                 store.clearWorkshopSessionMessages(session.id)
                             } label: {
@@ -172,15 +203,29 @@ struct WorkshopChatView: View {
                 }
             }
             .listStyle(.sidebar)
+            .onChange(of: isSessionRenameFocused) { _, focused in
+                if !focused, let id = editingSessionID {
+                    commitSessionRename(id)
+                }
+            }
 
             Divider()
 
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Button {
                     store.createWorkshopSession()
                 } label: {
-                    Label("New Chat", systemImage: "plus")
+                    Image(systemName: "plus")
                 }
+                .help("New Chat")
+
+                Button {
+                    confirmDeleteChat = true
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(store.selectedWorkshopSessionID == nil || !(store.selectedWorkshopSessionID.map { store.canDeleteWorkshopSession($0) } ?? false))
+                .help("Delete Chat")
 
                 Spacer(minLength: 0)
 
@@ -193,22 +238,25 @@ struct WorkshopChatView: View {
                         Label("Clear Messages", systemImage: "trash.slash")
                     }
                     .disabled(store.selectedWorkshopSessionID == nil)
-
-                    Button(role: .destructive) {
-                        if let id = store.selectedWorkshopSessionID {
-                            store.deleteWorkshopSession(id)
-                        }
-                    } label: {
-                        Label("Delete Chat", systemImage: "trash")
-                    }
-                    .disabled(store.selectedWorkshopSessionID == nil || !(store.selectedWorkshopSessionID.map { store.canDeleteWorkshopSession($0) } ?? false))
                 } label: {
-                    Label("Actions", systemImage: "ellipsis.circle")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .menuStyle(.borderlessButton)
-                .controlSize(.small)
+                .menuIndicator(.hidden)
+                .help("Chat Actions")
             }
+            .buttonStyle(.borderless)
+            .font(.system(size: 14, weight: .medium))
             .padding(12)
+        }
+        .alert("Delete Chat", isPresented: $confirmDeleteChat) {
+            Button("Delete", role: .destructive) {
+                if let id = store.selectedWorkshopSessionID {
+                    store.deleteWorkshopSession(id)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete \"\(store.selectedWorkshopSession?.name ?? "")\"?")
         }
     }
 
@@ -238,9 +286,34 @@ struct WorkshopChatView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Session name", text: selectedSessionNameBinding)
-                .textFieldStyle(.roundedBorder)
-                .font(.title3.weight(.semibold))
+            if isEditingChatTitle {
+                TextField("Session name", text: selectedSessionNameBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3.weight(.semibold))
+                    .focused($isChatTitleFocused)
+                    .onSubmit {
+                        isEditingChatTitle = false
+                    }
+                    .onExitCommand {
+                        isEditingChatTitle = false
+                    }
+                    .onChange(of: isChatTitleFocused) { _, focused in
+                        if !focused {
+                            isEditingChatTitle = false
+                        }
+                    }
+            } else {
+                Text(store.selectedWorkshopSession?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? store.selectedWorkshopSession!.name : "Untitled Chat")
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        isEditingChatTitle = true
+                        DispatchQueue.main.async {
+                            isChatTitleFocused = true
+                        }
+                    }
+            }
         }
         .padding(12)
     }
@@ -576,6 +649,22 @@ struct WorkshopChatView: View {
                 .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func beginSessionRename(_ session: WorkshopSession) {
+        editingSessionID = session.id
+        editingSessionName = session.name
+        DispatchQueue.main.async {
+            isSessionRenameFocused = true
+        }
+    }
+
+    private func commitSessionRename(_ sessionID: UUID) {
+        let trimmed = editingSessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            store.renameWorkshopSession(sessionID, to: trimmed)
+        }
+        editingSessionID = nil
     }
 
     private func sessionTitle(_ session: WorkshopSession) -> String {
