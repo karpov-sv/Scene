@@ -83,12 +83,6 @@ struct AppKitColorWell: NSViewRepresentable {
 
             let fallbackColor = nsColor(from: selection.wrappedValue)
             let normalized = normalizedColor(from: sender.color, fallback: fallbackColor)
-            if isMixedSelection && selection.wrappedValue == nil {
-                let placeholder = normalizedColor(from: mixedPlaceholderColor)
-                if colorsMatch(normalized, placeholder) {
-                    return
-                }
-            }
             let rgba = rgba(from: normalized)
             if !rgbaMatch(selection.wrappedValue, rgba) {
                 selection.wrappedValue = rgba
