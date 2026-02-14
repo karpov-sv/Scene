@@ -2087,6 +2087,52 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func makeRewritePayloadPreview(selectedText: String) throws -> WorkshopPayloadPreview {
+        let normalizedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSelection.isEmpty else {
+            throw AIServiceError.badResponse("Select scene text to preview rewrite payload.")
+        }
+
+        guard let scene = selectedScene else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        let requestBuild = makeRewriteRequest(selectedText: normalizedSelection, scene: scene)
+        let request = requestBuild.request
+        let notes = previewNotes(
+            base: [
+                "Prompt includes selected text, local selection context, current scene excerpt, and selected scene context entries.",
+                "Preview request model: \(request.model).",
+                "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+                "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+            ],
+            renderWarnings: requestBuild.renderWarnings
+        )
+
+        switch project.settings.provider {
+        case .anthropic:
+            let preview = try anthropicService.makeRequestPreview(request: request, settings: project.settings)
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: notes
+            )
+        case .openAI, .openRouter, .lmStudio, .openAICompatible:
+            let preview = try openAIService.makeChatRequestPreview(request: request, settings: project.settings)
+            return WorkshopPayloadPreview(
+                providerLabel: project.settings.provider.label,
+                endpointURL: preview.url,
+                method: preview.method,
+                headers: preview.headers,
+                bodyJSON: preview.bodyJSON,
+                notes: notes
+            )
+        }
+    }
+
     func rewriteSelectedSceneText(_ selectedText: String) async throws -> String {
         let normalizedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedSelection.isEmpty else {
@@ -2635,11 +2681,9 @@ final class AppStore: ObservableObject {
             notes.append("Beat input is empty. Preview used sample beat text.")
         }
 
-        let selectionPreview = beatPreviewInput.isEmpty
-            ? "She stared at the letter, then folded it into her coat."
-            : beatPreviewInput
-        if beatPreviewInput.isEmpty && prompt.category == .rewrite {
-            notes.append("Rewrite preview used sample selected text.")
+        let selectionPreview = "She stared at the letter, then folded it into her coat."
+        if prompt.category == .rewrite {
+            notes.append("Rewrite preview used sample selected text (settings preview has no editor selection).")
         }
 
         let renderedUser: PromptRenderer.Result
@@ -2669,7 +2713,7 @@ final class AppStore: ObservableObject {
         case .rewrite:
             let contextSections = buildCompendiumContextSections(
                 for: scenePreview.sceneID,
-                mentionSourceText: selectionPreview
+                mentionSourceText: beatPreview
             )
             let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
             let localSelectionContext = selectionLocalContext(
@@ -2679,7 +2723,7 @@ final class AppStore: ObservableObject {
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
                 fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
-                beat: selectionPreview,
+                beat: beatPreview,
                 selection: selectionPreview,
                 sceneExcerpt: sceneExcerpt,
                 sceneFullText: scenePreview.sceneContent,
@@ -3354,9 +3398,14 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func makeRewriteRequest(selectedText: String, scene: Scene) -> PromptRequestBuildResult {
+    private func makeRewriteRequest(
+        selectedText: String,
+        scene: Scene,
+        beatOverride: String? = nil
+    ) -> PromptRequestBuildResult {
         let prompt = activeRewritePrompt ?? defaultPromptTemplate(for: .rewrite)
-        let sceneContextSections = buildCompendiumContextSections(for: scene.id)
+        let rewriteBeat = (beatOverride ?? beatInput).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: rewriteBeat)
         let sceneContext = String(scene.content.suffix(4500))
         let localSelectionContext = selectionLocalContext(
             selectedText: selectedText,
@@ -3366,7 +3415,7 @@ final class AppStore: ObservableObject {
         let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
             fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
-            beat: selectedText,
+            beat: rewriteBeat,
             selection: selectedText,
             sceneExcerpt: sceneContext,
             sceneFullText: scene.content,

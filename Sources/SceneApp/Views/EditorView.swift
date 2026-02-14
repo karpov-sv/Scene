@@ -211,18 +211,57 @@ struct EditorView: View {
         )
     }
 
-    private var selectedPromptBinding: Binding<UUID?> {
+    private var isRewriteMode: Bool {
+        editorSelection.hasSelection || isRewritingSelection
+    }
+
+    private var activeGenerationPromptBinding: Binding<UUID?> {
         Binding(
-            get: { store.project.selectedProsePromptID },
-            set: { store.setSelectedProsePrompt($0) }
+            get: {
+                if isRewriteMode {
+                    return store.project.selectedRewritePromptID
+                }
+                return store.project.selectedProsePromptID
+            },
+            set: { id in
+                if isRewriteMode {
+                    store.setSelectedRewritePrompt(id)
+                } else {
+                    store.setSelectedProsePrompt(id)
+                }
+            }
         )
     }
 
-    private var selectedRewritePromptBinding: Binding<UUID?> {
-        Binding(
-            get: { store.project.selectedRewritePromptID },
-            set: { store.setSelectedRewritePrompt($0) }
-        )
+    private var activeGenerationPrompts: [PromptTemplate] {
+        isRewriteMode ? store.rewritePrompts : store.prosePrompts
+    }
+
+    private var isPrimaryGenerationRunning: Bool {
+        if isRewriteMode {
+            return isRewritingSelection
+        }
+        return store.isGenerating
+    }
+
+    private var canPreviewCurrentPayload: Bool {
+        if isRewriteMode {
+            return editorSelection.hasSelection && !isRewritingSelection && !store.isGenerating
+        }
+        return !store.isGenerating
+    }
+
+    private var canRunPrimaryAction: Bool {
+        if isRewriteMode {
+            if isRewritingSelection {
+                return true
+            }
+            return editorSelection.hasSelection && store.activeRewritePrompt != nil && !store.isGenerating
+        }
+        if store.isGenerating {
+            return true
+        }
+        return !store.beatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var inlineGenerationBinding: Binding<Bool> {
@@ -484,41 +523,6 @@ struct EditorView: View {
 
                 Spacer(minLength: 0)
             }
-
-            // Rewrite row — shown when text is selected or a rewrite is in progress
-            if false { //editorSelection.hasSelection || isRewritingSelection {
-                HStack(spacing: 8) {
-                    Picker("Rewrite Prompt", selection: selectedRewritePromptBinding) {
-                        ForEach(store.rewritePrompts) { prompt in
-                            Text(prompt.title).tag(Optional(prompt.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(maxWidth: 260)
-                    .disabled(isRewritingSelection || store.isGenerating || store.rewritePrompts.isEmpty)
-
-                    Button {
-                        if isRewritingSelection { cancelRewriteSelection() } else { rewriteSelectedText() }
-                    } label: {
-                        if isRewritingSelection {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Stop")
-                            }
-                        } else {
-                            Label("Rewrite", systemImage: "text.redaction")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(!isRewritingSelection && (!editorSelection.hasSelection || store.activeRewritePrompt == nil || store.isGenerating))
-                    .help(isRewritingSelection ? "Stop rewriting." : "Rewrite the selected text using the selected rewrite prompt.")
-
-                    Spacer(minLength: 0)
-                }
-            }
         }
         .padding(12)
     }
@@ -588,10 +592,12 @@ struct EditorView: View {
             .padding(.trailing, 8)
 
             HStack {
-                Picker("Prompt Template", selection: selectedPromptBinding) {
-                    Text("Default")
-                        .tag(Optional<UUID>.none)
-                    ForEach(store.prosePrompts) { prompt in
+                Picker(isRewriteMode ? "Rewrite Prompt" : "Prompt Template", selection: activeGenerationPromptBinding) {
+                    if !isRewriteMode {
+                        Text("Default")
+                            .tag(Optional<UUID>.none)
+                    }
+                    ForEach(activeGenerationPrompts) { prompt in
                         Text(prompt.title)
                             .tag(Optional(prompt.id))
                     }
@@ -650,7 +656,7 @@ struct EditorView: View {
             HStack(alignment: .top, spacing: 10) {
                 BeatInputTextView(
                     text: $store.beatInput,
-                    onSend: { store.submitBeatGeneration() },
+                    onSend: runPrimaryGenerationAction,
                     onMentionQueryChange: handleBeatMentionQueryChange,
                     onMentionAnchorChange: handleBeatMentionAnchorChange,
                     isMentionMenuVisible: !beatMentionSuggestions.isEmpty,
@@ -713,33 +719,27 @@ struct EditorView: View {
                     .disabled(beatHistory.isEmpty)
 
                     Button {
-                        do {
-                            generationPayloadPreview = try store.makeProsePayloadPreview()
-                        } catch {
-                            store.lastError = error.localizedDescription
-                        }
+                        previewCurrentGenerationPayload()
                     } label: {
                         Label("Preview", systemImage: "doc.text.magnifyingglass")
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                    .disabled(store.isGenerating)
+                    .disabled(!canPreviewCurrentPayload)
 
                     Button {
-                        if store.isGenerating {
-                            store.cancelBeatGeneration()
-                        } else {
-                            store.submitBeatGeneration()
-                        }
+                        runPrimaryGenerationAction()
                     } label: {
                         Group {
-                            if store.isGenerating {
+                            if isPrimaryGenerationRunning {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.small)
                                     Text("Stop")
                                 }
+                            } else if isRewriteMode {
+                                Label("Rewrite", systemImage: "text.redaction")
                             } else {
                                 Label("Generate Text", systemImage: "sparkles")
                             }
@@ -748,15 +748,19 @@ struct EditorView: View {
                         .frame(height: generationButtonHeight)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(store.isGenerating ? .red : .accentColor)
-                    .disabled(!store.isGenerating && store.beatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .tint(isPrimaryGenerationRunning ? .red : .accentColor)
+                    .disabled(!canRunPrimaryAction)
                 }
                 .frame(width: generationButtonWidth, alignment: .center)
                 .padding(8)
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            Text("Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes.")
+            Text(
+                isRewriteMode
+                    ? "Selection is active: prompt, preview, and action buttons now target rewrite for the selected text."
+                    : "Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes."
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
@@ -768,6 +772,35 @@ struct EditorView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+
+    private func runPrimaryGenerationAction() {
+        if isRewriteMode {
+            if isRewritingSelection {
+                cancelRewriteSelection()
+            } else {
+                rewriteSelectedText()
+            }
+            return
+        }
+
+        if store.isGenerating {
+            store.cancelBeatGeneration()
+        } else {
+            store.submitBeatGeneration()
+        }
+    }
+
+    private func previewCurrentGenerationPayload() {
+        do {
+            if isRewriteMode {
+                generationPayloadPreview = try store.makeRewritePayloadPreview(selectedText: editorSelection.text)
+            } else {
+                generationPayloadPreview = try store.makeProsePayloadPreview()
+            }
+        } catch {
+            store.lastError = error.localizedDescription
+        }
     }
 
     private func proseUsageMetricsView(_ usage: TokenUsage) -> some View {

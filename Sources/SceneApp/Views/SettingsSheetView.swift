@@ -1100,7 +1100,7 @@ struct SettingsSheetView: View {
         case .rewrite:
             return [
                 .init(token: "{{selection}}", meaning: "Currently selected text in the editor (text to rewrite/expand/shorten)."),
-                .init(token: "{{beat}}", meaning: "Alias for `{{selection}}` for compatibility."),
+                .init(token: "{{beat}}", meaning: "Text from the standard generation input field (separate rewrite guidance)."),
                 .init(token: "{{selection_context}}", meaning: "Local scene context around the selected text (before/selection/after)."),
                 .init(token: "{{scene}} / {{scene_tail(chars=4500)}}", meaning: "Current scene excerpt or configurable tail from full scene (optional)."),
                 .init(token: "{{context(max_chars=2200)}}", meaning: "Selected scene context with optional truncation."),
