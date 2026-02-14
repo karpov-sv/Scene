@@ -1,8 +1,43 @@
 import SwiftUI
 
+private extension CodableRGBA {
+    static let settingsColorComponentScale: Double = 255.0
+    static let settingsColorTolerance: Double = 0.5 / settingsColorComponentScale
+
+    static func settingsFrom(nsColor: NSColor) -> CodableRGBA? {
+        guard let resolved = nsColor.usingColorSpace(.deviceRGB) else { return nil }
+        return CodableRGBA(
+            red: settingsQuantize(Double(resolved.redComponent)),
+            green: settingsQuantize(Double(resolved.greenComponent)),
+            blue: settingsQuantize(Double(resolved.blueComponent)),
+            alpha: settingsQuantize(Double(resolved.alphaComponent))
+        )
+    }
+
+    static func settingsAreClose(_ lhs: CodableRGBA?, _ rhs: CodableRGBA?) -> Bool {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            return abs(left.red - right.red) <= settingsColorTolerance &&
+            abs(left.green - right.green) <= settingsColorTolerance &&
+            abs(left.blue - right.blue) <= settingsColorTolerance &&
+            abs(left.alpha - right.alpha) <= settingsColorTolerance
+        case (nil, nil):
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func settingsQuantize(_ component: Double) -> Double {
+        let clamped = min(1.0, max(0.0, component))
+        return (clamped * settingsColorComponentScale).rounded() / settingsColorComponentScale
+    }
+}
+
 struct SettingsSheetView: View {
     private enum SettingsTab: Hashable {
         case general
+        case editor
         case provider
         case prompts
     }
@@ -157,6 +192,12 @@ struct SettingsSheetView: View {
                     }
                     .tag(SettingsTab.general)
 
+                editorTab
+                    .tabItem {
+                        Label("Editor", systemImage: "textformat")
+                    }
+                    .tag(SettingsTab.editor)
+
                 providerTab
                     .tabItem {
                         Label("AI Provider", systemImage: "cpu")
@@ -207,6 +248,268 @@ struct SettingsSheetView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    // MARK: - Editor appearance helpers
+
+    private var resolvedEditorFont: NSFont {
+        let app = store.project.editorAppearance
+        if app.fontFamily == "System" || app.fontFamily.isEmpty {
+            return app.fontSize > 0
+                ? NSFont.systemFont(ofSize: app.fontSize)
+                : NSFont.preferredFont(forTextStyle: .body)
+        } else {
+            let size = app.fontSize > 0 ? app.fontSize : NSFont.systemFontSize
+            return NSFont(name: app.fontFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
+        }
+    }
+
+    private var textAlignmentBinding: Binding<TextAlignmentOption> {
+        Binding(
+            get: { store.project.editorAppearance.textAlignment },
+            set: {
+                var a = store.project.editorAppearance
+                a.textAlignment = $0
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var lineHeightBinding: Binding<Double> {
+        Binding(
+            get: { store.project.editorAppearance.lineHeightMultiple },
+            set: {
+                var a = store.project.editorAppearance
+                a.lineHeightMultiple = $0
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var hPaddingBinding: Binding<Double> {
+        Binding(
+            get: { store.project.editorAppearance.horizontalPadding },
+            set: {
+                var a = store.project.editorAppearance
+                a.horizontalPadding = $0
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var vPaddingBinding: Binding<Double> {
+        Binding(
+            get: { store.project.editorAppearance.verticalPadding },
+            set: {
+                var a = store.project.editorAppearance
+                a.verticalPadding = $0
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var textColorEnabled: Bool { store.project.editorAppearance.textColor != nil }
+    private var bgColorEnabled: Bool { store.project.editorAppearance.backgroundColor != nil }
+
+    private var textColorBinding: Binding<CodableRGBA> {
+        Binding(
+            get: {
+                if let c = store.project.editorAppearance.textColor {
+                    return c
+                }
+                return CodableRGBA.settingsFrom(nsColor: .textColor) ?? CodableRGBA(red: 0, green: 0, blue: 0, alpha: 1)
+            },
+            set: { rgba in
+                var a = store.project.editorAppearance
+                guard !CodableRGBA.settingsAreClose(a.textColor, rgba) else { return }
+                a.textColor = rgba
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var bgColorBinding: Binding<CodableRGBA> {
+        Binding(
+            get: {
+                if let c = store.project.editorAppearance.backgroundColor {
+                    return c
+                }
+                return CodableRGBA.settingsFrom(nsColor: .textBackgroundColor) ?? CodableRGBA(red: 1, green: 1, blue: 1, alpha: 1)
+            },
+            set: { rgba in
+                var a = store.project.editorAppearance
+                guard !CodableRGBA.settingsAreClose(a.backgroundColor, rgba) else { return }
+                a.backgroundColor = rgba
+                store.updateEditorAppearance(a)
+            }
+        )
+    }
+
+    private var editorTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+
+                GroupBox("Font") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Font")
+                                .frame(width: 100, alignment: .leading)
+                            EditorFontPickerButton(font: resolvedEditorFont) { newFont in
+                                var a = store.project.editorAppearance
+                                a.fontFamily = newFont.familyName ?? newFont.fontName
+                                a.fontSize = newFont.pointSize
+                                store.updateEditorAppearance(a)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("Reset") {
+                                var a = store.project.editorAppearance
+                                a.fontFamily = "System"
+                                a.fontSize = 0
+                                store.updateEditorAppearance(a)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Spacing") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Alignment")
+                                .frame(width: 100, alignment: .leading)
+                            Picker("Alignment", selection: textAlignmentBinding) {
+                                Image(systemName: "text.alignleft").tag(TextAlignmentOption.left)
+                                Image(systemName: "text.aligncenter").tag(TextAlignmentOption.center)
+                                Image(systemName: "text.alignright").tag(TextAlignmentOption.right)
+                                Image(systemName: "text.justify").tag(TextAlignmentOption.justified)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Line height")
+                                .frame(width: 100, alignment: .leading)
+                            Slider(value: lineHeightBinding, in: 1.0...2.5, step: 0.05)
+                            Text(String(format: "%.2f×", store.project.editorAppearance.lineHeightMultiple))
+                                .monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("H margin")
+                                .frame(width: 100, alignment: .leading)
+                            Slider(value: hPaddingBinding, in: 0...80, step: 1)
+                            Text("\(Int(store.project.editorAppearance.horizontalPadding)) pt")
+                                .monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("V margin")
+                                .frame(width: 100, alignment: .leading)
+                            Slider(value: vPaddingBinding, in: 0...80, step: 1)
+                            Text("\(Int(store.project.editorAppearance.verticalPadding)) pt")
+                                .monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Colors") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Text color")
+                                .frame(width: 100, alignment: .leading)
+                            Spacer(minLength: 0)
+                            if textColorEnabled {
+                                AppKitColorWell(
+                                    selection: Binding(
+                                        get: { textColorBinding.wrappedValue },
+                                        set: { if let value = $0 { textColorBinding.wrappedValue = value } }
+                                    ),
+                                    supportsOpacity: false
+                                )
+                                    .frame(width: 32, height: 18)
+                                    .id("settings-text-color-well")
+                            } else {
+                                Text("System default")
+                                    .foregroundStyle(.secondary)
+                                    .font(.callout)
+                            }
+                            Toggle("Custom", isOn: Binding(
+                                get: { textColorEnabled },
+                                set: { enabled in
+                                    var a = store.project.editorAppearance
+                                    let defaultTextColor = CodableRGBA.settingsFrom(nsColor: .textColor) ?? CodableRGBA(red: 0, green: 0, blue: 0)
+                                    let next = enabled ? defaultTextColor : nil
+                                    guard !CodableRGBA.settingsAreClose(a.textColor, next) else { return }
+                                    a.textColor = next
+                                    store.updateEditorAppearance(a)
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Background")
+                                .frame(width: 100, alignment: .leading)
+                            Spacer(minLength: 0)
+                            if bgColorEnabled {
+                                AppKitColorWell(
+                                    selection: Binding(
+                                        get: { bgColorBinding.wrappedValue },
+                                        set: { if let value = $0 { bgColorBinding.wrappedValue = value } }
+                                    ),
+                                    supportsOpacity: false
+                                )
+                                    .frame(width: 32, height: 18)
+                                    .id("settings-background-color-well")
+                            } else {
+                                Text("System default")
+                                    .foregroundStyle(.secondary)
+                                    .font(.callout)
+                            }
+                            Toggle("Custom", isOn: Binding(
+                                get: { bgColorEnabled },
+                                set: { enabled in
+                                    var a = store.project.editorAppearance
+                                    let defaultBackgroundColor = CodableRGBA.settingsFrom(nsColor: .textBackgroundColor) ?? CodableRGBA(red: 1, green: 1, blue: 1)
+                                    let next = enabled ? defaultBackgroundColor : nil
+                                    guard !CodableRGBA.settingsAreClose(a.backgroundColor, next) else { return }
+                                    a.backgroundColor = next
+                                    store.updateEditorAppearance(a)
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    Button("Apply to All Existing Text") {
+                        store.applyEditorAppearanceToExistingText()
+                    }
+                    .help("Apply current editor font, text color, line height, and alignment to all scene text.")
+
+                    Spacer(minLength: 0)
+
+                    Button("Reset All to Defaults") {
+                        store.updateEditorAppearance(.default)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding()
+        }
     }
 
     private var generalTab: some View {
@@ -1080,6 +1383,58 @@ private struct PromptTemplateRenderPreviewSheet: View {
             return "Summary"
         case .workshop:
             return "Workshop Chat"
+        }
+    }
+}
+
+// MARK: - Font panel integration
+
+private struct EditorFontPickerButton: NSViewRepresentable {
+    let font: NSFont
+    let onFontChange: (NSFont) -> Void
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.bezelStyle = .rounded
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.openFontPanel(_:))
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.currentFont = font
+        context.coordinator.onFontChange = onFontChange
+        let name = font.displayName ?? font.familyName ?? font.fontName
+        nsView.title = "\(name)  \(Int(font.pointSize)) pt"
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(font: font, onFontChange: onFontChange)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var currentFont: NSFont
+        var onFontChange: (NSFont) -> Void
+
+        init(font: NSFont, onFontChange: @escaping (NSFont) -> Void) {
+            self.currentFont = font
+            self.onFontChange = onFontChange
+        }
+
+        @objc func openFontPanel(_ sender: NSButton?) {
+            let mgr = NSFontManager.shared
+            mgr.target = self
+            mgr.action = #selector(changeFont(_:))
+            let panel = NSFontPanel.shared
+            panel.setPanelFont(currentFont, isMultiple: false)
+            panel.orderFront(sender)
+        }
+
+        @objc func changeFont(_ sender: NSFontManager?) {
+            guard let mgr = sender else { return }
+            let newFont = mgr.convert(currentFont)
+            onFontChange(newFont)
         }
     }
 }

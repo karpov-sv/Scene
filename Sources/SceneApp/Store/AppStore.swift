@@ -296,6 +296,7 @@ final class AppStore: ObservableObject {
     @Published var selectedChapterID: UUID?
     @Published var selectedSceneID: UUID?
     @Published var selectedCompendiumID: UUID?
+    @Published private(set) var sceneRichTextRefreshID: UUID = UUID()
 
     @Published var selectedWorkshopSessionID: UUID?
     @Published var workshopInput: String = ""
@@ -1092,6 +1093,76 @@ final class AppStore: ObservableObject {
     }
 
     // MARK: - Project and Settings
+
+    func updateEditorAppearance(_ appearance: EditorAppearanceSettings) {
+        guard project.editorAppearance != appearance else { return }
+        project.editorAppearance = appearance
+        saveProject(debounced: true)
+    }
+
+    func applyEditorAppearanceToExistingText() {
+        guard isProjectOpen else { return }
+
+        let appearance = project.editorAppearance
+        let baseFont = resolvedEditorBaseFont(from: appearance)
+        let textColor = resolvedEditorTextColor(from: appearance)
+        let alignment = nsTextAlignment(from: appearance.textAlignment)
+        let lineHeightMultiple = max(1.0, appearance.lineHeightMultiple)
+
+        var didMutateProject = false
+
+        for chapterIndex in project.chapters.indices {
+            var didMutateChapter = false
+
+            for sceneIndex in project.chapters[chapterIndex].scenes.indices {
+                let scene = project.chapters[chapterIndex].scenes[sceneIndex]
+                let attributed = makeAttributedSceneContent(
+                    plainText: scene.content,
+                    richTextData: scene.contentRTFData
+                )
+
+                let fullRange = NSRange(location: 0, length: attributed.length)
+                guard fullRange.length > 0 else { continue }
+
+                attributed.beginEditing()
+                attributed.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+                    let sourceFont = (value as? NSFont) ?? baseFont
+                    let mappedFont = mapMarkdownFontTraits(sourceFont, onto: baseFont)
+                    attributed.addAttribute(.font, value: mappedFont, range: range)
+                }
+                attributed.addAttribute(.foregroundColor, value: textColor, range: fullRange)
+                attributed.enumerateAttribute(.paragraphStyle, in: fullRange, options: []) { value, range, _ in
+                    let paragraphStyle = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                        ?? NSMutableParagraphStyle()
+                    paragraphStyle.lineHeightMultiple = lineHeightMultiple
+                    paragraphStyle.alignment = alignment
+                    paragraphStyle.lineBreakMode = .byWordWrapping
+                    attributed.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
+                }
+                attributed.endEditing()
+
+                let updatedPlainText = attributed.string
+                let updatedRichTextData = makeRTFData(from: attributed)
+                if scene.content == updatedPlainText && scene.contentRTFData == updatedRichTextData {
+                    continue
+                }
+
+                project.chapters[chapterIndex].scenes[sceneIndex].content = updatedPlainText
+                project.chapters[chapterIndex].scenes[sceneIndex].contentRTFData = updatedRichTextData
+                project.chapters[chapterIndex].scenes[sceneIndex].updatedAt = .now
+                didMutateChapter = true
+                didMutateProject = true
+            }
+
+            if didMutateChapter {
+                project.chapters[chapterIndex].updatedAt = .now
+            }
+        }
+
+        guard didMutateProject else { return }
+        sceneRichTextRefreshID = UUID()
+        saveProject()
+    }
 
     func updateProjectTitle(_ title: String) {
         project.title = title
@@ -5171,6 +5242,38 @@ final class AppStore: ObservableObject {
             from: range,
             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
         )
+    }
+
+    private func resolvedEditorBaseFont(from settings: EditorAppearanceSettings) -> NSFont {
+        if settings.fontFamily == "System" || settings.fontFamily.isEmpty {
+            if settings.fontSize > 0 {
+                return NSFont.systemFont(ofSize: settings.fontSize)
+            }
+            return NSFont.preferredFont(forTextStyle: .body)
+        }
+
+        let size = settings.fontSize > 0 ? settings.fontSize : NSFont.systemFontSize
+        return NSFont(name: settings.fontFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
+    }
+
+    private func resolvedEditorTextColor(from settings: EditorAppearanceSettings) -> NSColor {
+        if let color = settings.textColor {
+            return NSColor(red: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
+        }
+        return NSColor.textColor
+    }
+
+    private func nsTextAlignment(from option: TextAlignmentOption) -> NSTextAlignment {
+        switch option {
+        case .left:
+            return .left
+        case .center:
+            return .center
+        case .right:
+            return .right
+        case .justified:
+            return .justified
+        }
     }
 
     private func sceneLocation(for sceneID: UUID) -> SceneLocation? {

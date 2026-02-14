@@ -577,6 +577,95 @@ struct GenerationSettings: Codable, Equatable {
     )
 }
 
+enum TextAlignmentOption: String, Codable, CaseIterable, Equatable {
+    case left
+    case center
+    case right
+    case justified
+}
+
+struct CodableRGBA: Codable, Equatable {
+    var red: Double
+    var green: Double
+    var blue: Double
+    var alpha: Double
+
+    init(red: Double, green: Double, blue: Double, alpha: Double = 1.0) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+    }
+}
+
+struct EditorAppearanceSettings: Codable, Equatable {
+    /// Font family name, or "System" for the default body font.
+    var fontFamily: String
+    /// Point size. 0 means use the system body font size.
+    var fontSize: Double
+    /// Line height multiple (e.g. 1.3 = 130% of font leading).
+    var lineHeightMultiple: Double
+    /// Horizontal text container inset (left + right padding).
+    var horizontalPadding: Double
+    /// Vertical text container inset (top + bottom padding).
+    var verticalPadding: Double
+    /// nil = use system text color.
+    var textColor: CodableRGBA?
+    /// nil = use system background color.
+    var backgroundColor: CodableRGBA?
+    var textAlignment: TextAlignmentOption
+
+    private enum CodingKeys: String, CodingKey {
+        case fontFamily, fontSize, lineHeightMultiple
+        case horizontalPadding, verticalPadding
+        case textColor, backgroundColor
+        case textAlignment
+    }
+
+    init(
+        fontFamily: String,
+        fontSize: Double,
+        lineHeightMultiple: Double,
+        horizontalPadding: Double,
+        verticalPadding: Double,
+        textColor: CodableRGBA?,
+        backgroundColor: CodableRGBA?,
+        textAlignment: TextAlignmentOption = .left
+    ) {
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+        self.lineHeightMultiple = lineHeightMultiple
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+        self.textColor = textColor
+        self.backgroundColor = backgroundColor
+        self.textAlignment = textAlignment
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fontFamily = try c.decodeIfPresent(String.self, forKey: .fontFamily) ?? "System"
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? 0
+        lineHeightMultiple = try c.decodeIfPresent(Double.self, forKey: .lineHeightMultiple) ?? 1.3
+        horizontalPadding = try c.decodeIfPresent(Double.self, forKey: .horizontalPadding) ?? 8
+        verticalPadding = try c.decodeIfPresent(Double.self, forKey: .verticalPadding) ?? 10
+        textColor = try c.decodeIfPresent(CodableRGBA.self, forKey: .textColor)
+        backgroundColor = try c.decodeIfPresent(CodableRGBA.self, forKey: .backgroundColor)
+        textAlignment = try c.decodeIfPresent(TextAlignmentOption.self, forKey: .textAlignment) ?? .left
+    }
+
+    static let `default` = EditorAppearanceSettings(
+        fontFamily: "System",
+        fontSize: 0,
+        lineHeightMultiple: 1.3,
+        horizontalPadding: 8,
+        verticalPadding: 10,
+        textColor: nil,
+        backgroundColor: nil,
+        textAlignment: .left
+    )
+}
+
 struct StoryProject: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
@@ -594,6 +683,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
     var settings: GenerationSettings
+    var editorAppearance: EditorAppearanceSettings
     var updatedAt: Date
 
     init(
@@ -613,6 +703,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
         settings: GenerationSettings,
+        editorAppearance: EditorAppearanceSettings,
         updatedAt: Date
     ) {
         self.id = id
@@ -631,6 +722,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
         self.settings = settings
+        self.editorAppearance = editorAppearance
         self.updatedAt = updatedAt
     }
 
@@ -651,6 +743,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
         case settings
+        case editorAppearance
         case updatedAt
     }
 
@@ -673,6 +766,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
+        editorAppearance = try container.decodeIfPresent(EditorAppearanceSettings.self, forKey: .editorAppearance) ?? .default
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 
@@ -725,6 +819,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
             settings: .default,
+            editorAppearance: .default,
             updatedAt: .now
         )
     }

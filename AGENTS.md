@@ -58,3 +58,10 @@ Always run `swift build` after UI/state/model edits.
   - `Services/PersistenceService.swift`
   - any relevant UI/store bindings
 - Verify behavior with local build before commit.
+
+## Commit Style
+
+- Default commit subject format: `type: concise imperative summary`
+- Preferred types: `feat`, `fix`, `ui`, `docs`, `chore`
+- Use lowercase after `type:`, no trailing period.
+- Keep the subject focused and short (prefer ~72 chars or less).

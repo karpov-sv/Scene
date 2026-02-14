@@ -41,10 +41,95 @@ private struct SceneEditorCommand: Equatable {
         case toggleItalics
         case toggleUnderline
         case replaceSelection(rewrittenText: String, targetRange: SceneEditorRange, emphasizeWithItalics: Bool)
+        case applyFont(family: String, size: Double)
+        case applyTextColor(CodableRGBA?, targetRange: SceneEditorRange?)
+        case applyTextBackgroundColor(CodableRGBA?, targetRange: SceneEditorRange?)
+        case applyAlignment(TextAlignmentOption)
+        case openFontPanel
     }
 
     let id: UUID = UUID()
     let action: Action
+}
+
+private struct SceneEditorFormatting: Equatable {
+    var fontFamily: String
+    var fontSize: Double
+    var textColor: CodableRGBA?
+    var textBackgroundColor: CodableRGBA?
+    var hasMixedTextColor: Bool
+    var hasMixedTextBackgroundColor: Bool
+    var textAlignment: TextAlignmentOption
+
+    static let `default` = SceneEditorFormatting(
+        fontFamily: "System",
+        fontSize: 14,
+        textColor: nil,
+        textBackgroundColor: nil,
+        hasMixedTextColor: false,
+        hasMixedTextBackgroundColor: false,
+        textAlignment: .left
+    )
+}
+
+private extension CodableRGBA {
+    static let colorComponentScale: Double = 255.0
+    static let colorComponentTolerance: Double = 0.5 / colorComponentScale
+
+    static let defaultHighlight = CodableRGBA(red: 1.0, green: 1.0, blue: 0.0, alpha: 1.0)
+
+    static func from(nsColor: NSColor?) -> CodableRGBA? {
+        guard let resolved = nsColor?.usingColorSpace(.deviceRGB) else { return nil }
+        return CodableRGBA(
+            red: quantize(Double(resolved.redComponent)),
+            green: quantize(Double(resolved.greenComponent)),
+            blue: quantize(Double(resolved.blueComponent)),
+            alpha: quantize(Double(resolved.alphaComponent))
+        )
+    }
+
+    static func from(color: Color) -> CodableRGBA? {
+        from(nsColor: NSColor(color))
+    }
+
+    static func areClose(_ lhs: CodableRGBA?, _ rhs: CodableRGBA?) -> Bool {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            return left.isClose(to: right)
+        case (nil, nil):
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func quantize(_ component: Double) -> Double {
+        let clamped = min(1.0, max(0.0, component))
+        return (clamped * colorComponentScale).rounded() / colorComponentScale
+    }
+
+    func isClose(to other: CodableRGBA) -> Bool {
+        abs(red - other.red) <= Self.colorComponentTolerance &&
+        abs(green - other.green) <= Self.colorComponentTolerance &&
+        abs(blue - other.blue) <= Self.colorComponentTolerance &&
+        abs(alpha - other.alpha) <= Self.colorComponentTolerance
+    }
+
+    var swiftUIColor: Color {
+        Color(red: red, green: green, blue: blue, opacity: alpha)
+    }
+}
+
+private extension SceneEditorFormatting {
+    func isEquivalent(to other: SceneEditorFormatting) -> Bool {
+        fontFamily == other.fontFamily &&
+        abs(fontSize - other.fontSize) <= 0.01 &&
+        CodableRGBA.areClose(textColor, other.textColor) &&
+        CodableRGBA.areClose(textBackgroundColor, other.textBackgroundColor) &&
+        hasMixedTextColor == other.hasMixedTextColor &&
+        hasMixedTextBackgroundColor == other.hasMixedTextBackgroundColor &&
+        textAlignment == other.textAlignment
+    }
 }
 
 struct EditorView: View {
@@ -53,10 +138,13 @@ struct EditorView: View {
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var sceneEditorCommand: SceneEditorCommand?
     @State private var editorSelection: SceneEditorSelection = .empty
+    @State private var editorFormatting: SceneEditorFormatting = .default
     @State private var isRewritingSelection: Bool = false
     @State private var rewriteTask: Task<Void, Never>?
     @State private var canUndoInSceneEditor: Bool = false
     @State private var canRedoInSceneEditor: Bool = false
+    @State private var preferredTextColor: CodableRGBA = CodableRGBA(red: 0, green: 0, blue: 0, alpha: 1)
+    @State private var preferredTextHighlightColor: CodableRGBA = .defaultHighlight
     @State private var beatMentionQuery: MentionAutocompleteQuery?
     @State private var beatMentionSelectionIndex: Int = 0
     @State private var beatMentionQueryIdentity: String = ""
@@ -215,34 +303,26 @@ struct EditorView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.title3.weight(.semibold))
                     .focused($isSceneTitleFocused)
-                    .onSubmit {
-                        isEditingSceneTitle = false
-                    }
-                    .onExitCommand {
-                        isEditingSceneTitle = false
-                    }
+                    .onSubmit { isEditingSceneTitle = false }
+                    .onExitCommand { isEditingSceneTitle = false }
                     .onChange(of: isSceneTitleFocused) { _, focused in
-                        if !focused {
-                            isEditingSceneTitle = false
-                        }
+                        if !focused { isEditingSceneTitle = false }
                     }
             } else {
-                Text(store.selectedScene?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? store.selectedScene!.title : "Untitled Scene")
+                Text(store.selectedScene?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                     ? store.selectedScene!.title : "Untitled Scene")
                     .font(.title3.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) {
                         isEditingSceneTitle = true
-                        DispatchQueue.main.async {
-                            isSceneTitleFocused = true
-                        }
+                        DispatchQueue.main.async { isSceneTitleFocused = true }
                     }
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .undo)
-                } label: {
+            // Formatting toolbar
+            HStack(spacing: 6) {
+                Button { sceneEditorCommand = SceneEditorCommand(action: .undo) } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
                 .buttonStyle(.bordered)
@@ -250,9 +330,7 @@ struct EditorView: View {
                 .disabled(!canUndoInSceneEditor)
                 .help("Undo (Cmd+Z)")
 
-                Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .redo)
-                } label: {
+                Button { sceneEditorCommand = SceneEditorCommand(action: .redo) } label: {
                     Image(systemName: "arrow.uturn.forward")
                 }
                 .buttonStyle(.bordered)
@@ -260,76 +338,194 @@ struct EditorView: View {
                 .disabled(!canRedoInSceneEditor)
                 .help("Redo (Shift+Cmd+Z)")
 
+                Divider().frame(height: 18).padding(.horizontal, 2)
+
+                // Font family — opens system font panel
                 Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .toggleBoldface)
+                    sceneEditorCommand = SceneEditorCommand(action: .openFontPanel)
                 } label: {
+                    HStack(spacing: 4) {
+                        Text(editorFormatting.fontFamily == "System" ? "System Font" : editorFormatting.fontFamily)
+                            .lineLimit(1)
+                        Text("\(Int(editorFormatting.fontSize))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Font (click to open Font Panel)")
+
+                Divider().frame(height: 18).padding(.horizontal, 2)
+
+                Button { sceneEditorCommand = SceneEditorCommand(action: .toggleBoldface) } label: {
                     Image(systemName: "bold")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Bold (Cmd+B)")
 
-                Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .toggleItalics)
-                } label: {
+                Button { sceneEditorCommand = SceneEditorCommand(action: .toggleItalics) } label: {
                     Image(systemName: "italic")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Italic (Cmd+I)")
 
-                Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .toggleUnderline)
-                } label: {
+                Button { sceneEditorCommand = SceneEditorCommand(action: .toggleUnderline) } label: {
                     Image(systemName: "underline")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Underline (Cmd+U)")
 
-                Spacer(minLength: 0)
+                Divider().frame(height: 18).padding(.horizontal, 2)
 
-                if editorSelection.hasSelection || isRewritingSelection {
+                HStack(spacing: 4) {
+                    Text("A")
+                        .font(.system(size: 11, weight: .semibold))
+                    AppKitColorWell(
+                        selection: Binding(
+                            get: {
+                                if editorFormatting.hasMixedTextColor {
+                                    return nil
+                                }
+                                if let c = editorFormatting.textColor {
+                                    return c
+                                }
+                                return CodableRGBA.from(nsColor: .textColor) ?? CodableRGBA(red: 0, green: 0, blue: 0, alpha: 1)
+                            },
+                            set: { rgba in
+                                guard let rgba else { return }
+                                let shouldSkip = CodableRGBA.areClose(editorFormatting.textColor, rgba) && !editorSelection.hasSelection
+                                guard !shouldSkip else { return }
+                                editorFormatting.textColor = rgba
+                                sceneEditorCommand = SceneEditorCommand(action: .applyTextColor(
+                                    rgba,
+                                    targetRange: editorSelection.hasSelection ? editorSelection.range : nil
+                                ))
+                            }
+                        ),
+                        supportsOpacity: false,
+                        autoDeactivateOnChange: true,
+                        mixedPlaceholderColor: NSColor.secondaryLabelColor
+                    )
+                    .frame(width: 26, height: 16)
+                    .id("editor-text-color-well")
+                }
+                .help("Text color")
+
+                HStack(spacing: 4) {
+                    Image(systemName: "highlighter")
+                        .font(.system(size: 12))
+                    AppKitColorWell(
+                        selection: Binding(
+                            get: {
+                                if editorFormatting.hasMixedTextBackgroundColor {
+                                    return nil
+                                }
+                                if let c = editorFormatting.textBackgroundColor {
+                                    return c
+                                }
+                                return preferredTextHighlightColor
+                            },
+                            set: { rgba in
+                                guard let rgba else { return }
+                                let shouldSkip = CodableRGBA.areClose(editorFormatting.textBackgroundColor, rgba) && !editorSelection.hasSelection
+                                guard !shouldSkip else { return }
+                                preferredTextHighlightColor = rgba
+                                editorFormatting.textBackgroundColor = rgba
+                                sceneEditorCommand = SceneEditorCommand(action: .applyTextBackgroundColor(
+                                    rgba,
+                                    targetRange: editorSelection.hasSelection ? editorSelection.range : nil
+                                ))
+                            }
+                        ),
+                        supportsOpacity: false,
+                        autoDeactivateOnChange: true,
+                        mixedPlaceholderColor: NSColor.secondaryLabelColor
+                    )
+                    .frame(width: 26, height: 16)
+                    .id("editor-highlight-color-well")
+                }
+                .help("Text highlight color")
+
+                if editorFormatting.textBackgroundColor != nil || editorFormatting.hasMixedTextBackgroundColor {
+                    Button {
+                        editorFormatting.textBackgroundColor = nil
+                        editorFormatting.hasMixedTextBackgroundColor = false
+                        sceneEditorCommand = SceneEditorCommand(action: .applyTextBackgroundColor(
+                            nil,
+                            targetRange: editorSelection.hasSelection ? editorSelection.range : nil
+                        ))
+                    } label: {
+                        Image(systemName: "highlighter")
+                            .font(.system(size: 12))
+                            .overlay(alignment: .bottomTrailing) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(.secondary)
+                                    .offset(x: 3, y: 3)
+                            }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Clear highlight")
+                }
+
+                Divider().frame(height: 18).padding(.horizontal, 2)
+
+                Picker("Alignment", selection: Binding(
+                    get: { editorFormatting.textAlignment },
+                    set: { alignment in
+                        editorFormatting.textAlignment = alignment
+                        sceneEditorCommand = SceneEditorCommand(action: .applyAlignment(alignment))
+                    }
+                )) {
+                    Image(systemName: "text.alignleft").tag(TextAlignmentOption.left)
+                    Image(systemName: "text.aligncenter").tag(TextAlignmentOption.center)
+                    Image(systemName: "text.alignright").tag(TextAlignmentOption.right)
+                    Image(systemName: "text.justify").tag(TextAlignmentOption.justified)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 120)
+                .help("Text alignment")
+
+                Spacer(minLength: 0)
+            }
+
+            // Rewrite row — shown when text is selected or a rewrite is in progress
+            if false { //editorSelection.hasSelection || isRewritingSelection {
+                HStack(spacing: 8) {
                     Picker("Rewrite Prompt", selection: selectedRewritePromptBinding) {
                         ForEach(store.rewritePrompts) { prompt in
-                            Text(prompt.title)
-                                .tag(Optional(prompt.id))
+                            Text(prompt.title).tag(Optional(prompt.id))
                         }
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .controlSize(.small)
-                    .frame(width: 220)
+                    .frame(maxWidth: 260)
                     .disabled(isRewritingSelection || store.isGenerating || store.rewritePrompts.isEmpty)
 
                     Button {
-                        if isRewritingSelection {
-                            cancelRewriteSelection()
-                        } else {
-                            rewriteSelectedText()
-                        }
+                        if isRewritingSelection { cancelRewriteSelection() } else { rewriteSelectedText() }
                     } label: {
-                        Group {
-                            if isRewritingSelection {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Stop")
-                                }
-                            } else {
-                                Label("Rewrite", systemImage: "text.redaction")
+                        if isRewritingSelection {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Stop")
                             }
+                        } else {
+                            Label("Rewrite", systemImage: "text.redaction")
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                    .disabled(
-                        !isRewritingSelection
-                            && (!editorSelection.hasSelection || store.activeRewritePrompt == nil || store.isGenerating)
-                    )
-                    .help(isRewritingSelection
-                        ? "Stop rewriting."
-                        : "Rewrite the selected text using the selected rewrite prompt.")
+                    .disabled(!isRewritingSelection && (!editorSelection.hasSelection || store.activeRewritePrompt == nil || store.isGenerating))
+                    .help(isRewritingSelection ? "Stop rewriting." : "Rewrite the selected text using the selected rewrite prompt.")
+
+                    Spacer(minLength: 0)
                 }
             }
         }
@@ -353,10 +549,22 @@ struct EditorView: View {
             sceneID: store.selectedScene?.id,
             plainText: store.selectedScene?.content ?? "",
             richTextData: store.selectedScene?.contentRTFData,
+            contentRefreshID: store.sceneRichTextRefreshID,
             command: sceneEditorCommand,
             shouldAutoScrollExternalUpdates: store.isGenerating,
+            editorAppearance: store.project.editorAppearance,
             onSelectionChange: { selection in
                 editorSelection = selection
+            },
+            onFormattingChange: { formatting in
+                if !formatting.hasMixedTextColor, let color = formatting.textColor {
+                    preferredTextColor = color
+                }
+                if !formatting.hasMixedTextBackgroundColor, let color = formatting.textBackgroundColor {
+                    preferredTextHighlightColor = color
+                }
+                guard !editorFormatting.isEquivalent(to: formatting) else { return }
+                editorFormatting = formatting
             },
             onUndoRedoAvailabilityChange: { canUndo, canRedo in
                 canUndoInSceneEditor = canUndo
@@ -727,15 +935,28 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let sceneID: UUID?
     let plainText: String
     let richTextData: Data?
+    let contentRefreshID: UUID
     let command: SceneEditorCommand?
     let shouldAutoScrollExternalUpdates: Bool
+    let editorAppearance: EditorAppearanceSettings
     let onSelectionChange: (SceneEditorSelection) -> Void
+    let onFormattingChange: (SceneEditorFormatting) -> Void
     let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
     let onFindResult: (Bool) -> Void
     let onChange: (String, Data?) -> Void
 
     private final class SceneEditorTextView: NSTextView {
         var onFormattingShortcut: ((SceneEditorCommand.Action) -> Void)?
+        var onFontPanelChange: (() -> Void)?
+
+        // Ignore generic NSColorPanel responder-chain changes. Formatting
+        // colors are applied explicitly through SceneEditorCommand actions.
+        override func changeColor(_ sender: Any?) {}
+
+        override func changeFont(_ sender: Any?) {
+            super.changeFont(sender)
+            onFontPanelChange?()
+        }
 
         override func keyDown(with event: NSEvent) {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -756,6 +977,73 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 }
             }
             super.keyDown(with: event)
+        }
+
+        /// Paste sanitized content: keeps bold/italic/underline traits from the
+        /// source but discards all other formatting (font family, size, color, etc.),
+        /// inheriting those from the editor's current typing attributes instead.
+        override func paste(_ sender: Any?) {
+            let pb = NSPasteboard.general
+            let baseAttrs = typingAttributes
+            let baseFont = baseAttrs[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
+
+            // Try RTF so we can preserve bold/italic/underline traits.
+            var sourceAttributed: NSAttributedString?
+            if let data = pb.data(forType: .rtf) {
+                sourceAttributed = try? NSAttributedString(
+                    data: data,
+                    options: [.documentType: NSAttributedString.DocumentType.rtf],
+                    documentAttributes: nil
+                )
+            } else if let data = pb.data(forType: NSPasteboard.PasteboardType("NeXT Rich Text Format v1.0 pasteboard type")) {
+                sourceAttributed = try? NSAttributedString(
+                    data: data,
+                    options: [.documentType: NSAttributedString.DocumentType.rtf],
+                    documentAttributes: nil
+                )
+            }
+
+            let plainText: String
+            if let src = sourceAttributed {
+                plainText = src.string
+            } else if let str = pb.string(forType: .string) {
+                plainText = str
+            } else {
+                super.paste(sender)
+                return
+            }
+
+            let result = NSMutableAttributedString(string: plainText, attributes: baseAttrs)
+
+            if let src = sourceAttributed {
+                src.enumerateAttributes(in: NSRange(location: 0, length: src.length), options: []) { attrs, range, _ in
+                    // Preserve underline.
+                    if let underline = attrs[.underlineStyle] {
+                        result.addAttribute(.underlineStyle, value: underline, range: range)
+                    }
+                    // Preserve bold/italic traits by re-deriving from the base editor font.
+                    if let srcFont = attrs[.font] as? NSFont {
+                        let traits = NSFontManager.shared.traits(of: srcFont)
+                        var derivedFont = baseFont
+                        if traits.contains(.boldFontMask) {
+                            derivedFont = NSFontManager.shared.convert(derivedFont, toHaveTrait: .boldFontMask)
+                        }
+                        if traits.contains(.italicFontMask) {
+                            derivedFont = NSFontManager.shared.convert(derivedFont, toHaveTrait: .italicFontMask)
+                        }
+                        if derivedFont !== baseFont {
+                            result.addAttribute(.font, value: derivedFont, range: range)
+                        }
+                    }
+                }
+            }
+
+            let selectedRange = self.selectedRange()
+            if shouldChangeText(in: selectedRange, replacementString: result.string) {
+                textStorage?.replaceCharacters(in: selectedRange, with: result)
+                didChangeText()
+                setSelectedRange(NSRange(location: selectedRange.location + result.length, length: 0))
+            }
         }
     }
 
@@ -789,6 +1077,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         textView.onFormattingShortcut = { action in
             context.coordinator.applyFormattingShortcut(action, to: textView)
         }
+        textView.onFontPanelChange = {
+            context.coordinator.handleFontPanelChange(in: textView)
+        }
 
         if let textContainer = textView.textContainer {
             textContainer.widthTracksTextView = true
@@ -802,8 +1093,15 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: sceneID,
             plainText: plainText,
             richTextData: richTextData,
+            contentRefreshID: contentRefreshID,
             shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
             force: true
+        )
+        context.coordinator.applyAppearanceIfNeeded(
+            editorAppearance,
+            sceneID: sceneID,
+            to: textView,
+            scrollView: scrollView
         )
 
         scrollView.documentView = textView
@@ -817,15 +1115,23 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: sceneID,
             plainText: plainText,
             richTextData: richTextData,
+            contentRefreshID: contentRefreshID,
             shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
             force: false
         )
         context.coordinator.applyCommand(command, to: textView)
+        context.coordinator.applyAppearanceIfNeeded(
+            editorAppearance,
+            sceneID: sceneID,
+            to: textView,
+            scrollView: nsView
+        )
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onSelectionChange: onSelectionChange,
+            onFormattingChange: onFormattingChange,
             onUndoRedoAvailabilityChange: onUndoRedoAvailabilityChange,
             onFindResult: onFindResult,
             onChange: onChange
@@ -835,20 +1141,26 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         private let onSelectionChange: (SceneEditorSelection) -> Void
+        private let onFormattingChange: (SceneEditorFormatting) -> Void
         private let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
         private let onFindResult: (Bool) -> Void
         private let onChange: (String, Data?) -> Void
         private var isApplyingProgrammaticChange: Bool = false
         private var lastSceneID: UUID?
+        private var lastAppliedContentRefreshID: UUID?
         private var lastHandledCommandID: UUID?
-
+        private var lastAppliedAppearance: EditorAppearanceSettings?
+        private var lastAppliedAppearanceSceneID: UUID?
+        private var appearanceEverApplied: Bool = false
         init(
             onSelectionChange: @escaping (SceneEditorSelection) -> Void,
+            onFormattingChange: @escaping (SceneEditorFormatting) -> Void,
             onUndoRedoAvailabilityChange: @escaping (Bool, Bool) -> Void,
             onFindResult: @escaping (Bool) -> Void,
             onChange: @escaping (String, Data?) -> Void
         ) {
             self.onSelectionChange = onSelectionChange
+            self.onFormattingChange = onFormattingChange
             self.onUndoRedoAvailabilityChange = onUndoRedoAvailabilityChange
             self.onFindResult = onFindResult
             self.onChange = onChange
@@ -859,6 +1171,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             sceneID: UUID?,
             plainText: String,
             richTextData: Data?,
+            contentRefreshID: UUID,
             shouldAutoScrollExternalUpdates: Bool,
             force: Bool
         ) {
@@ -868,15 +1181,22 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
 
             let sceneChanged = lastSceneID != sceneID
             let textChanged = textView.string != plainText
-            guard force || sceneChanged || textChanged else {
+            let refreshRequested = lastAppliedContentRefreshID != contentRefreshID
+            guard force || sceneChanged || textChanged || refreshRequested else {
                 return
             }
 
             isApplyingProgrammaticChange = true
-            if force || sceneChanged {
+            if force || sceneChanged || refreshRequested {
+                let previousSelection = clampedRangeForStorage(textView.selectedRange(), textView: textView)
                 let attributed = Self.makeAttributedContent(plainText: plainText, richTextData: richTextData)
                 textView.textStorage?.setAttributedString(attributed)
-                textView.setSelectedRange(NSRange(location: attributed.length, length: 0))
+                if force || sceneChanged {
+                    textView.setSelectedRange(NSRange(location: attributed.length, length: 0))
+                } else {
+                    let restoredSelection = clampedRangeForStorage(previousSelection, textView: textView)
+                    textView.setSelectedRange(restoredSelection)
+                }
             } else if textChanged {
                 let scrollView = textView.enclosingScrollView
                 let previousOrigin = scrollView?.contentView.bounds.origin
@@ -899,6 +1219,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             }
             isApplyingProgrammaticChange = false
             lastSceneID = sceneID
+            lastAppliedContentRefreshID = contentRefreshID
             publishSelection(from: textView)
             publishUndoRedoState(from: textView)
         }
@@ -915,6 +1236,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             guard !isApplyingProgrammaticChange else { return }
             guard let textView = notification.object as? NSTextView else { return }
             publishSelection(from: textView)
+            publishFormatting(from: textView)
         }
 
         func applyCommand(_ command: SceneEditorCommand?, to textView: NSTextView) {
@@ -922,8 +1244,53 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             guard lastHandledCommandID != command.id else { return }
 
             lastHandledCommandID = command.id
-            textView.window?.makeFirstResponder(textView)
             var didMutateText = false
+            var isInlineFormatting = false
+            var shouldFocusTextView = true
+            var shouldResignTextViewForBackgroundColor = false
+
+            // For inline formatting commands, suppress delegate callbacks
+            // BEFORE making the text view first responder, because
+            // makeFirstResponder triggers textViewDidChangeSelection which
+            // would call publishFormatting with stale attribute values,
+            // resetting editorFormatting and causing a feedback loop with
+            // ColorPicker bindings.
+            switch command.action {
+            case .applyFont, .applyTextColor, .applyTextBackgroundColor, .applyAlignment:
+                isInlineFormatting = true
+                isApplyingProgrammaticChange = true
+            default:
+                break
+            }
+
+            // Color-well actions are command-driven and should not steal focus
+            // from NSColorWell; doing so can cause the color to bounce through
+            // responder-chain updates.
+            switch command.action {
+            case .applyTextColor, .applyTextBackgroundColor:
+                shouldFocusTextView = false
+            default:
+                break
+            }
+
+            switch command.action {
+            case .applyTextBackgroundColor:
+                shouldResignTextViewForBackgroundColor = true
+            default:
+                break
+            }
+
+            if shouldFocusTextView {
+                textView.window?.makeFirstResponder(textView)
+            } else if shouldResignTextViewForBackgroundColor,
+                      textView.window?.firstResponder as AnyObject? === textView {
+                // Background color uses NSColorWell + shared NSColorPanel. If
+                // NSTextView remains first responder, AppKit can push the
+                // text foreground color back through the panel, producing a
+                // second spurious background callback.
+                textView.window?.makeFirstResponder(nil)
+            }
+
             switch command.action {
             case .undo:
                 textView.undoManager?.undo()
@@ -952,12 +1319,102 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                     emphasizeWithItalics: emphasizeWithItalics
                 )
                 didMutateText = true
+            case let .applyFont(family, size):
+                let currentFont = textView.typingAttributes[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
+                let traits = NSFontManager.shared.traits(of: currentFont)
+                let baseFont: NSFont = {
+                    let s = max(1, size)
+                    if family == "System" || family.isEmpty {
+                        return NSFont.systemFont(ofSize: s)
+                    }
+                    return NSFont(name: family, size: s) ?? NSFont.systemFont(ofSize: s)
+                }()
+                var newFont = baseFont
+                if traits.contains(.boldFontMask) { newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .boldFontMask) }
+                if traits.contains(.italicFontMask) { newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .italicFontMask) }
+                let selectedRange = textView.selectedRange()
+                if selectedRange.length > 0 {
+                    textView.textStorage?.addAttribute(.font, value: newFont, range: selectedRange)
+                }
+                var typingAttrs = textView.typingAttributes
+                typingAttrs[.font] = newFont
+                textView.typingAttributes = typingAttrs
+                didMutateText = selectedRange.length > 0
+            case let .applyTextColor(rgba, targetRange):
+                let nsColor = rgba.map { NSColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha) } ?? NSColor.textColor
+                let selectedRange = resolvedTargetRange(targetRange, in: textView)
+                if selectedRange.length > 0 {
+                    textView.textStorage?.addAttribute(.foregroundColor, value: nsColor, range: selectedRange)
+                }
+                var typingAttrs = textView.typingAttributes
+                typingAttrs[.foregroundColor] = nsColor
+                textView.typingAttributes = typingAttrs
+                didMutateText = selectedRange.length > 0
+            case let .applyTextBackgroundColor(rgba, targetRange):
+                let selectedRange = resolvedTargetRange(targetRange, in: textView)
+                if let rgba {
+                    let nsColor = NSColor(red: rgba.red, green: rgba.green, blue: rgba.blue, alpha: rgba.alpha)
+                    if selectedRange.length > 0 {
+                        textView.textStorage?.addAttribute(.backgroundColor, value: nsColor, range: selectedRange)
+                    }
+                    var typingAttrs = textView.typingAttributes
+                    typingAttrs[.backgroundColor] = nsColor
+                    textView.typingAttributes = typingAttrs
+                } else {
+                    if selectedRange.length > 0 {
+                        textView.textStorage?.removeAttribute(.backgroundColor, range: selectedRange)
+                    }
+                    var typingAttrs = textView.typingAttributes
+                    typingAttrs.removeValue(forKey: .backgroundColor)
+                    textView.typingAttributes = typingAttrs
+                }
+                didMutateText = selectedRange.length > 0
+            case let .applyAlignment(option):
+                let nsAlign: NSTextAlignment
+                switch option {
+                case .left:      nsAlign = .left
+                case .center:    nsAlign = .center
+                case .right:     nsAlign = .right
+                case .justified: nsAlign = .justified
+                }
+                let selectedRange = textView.selectedRange()
+                if let storage = textView.textStorage {
+                    let paragraphRange = (storage.string as NSString).paragraphRange(for: selectedRange)
+                    storage.enumerateAttribute(.paragraphStyle, in: paragraphRange, options: []) { value, range, _ in
+                        let ps = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+                        ps.alignment = nsAlign
+                        storage.addAttribute(.paragraphStyle, value: ps, range: range)
+                    }
+                }
+                let existingPS = textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle
+                let newPS = existingPS?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+                newPS.alignment = nsAlign
+                var typingAttrs = textView.typingAttributes
+                typingAttrs[.paragraphStyle] = newPS
+                textView.typingAttributes = typingAttrs
+                didMutateText = true
+            case .openFontPanel:
+                let currentFont = textView.typingAttributes[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
+                NSFontManager.shared.setSelectedFont(currentFont, isMultiple: false)
+                NSFontManager.shared.orderFrontFontPanel(nil)
             }
             if didMutateText {
                 publishChange(from: textView)
             }
             publishSelection(from: textView)
+            // Skip publishFormatting for inline formatting commands to avoid
+            // feedback loops with ColorPicker bindings (color space conversion
+            // can produce slightly different values, retriggering the setter).
+            if !isInlineFormatting {
+                publishFormatting(from: textView)
+            }
             publishUndoRedoState(from: textView)
+            isApplyingProgrammaticChange = false
+        }
+
+        func handleFontPanelChange(in textView: NSTextView) {
+            publishChange(from: textView)
+            publishFormatting(from: textView)
         }
 
         func applyFormattingShortcut(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
@@ -1002,6 +1459,43 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             )
         }
 
+        private func publishFormatting(from textView: NSTextView) {
+            let attrs = textView.typingAttributes
+            let selectedRange = clampedRangeForStorage(textView.selectedRange(), textView: textView)
+
+            let font = attrs[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
+            let fontFamily = font.familyName ?? font.fontName
+            let fontSize = font.pointSize
+
+            let textColorInfo: (color: CodableRGBA?, mixed: Bool)
+            let textBackgroundColorInfo: (color: CodableRGBA?, mixed: Bool)
+            if selectedRange.length > 0, let storage = textView.textStorage {
+                textColorInfo = uniformColorAttribute(.foregroundColor, in: selectedRange, storage: storage)
+                textBackgroundColorInfo = uniformColorAttribute(.backgroundColor, in: selectedRange, storage: storage)
+            } else {
+                textColorInfo = (CodableRGBA.from(nsColor: attrs[.foregroundColor] as? NSColor), false)
+                textBackgroundColorInfo = (CodableRGBA.from(nsColor: attrs[.backgroundColor] as? NSColor), false)
+            }
+
+            let alignment: TextAlignmentOption
+            switch (attrs[.paragraphStyle] as? NSParagraphStyle)?.alignment ?? .left {
+            case .center:    alignment = .center
+            case .right:     alignment = .right
+            case .justified: alignment = .justified
+            default:         alignment = .left
+            }
+
+            onFormattingChange(SceneEditorFormatting(
+                fontFamily: fontFamily,
+                fontSize: Double(fontSize),
+                textColor: textColorInfo.color,
+                textBackgroundColor: textBackgroundColorInfo.color,
+                hasMixedTextColor: textColorInfo.mixed,
+                hasMixedTextBackgroundColor: textBackgroundColorInfo.mixed,
+                textAlignment: alignment
+            ))
+        }
+
         private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
             switch action {
             case .toggleBoldface:
@@ -1017,6 +1511,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             case .selectRange(targetRange: _):
                 break
             case .replaceSelection(rewrittenText: _, targetRange: _, emphasizeWithItalics: _):
+                break
+            case .applyFont, .applyTextColor, .applyTextBackgroundColor, .applyAlignment, .openFontPanel:
                 break
             }
         }
@@ -1324,6 +1820,39 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return NSRange(location: location, length: length)
         }
 
+        private func resolvedTargetRange(_ targetRange: SceneEditorRange?, in textView: NSTextView) -> NSRange {
+            if let targetRange {
+                return clampedRangeForStorage(targetRange.nsRange, textView: textView)
+            }
+            return clampedRangeForStorage(textView.selectedRange(), textView: textView)
+        }
+
+        private func uniformColorAttribute(
+            _ key: NSAttributedString.Key,
+            in range: NSRange,
+            storage: NSTextStorage
+        ) -> (color: CodableRGBA?, mixed: Bool) {
+            var firstValue: CodableRGBA??
+            var mixed = false
+
+            storage.enumerateAttribute(key, in: range, options: []) { value, _, stop in
+                let current = CodableRGBA.from(nsColor: value as? NSColor)
+                if firstValue == nil {
+                    firstValue = current
+                    return
+                }
+                if !CodableRGBA.areClose(firstValue!, current) {
+                    mixed = true
+                    stop.pointee = true
+                }
+            }
+
+            if mixed {
+                return (nil, true)
+            }
+            return (firstValue ?? nil, false)
+        }
+
         private func baseFontForReplacement(in range: NSRange, textView: NSTextView) -> NSFont {
             let fallback = NSFont.preferredFont(forTextStyle: .body)
 
@@ -1441,6 +1970,85 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 }
             }
             return allUnderlined
+        }
+
+        // MARK: - Editor Appearance
+
+        func applyAppearanceIfNeeded(
+            _ settings: EditorAppearanceSettings,
+            sceneID: UUID?,
+            to textView: NSTextView,
+            scrollView: NSScrollView
+        ) {
+            let sceneChanged = !appearanceEverApplied || lastAppliedAppearanceSceneID != sceneID
+            guard sceneChanged || settings != lastAppliedAppearance else { return }
+            lastAppliedAppearance = settings
+            lastAppliedAppearanceSceneID = sceneID
+            appearanceEverApplied = true
+            applyAppearance(settings, to: textView, scrollView: scrollView)
+        }
+
+        private func applyAppearance(
+            _ settings: EditorAppearanceSettings,
+            to textView: NSTextView,
+            scrollView: NSScrollView
+        ) {
+            // Resolve base font.
+            let baseFont: NSFont
+            if settings.fontFamily == "System" || settings.fontFamily.isEmpty {
+                let size = settings.fontSize > 0 ? settings.fontSize : 0
+                baseFont = size > 0
+                    ? NSFont.systemFont(ofSize: size)
+                    : NSFont.preferredFont(forTextStyle: .body)
+            } else {
+                let size = settings.fontSize > 0 ? settings.fontSize : NSFont.systemFontSize
+                baseFont = NSFont(name: settings.fontFamily, size: size)
+                    ?? NSFont.preferredFont(forTextStyle: .body)
+            }
+
+            // Paragraph style.
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineHeightMultiple = max(1.0, settings.lineHeightMultiple)
+            paragraphStyle.alignment = {
+                switch settings.textAlignment {
+                case .left:      return .left
+                case .center:    return .center
+                case .right:     return .right
+                case .justified: return .justified
+                }
+            }()
+            paragraphStyle.lineBreakMode = .byWordWrapping
+
+            // Colors.
+            let textColor: NSColor = settings.textColor.map {
+                NSColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha)
+            } ?? NSColor.textColor
+
+            let bgColor: NSColor = settings.backgroundColor.map {
+                NSColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha)
+            } ?? NSColor.textBackgroundColor
+
+            // Visual properties (don't affect stored data).
+            textView.backgroundColor = bgColor
+            textView.textContainerInset = NSSize(
+                width: settings.horizontalPadding,
+                height: settings.verticalPadding
+            )
+            scrollView.backgroundColor = bgColor
+
+            // Typing attributes for newly typed text.
+            // Preserve any existing .backgroundColor (text highlight) so that
+            // appearance re-application doesn't wipe out the toolbar highlight
+            // color, which is set independently via .applyTextBackgroundColor.
+            var newTypingAttrs: [NSAttributedString.Key: Any] = [
+                .font: baseFont,
+                .paragraphStyle: paragraphStyle,
+                .foregroundColor: textColor
+            ]
+            if let existingBg = textView.typingAttributes[.backgroundColor] {
+                newTypingAttrs[.backgroundColor] = existingBg
+            }
+            textView.typingAttributes = newTypingAttrs
         }
 
         private static func makeAttributedContent(plainText: String, richTextData: Data?) -> NSAttributedString {
