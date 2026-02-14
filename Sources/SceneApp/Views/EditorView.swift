@@ -98,6 +98,26 @@ struct EditorView: View {
         return store.mentionSuggestions(for: beatMentionQuery.trigger, query: beatMentionQuery.query)
     }
 
+    private var sceneStats: String {
+        let content = store.selectedScene?.content ?? ""
+        let totalChars = content.count
+        let totalWords = wordCount(content)
+        if editorSelection.hasSelection {
+            let selChars = editorSelection.text.count
+            let selWords = wordCount(editorSelection.text)
+            return "\(selWords) / \(totalWords) words, \(selChars) / \(totalChars) chars"
+        }
+        return "\(totalWords) words, \(totalChars) chars"
+    }
+
+    private func wordCount(_ text: String) -> Int {
+        var count = 0
+        text.enumerateSubstrings(in: text.startIndex..., options: [.byWords, .substringNotRequired]) { _, _, _, _ in
+            count += 1
+        }
+        return count
+    }
+
     private var sceneTitleBinding: Binding<String> {
         Binding(
             get: { store.selectedScene?.title ?? "" },
@@ -352,8 +372,8 @@ struct EditorView: View {
     private var generationPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
-                Text("Generate From Beat")
-                    .font(.caption.weight(.semibold))
+                Text(sceneStats)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
 
                 Spacer(minLength: 0)
