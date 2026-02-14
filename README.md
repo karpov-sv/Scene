@@ -2,7 +2,9 @@
 
 <img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" alt="Scene app icon" width="128" />
 
-`Scene` is a standalone SwiftUI macOS writing tool (no WebView).
+`Scene` is a standalone SwiftUI based macOS book writing tool, focused on AI text generation.
+
+<img src="screenshot-1.png" alt=“Screenshot” width=512 />
 
 ## Features
 
