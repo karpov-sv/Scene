@@ -6,6 +6,7 @@ struct AppKitColorWell: NSViewRepresentable {
     var supportsOpacity: Bool = true
     var isBordered: Bool = true
     var autoDeactivateOnChange: Bool = false
+    var isMixedSelection: Bool = false
     var mixedPlaceholderColor: NSColor = .quaternaryLabelColor
 
     func makeCoordinator() -> Coordinator {
@@ -13,6 +14,7 @@ struct AppKitColorWell: NSViewRepresentable {
             selection: $selection,
             supportsOpacity: supportsOpacity,
             autoDeactivateOnChange: autoDeactivateOnChange,
+            isMixedSelection: isMixedSelection,
             mixedPlaceholderColor: mixedPlaceholderColor
         )
     }
@@ -23,6 +25,7 @@ struct AppKitColorWell: NSViewRepresentable {
         colorWell.action = #selector(Coordinator.colorDidChange(_:))
         colorWell.isBordered = isBordered
         colorWell.colorWellStyle = .minimal
+        configureAlphaSupport(for: colorWell, enabled: supportsOpacity)
         colorWell.color = context.coordinator.nsColor(from: selection)
         return colorWell
     }
@@ -31,7 +34,10 @@ struct AppKitColorWell: NSViewRepresentable {
         context.coordinator.selection = $selection
         context.coordinator.supportsOpacity = supportsOpacity
         context.coordinator.autoDeactivateOnChange = autoDeactivateOnChange
+        context.coordinator.isMixedSelection = isMixedSelection
         context.coordinator.mixedPlaceholderColor = mixedPlaceholderColor
+        nsView.colorWellStyle = .minimal
+        configureAlphaSupport(for: nsView, enabled: supportsOpacity)
         nsView.isBordered = isBordered
 
         // NSColorWell uses shared NSColorPanel. While it is visible, avoid
@@ -51,23 +57,38 @@ struct AppKitColorWell: NSViewRepresentable {
         var selection: Binding<CodableRGBA?>
         var supportsOpacity: Bool
         var autoDeactivateOnChange: Bool
+        var isMixedSelection: Bool
         var mixedPlaceholderColor: NSColor
 
         init(
             selection: Binding<CodableRGBA?>,
             supportsOpacity: Bool,
             autoDeactivateOnChange: Bool,
+            isMixedSelection: Bool,
             mixedPlaceholderColor: NSColor
         ) {
             self.selection = selection
             self.supportsOpacity = supportsOpacity
             self.autoDeactivateOnChange = autoDeactivateOnChange
+            self.isMixedSelection = isMixedSelection
             self.mixedPlaceholderColor = mixedPlaceholderColor
         }
 
         @objc func colorDidChange(_ sender: NSColorWell) {
             guard sender.isActive else { return }
-            let normalized = normalizedColor(from: sender.color)
+            if !isUserSelectableColor(sender.color) {
+                // Color selector was dismissed
+                return
+            }
+
+            let fallbackColor = nsColor(from: selection.wrappedValue)
+            let normalized = normalizedColor(from: sender.color, fallback: fallbackColor)
+            if isMixedSelection && selection.wrappedValue == nil {
+                let placeholder = normalizedColor(from: mixedPlaceholderColor)
+                if colorsMatch(normalized, placeholder) {
+                    return
+                }
+            }
             let rgba = rgba(from: normalized)
             if !rgbaMatch(selection.wrappedValue, rgba) {
                 selection.wrappedValue = rgba
@@ -78,9 +99,10 @@ struct AppKitColorWell: NSViewRepresentable {
         }
 
         func nsColor(from rgba: CodableRGBA?) -> NSColor {
-            guard let rgba else {
+            if isMixedSelection {
                 return normalizedColor(from: mixedPlaceholderColor)
             }
+            guard let rgba else { return normalizedColor(from: mixedPlaceholderColor) }
             return NSColor(
                 deviceRed: CGFloat(rgba.red),
                 green: CGFloat(rgba.green),
@@ -99,9 +121,11 @@ struct AppKitColorWell: NSViewRepresentable {
             )
         }
 
-        func normalizedColor(from source: NSColor) -> NSColor {
-            let fallback = NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 1.0)
-            let rgb = source.usingColorSpace(.deviceRGB) ?? fallback
+        func normalizedColor(
+            from source: NSColor,
+            fallback fallbackColor: NSColor = NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 1.0)
+        ) -> NSColor {
+            let rgb = source.usingColorSpace(.deviceRGB) ?? normalizedColorFallback(from: fallbackColor)
             let alpha: CGFloat = supportsOpacity ? rgb.alphaComponent : 1.0
             return NSColor(
                 deviceRed: rgb.redComponent,
@@ -109,6 +133,33 @@ struct AppKitColorWell: NSViewRepresentable {
                 blue: rgb.blueComponent,
                 alpha: alpha
             )
+        }
+
+        func isUserSelectableColor(_ color: NSColor) -> Bool {
+            if isSystemCatalogColor(color) {
+                return false
+            }
+            let model = color.colorSpace.colorSpaceModel
+            return model == .rgb || model == .gray
+        }
+
+        func isSystemCatalogColor(_ color: NSColor) -> Bool {
+            if #available(macOS 10.13, *) {
+                if color.type == .catalog &&
+                    color.catalogNameComponent.caseInsensitiveCompare("System") == .orderedSame {
+                    return true
+                }
+            }
+
+            // Fallback for dynamic system named colors such as "Catalog color:
+            // System textColor", which can be emitted on panel dismiss.
+            let description = color.description.lowercased()
+            return description.contains("catalog color: system")
+        }
+
+        func normalizedColorFallback(from fallbackColor: NSColor) -> NSColor {
+            fallbackColor.usingColorSpace(.deviceRGB)
+                ?? NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 1.0)
         }
 
         func rgbaMatch(_ lhs: CodableRGBA?, _ rhs: CodableRGBA) -> Bool {
@@ -134,5 +185,9 @@ struct AppKitColorWell: NSViewRepresentable {
             let clamped = min(1.0, max(0.0, component))
             return (clamped * 255.0).rounded() / 255.0
         }
+    }
+
+    private func configureAlphaSupport(for colorWell: NSColorWell, enabled: Bool) {
+        colorWell.supportsAlpha = enabled
     }
 }
