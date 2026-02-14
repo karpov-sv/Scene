@@ -463,7 +463,8 @@ struct EditorView: View {
                     isMentionMenuVisible: !beatMentionSuggestions.isEmpty,
                     onMentionMove: moveBeatMentionSelection,
                     onMentionSelect: confirmBeatMentionSelection,
-                    onMentionDismiss: dismissBeatMentionSuggestions
+                    onMentionDismiss: dismissBeatMentionSuggestions,
+                    focusRequestID: store.beatInputFocusRequestID
                 )
                 .frame(minHeight: generationInputMinimumHeight, idealHeight: generationInputMinimumHeight, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
@@ -562,7 +563,7 @@ struct EditorView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            Text("Press Enter to send. Press Cmd+Enter for a newline.")
+            Text("Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
@@ -2312,6 +2313,7 @@ private struct BeatInputTextView: NSViewRepresentable {
     var onMentionMove: (Int) -> Void = { _ in }
     var onMentionSelect: () -> Bool = { false }
     var onMentionDismiss: () -> Void = {}
+    var focusRequestID: UUID = UUID()
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -2377,6 +2379,10 @@ private struct BeatInputTextView: NSViewRepresentable {
         if changedTextProgrammatically {
             context.coordinator.publishMentionQuery(from: textView)
         }
+        if context.coordinator.lastFocusRequestID != focusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            textView.window?.makeFirstResponder(textView)
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2407,6 +2413,7 @@ private struct BeatInputTextView: NSViewRepresentable {
         private weak var trackedTextView: NSTextView?
         private var outsideClickMonitor: Any?
         var isMentionMenuVisible: Bool = false
+        var lastFocusRequestID: UUID = UUID()
 
         init(
             text: Binding<String>,
@@ -2445,6 +2452,13 @@ private struct BeatInputTextView: NSViewRepresentable {
         }
 
         func handleKeyEvent(_ event: NSEvent) -> Bool {
+            // Cmd+Return inserts a newline regardless of mention menu state
+            if (event.keyCode == 36 || event.keyCode == 76),
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
+                trackedTextView?.insertNewlineIgnoringFieldEditor(nil)
+                return true
+            }
+
             guard isMentionMenuVisible else { return false }
 
             switch event.keyCode {
@@ -2460,10 +2474,6 @@ private struct BeatInputTextView: NSViewRepresentable {
             case 48: // tab
                 return onMentionSelect()
             case 36, 76: // return / enter
-                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                if flags.contains(.command) {
-                    return false
-                }
                 return onMentionSelect()
             default:
                 return false

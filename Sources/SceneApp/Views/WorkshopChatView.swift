@@ -642,7 +642,7 @@ struct WorkshopChatView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            Text("Press Enter to send. Press Cmd+Enter for a newline.")
+            Text("Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
@@ -1161,6 +1161,13 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         }
 
         func handleKeyEvent(_ event: NSEvent) -> Bool {
+            // Cmd+Return inserts a newline regardless of mention menu state
+            if (event.keyCode == 36 || event.keyCode == 76),
+               event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
+                trackedTextView?.insertNewlineIgnoringFieldEditor(nil)
+                return true
+            }
+
             guard isMentionMenuVisible else { return false }
 
             switch event.keyCode {
@@ -1176,10 +1183,6 @@ private struct WorkshopInputTextView: NSViewRepresentable {
             case 48: // tab
                 return onMentionSelect()
             case 36, 76: // return / enter
-                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                if flags.contains(.command) {
-                    return false
-                }
                 return onMentionSelect()
             default:
                 return false

@@ -5,10 +5,12 @@ struct SearchMenuActions {
     let findInProject: () -> Void
     let findNext: () -> Void
     let findPrevious: () -> Void
+    let focusBeatInput: () -> Void
     let canFindInScene: Bool
     let canFindInProject: Bool
     let canFindNext: Bool
     let canFindPrevious: Bool
+    let canFocusBeatInput: Bool
 }
 
 private struct SearchMenuActionsKey: FocusedValueKey {

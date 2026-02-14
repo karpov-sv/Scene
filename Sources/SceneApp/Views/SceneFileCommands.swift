@@ -57,6 +57,14 @@ struct SceneFileCommands: Commands {
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(searchActions?.canFindPrevious != true)
+
+            Divider()
+
+            Button("Focus Story Beat") {
+                searchActions?.focusBeatInput()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(searchActions?.canFocusBeatInput != true)
         }
     }
 }

@@ -325,6 +325,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
 
+    @Published private(set) var beatInputFocusRequestID: UUID = UUID()
+
     @Published var showingSettings: Bool = false
 
     private let persistence: ProjectPersistence
@@ -698,6 +700,10 @@ final class AppStore: ObservableObject {
     func updateGlobalSearchScope(_ scope: GlobalSearchScope, maxResults: Int = 300) {
         globalSearchScope = scope
         refreshGlobalSearchResults(maxResults: maxResults)
+    }
+
+    func requestBeatInputFocus() {
+        beatInputFocusRequestID = UUID()
     }
 
     func requestGlobalSearchFocus(scope: GlobalSearchScope, maxResults: Int = 300) {

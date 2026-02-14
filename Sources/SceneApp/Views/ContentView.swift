@@ -251,10 +251,15 @@ struct ContentView: View {
             },
             findNext: activateNextSearchResult,
             findPrevious: activatePreviousSearchResult,
+            focusBeatInput: {
+                selectedTab = .writing
+                store.requestBeatInputFocus()
+            },
             canFindInScene: store.isProjectOpen && store.selectedScene != nil,
             canFindInProject: store.isProjectOpen,
             canFindNext: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty,
-            canFindPrevious: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty
+            canFindPrevious: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty,
+            canFocusBeatInput: store.isProjectOpen && store.selectedScene != nil
         )
     }
 
