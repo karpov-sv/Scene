@@ -9,9 +9,10 @@
 ## Features
 
 - Binder-style chapter and scene navigation with reordering.
-- Rich text scene editor with bold/italic/underline formatting and keyboard shortcuts.
+- Rich text scene editor with font family/size controls, bold/italic/underline stateful toggles, text/highlight color, alignment, and clear-format action.
 - AI prose generation from story beats with streaming, cancellation, payload preview, and token usage stats.
-- AI rewrite actions (rewrite/expand/shorten) on selected text via prompt templates.
+- AI rewrite actions (rewrite/expand/shorten) on selected text via prompt templates, with optional incremental rewrite streaming.
+- Streaming generation/rewrite updates are coalesced into a single undo step per run.
 - Scene and chapter summary workflows with editable summaries and streaming updates.
 - Compendium with categories (characters, locations, lore, items, notes).
 - Scene-local context selection using compendium entries, scene summaries, and chapter summaries.
@@ -19,7 +20,7 @@
 - Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
 - Project-local settings for AI provider, prompt templates, and autosave.
-- Data exchange for prompts, compendium, and projects, plus plain text and HTML project export.
+- Data exchange for prompts, compendium, and projects, plus plain text, HTML, and EPUB project export/import.
 - Native document workflow with `.sceneproj` project bundles.
 
 ## Requirements
@@ -152,14 +153,18 @@ Script options:
 
 ## Import & Export
 
-- `File -> Import -> Project JSON...` imports a full project snapshot from JSON.
+- `File -> Import -> Project JSON...` imports from JSON into a new `.sceneproj` and opens it in a new window.
+- `File -> Import -> Project EPUB...` imports from EPUB into a new `.sceneproj` and opens it in a new window.
 - `File -> Export -> Project JSON...` exports the full project as a single JSON file.
 - `File -> Export -> Project Plain Text...` exports as one `.txt` file in chapter/scene order.
 - `File -> Export -> Project HTML...` exports as one `.html` file with semantic headings and paragraphs.
+- `File -> Export -> Project EPUB...` exports as `.epub` and embeds Scene project payload for round-trip Scene import.
+- `File -> Project Settings...` opens Project Settings from the menu.
 - Project Settings -> General -> Data Exchange also provides:
   - prompt template export/import
   - compendium export/import
-  - project JSON export/import
+  - project JSON export/import (replace current project)
+  - project EPUB export/import (replace current project)
 - Prompt export includes:
   - all custom templates
   - built-in templates only when they were modified
@@ -182,6 +187,9 @@ Script options:
 - Added `File` menu Import/Export submenus with native dialogs.
 - Enabled project JSON import even when no project content is currently open.
 - Added single-file project export formats for plain text and HTML.
+- Added EPUB project export/import with embedded Scene payload for robust Scene-to-Scene transfer.
+- Updated `File -> Import` flows to create and open a new project window instead of replacing the current document.
+- Added `File -> Project Settings...` command.
 - Added prompt/compendium/project data exchange controls in Project Settings.
 - Updated prompt export/import to preserve modified built-in templates.
 - Added persistent scene-local context selection for scene summaries and chapter summaries.
@@ -190,6 +198,9 @@ Script options:
 - Added chapter-level summary workflow (from scene summaries) alongside scene-level summaries.
 - Added streaming support, live token usage reporting, inline workshop message actions, and improved auto-scroll behavior in workshop chat.
 - Added rich text editor support in the writing panel (bold/italic/underline + keyboard shortcuts).
+- Added richer text formatting controls (font family/size split controls, color/highlight controls, clear formatting action).
+- Added incremental rewrite streaming option and consolidated undo history for streaming generation/rewrite.
+- Hardened model discovery refresh to remove stale unavailable models from active configuration and menus.
 - Added structured prompt rendering with canonical `{{variable}}` and `{{function(...)}}` syntax (legacy `{variable}` remains supported), plus template warnings in payload previews.
 
 ## Prompt Template Variables
@@ -203,22 +214,23 @@ Legacy placeholders like `{beat}` remain supported for compatibility.
 
 Common variables:
 
-- `{{beat}}`
-- `{{selection}}`
-- `{{scene}}`
-- `{{scene_title}}`
-- `{{chapter_title}}`
-- `{{project_title}}`
-- `{{context}}`
-- `{{context_compendium}}`
-- `{{context_scene_summaries}}`
-- `{{context_chapter_summaries}}`
-- `{{conversation}}`
-- `{{chat_name}}`
-- `{{last_user_message}}`
-- `{{last_assistant_message}}`
-- `{{summary_scope}}`
-- `{{source}}`
+- `{{beat}}`: current beat input text (generation/rewrite prompt input).
+- `{{selection}}`: currently selected editor text (rewrite-focused templates).
+- `{{selection_context}}`: local before/after context around selected text (rewrite templates).
+- `{{scene}}`: current scene excerpt/body used for prompting.
+- `{{scene_title}}`: selected scene title (fallbacks to untitled label).
+- `{{chapter_title}}`: selected chapter title.
+- `{{project_title}}`: current project title.
+- `{{context}}`: merged context from selected compendium entries + selected scene/chapter summaries.
+- `{{context_compendium}}`: compendium-only context block.
+- `{{context_scene_summaries}}`: scene-summary-only context block.
+- `{{context_chapter_summaries}}`: chapter-summary-only context block.
+- `{{conversation}}`: workshop transcript text context.
+- `{{chat_name}}`: active workshop chat/session name.
+- `{{last_user_message}}`: latest user message in workshop session.
+- `{{last_assistant_message}}`: latest assistant message in workshop session.
+- `{{summary_scope}}`: summary mode label (scene/chapter) when summary templates are rendered.
+- `{{source}}`: primary source text used by the current template category.
 
 Built-in functions:
 
