@@ -43,6 +43,12 @@ struct SettingsSheetView: View {
         case prompts
     }
 
+    private enum EditorSpacingField: Hashable {
+        case lineHeight
+        case horizontalMargin
+        case verticalMargin
+    }
+
     private struct PromptVariableItem: Identifiable {
         let token: String
         let meaning: String
@@ -66,6 +72,10 @@ struct SettingsSheetView: View {
     @State private var confirmDeletePrompt: Bool = false
     @State private var confirmClearPrompts: Bool = false
     @State private var editorFontPanelOpenRequestID: UUID?
+    @State private var lineHeightDraft: String = ""
+    @State private var hPaddingDraft: String = ""
+    @State private var vPaddingDraft: String = ""
+    @FocusState private var focusedEditorSpacingField: EditorSpacingField?
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -302,37 +312,97 @@ struct SettingsSheetView: View {
         )
     }
 
-    private var lineHeightBinding: Binding<Double> {
-        Binding(
-            get: { store.project.editorAppearance.lineHeightMultiple },
-            set: {
-                var a = store.project.editorAppearance
-                a.lineHeightMultiple = min(max($0, 1.0), 2.5)
-                store.updateEditorAppearance(a)
-            }
-        )
+    private static let lineHeightFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }()
+
+    private static let marginFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    private static let numberParser: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter
+    }()
+
+    private func parsedEditorNumber(from draft: String) -> Double? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let parsed = Self.numberParser.number(from: trimmed) {
+            return parsed.doubleValue
+        }
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        return Double(normalized)
     }
 
-    private var hPaddingBinding: Binding<Double> {
-        Binding(
-            get: { store.project.editorAppearance.horizontalPadding },
-            set: {
-                var a = store.project.editorAppearance
-                a.horizontalPadding = min(max($0, 0), 80)
-                store.updateEditorAppearance(a)
-            }
-        )
+    private func formattedLineHeight(_ value: Double) -> String {
+        Self.lineHeightFormatter.string(from: NSNumber(value: value))
+        ?? String(format: "%.2f", value)
     }
 
-    private var vPaddingBinding: Binding<Double> {
-        Binding(
-            get: { store.project.editorAppearance.verticalPadding },
-            set: {
-                var a = store.project.editorAppearance
-                a.verticalPadding = min(max($0, 0), 80)
-                store.updateEditorAppearance(a)
+    private func formattedMargin(_ value: Double) -> String {
+        let rounded = value.rounded()
+        return Self.marginFormatter.string(from: NSNumber(value: rounded))
+        ?? String(Int(rounded))
+    }
+
+    private func syncEditorSpacingDraftsFromAppearance(force: Bool = false) {
+        let appearance = store.project.editorAppearance
+
+        if force || focusedEditorSpacingField != .lineHeight {
+            lineHeightDraft = formattedLineHeight(appearance.lineHeightMultiple)
+        }
+        if force || focusedEditorSpacingField != .horizontalMargin {
+            hPaddingDraft = formattedMargin(appearance.horizontalPadding)
+        }
+        if force || focusedEditorSpacingField != .verticalMargin {
+            vPaddingDraft = formattedMargin(appearance.verticalPadding)
+        }
+    }
+
+    private func commitEditorSpacingField(_ field: EditorSpacingField) {
+        var appearance = store.project.editorAppearance
+
+        switch field {
+        case .lineHeight:
+            guard let parsed = parsedEditorNumber(from: lineHeightDraft) else {
+                lineHeightDraft = formattedLineHeight(appearance.lineHeightMultiple)
+                return
             }
-        )
+            let clamped = min(max(parsed, 1.0), 2.5)
+            appearance.lineHeightMultiple = clamped
+            store.updateEditorAppearance(appearance)
+            lineHeightDraft = formattedLineHeight(clamped)
+
+        case .horizontalMargin:
+            guard let parsed = parsedEditorNumber(from: hPaddingDraft) else {
+                hPaddingDraft = formattedMargin(appearance.horizontalPadding)
+                return
+            }
+            let clamped = min(max(parsed.rounded(), 0), 80)
+            appearance.horizontalPadding = clamped
+            store.updateEditorAppearance(appearance)
+            hPaddingDraft = formattedMargin(clamped)
+
+        case .verticalMargin:
+            guard let parsed = parsedEditorNumber(from: vPaddingDraft) else {
+                vPaddingDraft = formattedMargin(appearance.verticalPadding)
+                return
+            }
+            let clamped = min(max(parsed.rounded(), 0), 80)
+            appearance.verticalPadding = clamped
+            store.updateEditorAppearance(appearance)
+            vPaddingDraft = formattedMargin(clamped)
+        }
     }
 
     private var textColorEnabled: Bool { store.project.editorAppearance.textColor != nil }
@@ -454,13 +524,13 @@ struct SettingsSheetView: View {
                             Text("Line height")
                                 .frame(width: 100, alignment: .leading)
                             Spacer(minLength: 0)
-                            TextField(
-                                "",
-                                value: lineHeightBinding,
-                                format: .number.precision(.fractionLength(2))
-                            )
+                            TextField("", text: $lineHeightDraft)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 84, alignment: .leading)
+                            .focused($focusedEditorSpacingField, equals: .lineHeight)
+                            .onSubmit {
+                                commitEditorSpacingField(.lineHeight)
+                            }
                             Text("× ")
                                 .foregroundStyle(.secondary)
                         }
@@ -469,13 +539,13 @@ struct SettingsSheetView: View {
                             Text("H margin")
                                 .frame(width: 100, alignment: .leading)
                             Spacer(minLength: 0)
-                            TextField(
-                                "",
-                                value: hPaddingBinding,
-                                format: .number.precision(.fractionLength(0))
-                            )
+                            TextField("", text: $hPaddingDraft)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 84, alignment: .leading)
+                            .focused($focusedEditorSpacingField, equals: .horizontalMargin)
+                            .onSubmit {
+                                commitEditorSpacingField(.horizontalMargin)
+                            }
                             Text("pt")
                                 .foregroundStyle(.secondary)
                         }
@@ -484,13 +554,13 @@ struct SettingsSheetView: View {
                             Text("V margin")
                                 .frame(width: 100, alignment: .leading)
                             Spacer(minLength: 0)
-                            TextField(
-                                "",
-                                value: vPaddingBinding,
-                                format: .number.precision(.fractionLength(0))
-                            )
+                            TextField("", text: $vPaddingDraft)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 84, alignment: .leading)
+                            .focused($focusedEditorSpacingField, equals: .verticalMargin)
+                            .onSubmit {
+                                commitEditorSpacingField(.verticalMargin)
+                            }
                             Text("pt")
                                 .foregroundStyle(.secondary)
                         }
@@ -587,6 +657,16 @@ struct SettingsSheetView: View {
                 Spacer(minLength: 0)
             }
             .padding()
+            .onAppear {
+                syncEditorSpacingDraftsFromAppearance(force: true)
+            }
+            .onChange(of: store.project.editorAppearance) { _, _ in
+                syncEditorSpacingDraftsFromAppearance()
+            }
+            .onChange(of: focusedEditorSpacingField) { oldValue, newValue in
+                guard let oldValue, oldValue != newValue else { return }
+                commitEditorSpacingField(oldValue)
+            }
         }
     }
 
