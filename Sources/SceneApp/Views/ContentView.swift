@@ -17,13 +17,19 @@ struct ContentView: View {
         }
     }
 
-    private enum WritingSidePanel {
+    private enum WritingSidePanel: String {
         case none
         case compendium
         case summary
     }
 
     @EnvironmentObject private var store: AppStore
+    @AppStorage("SceneApp.ui.workspaceTab")
+    private var storedWorkspaceTabRawValue: String = WorkspaceTab.writing.rawValue
+    @AppStorage("SceneApp.ui.writingSidePanel")
+    private var storedWritingSidePanelRawValue: String = WritingSidePanel.compendium.rawValue
+    @AppStorage("SceneApp.ui.workshopConversationsVisible")
+    private var storedWorkshopConversationsVisible: Bool = true
     @State private var selectedTab: WorkspaceTab = .writing
     @State private var writingSidePanel: WritingSidePanel = .compendium
     @State private var summaryScope: SummaryScope = .scene
@@ -50,6 +56,18 @@ struct ContentView: View {
                 }
             } message: {
                 Text(store.lastError ?? "Unknown error")
+            }
+            .onAppear {
+                restoreSidebarStateFromStorage()
+            }
+            .onChange(of: selectedTab) { _, newValue in
+                storedWorkspaceTabRawValue = newValue.rawValue
+            }
+            .onChange(of: writingSidePanel) { _, newValue in
+                storedWritingSidePanelRawValue = newValue.rawValue
+            }
+            .onChange(of: isConversationsVisible) { _, newValue in
+                storedWorkshopConversationsVisible = newValue
             }
     }
 
@@ -335,6 +353,22 @@ struct ContentView: View {
 
     private func toggleSummaryPanel() {
         writingSidePanel = writingSidePanel == .summary ? .none : .summary
+    }
+
+    private func restoreSidebarStateFromStorage() {
+        let restoredTab = WorkspaceTab(rawValue: storedWorkspaceTabRawValue) ?? .writing
+        let restoredWritingSidePanel = WritingSidePanel(rawValue: storedWritingSidePanelRawValue) ?? .compendium
+
+        selectedTab = restoredTab
+        writingSidePanel = restoredWritingSidePanel
+        isConversationsVisible = storedWorkshopConversationsVisible
+
+        if storedWorkspaceTabRawValue != restoredTab.rawValue {
+            storedWorkspaceTabRawValue = restoredTab.rawValue
+        }
+        if storedWritingSidePanelRawValue != restoredWritingSidePanel.rawValue {
+            storedWritingSidePanelRawValue = restoredWritingSidePanel.rawValue
+        }
     }
 
     private func importProjectJSONFromMenu() {
