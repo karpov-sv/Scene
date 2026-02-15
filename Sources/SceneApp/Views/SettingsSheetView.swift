@@ -65,6 +65,8 @@ struct SettingsSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("SceneApp.ui.settingsTab")
     private var storedSettingsTabRawValue: String = SettingsTab.general.rawValue
+    @AppStorage("SceneApp.ui.settingsPromptTemplateID")
+    private var storedSettingsPromptTemplateID: String = ""
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedPromptID: UUID?
     @State private var dataExchangeStatus: String = ""
@@ -244,6 +246,9 @@ struct SettingsSheetView: View {
         }
         .onChange(of: selectedTab) { _, newValue in
             storedSettingsTabRawValue = newValue.rawValue
+        }
+        .onChange(of: selectedPromptID) { _, newValue in
+            storedSettingsPromptTemplateID = newValue?.uuidString ?? ""
         }
         .confirmationDialog(
             "Update built-in templates to latest defaults?",
@@ -456,6 +461,14 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var editorAppearancePreviewText: String {
+        """
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent quis mi nec erat suscipit interdum. Integer ac semper velit, id tristique tortor.
+
+        Cras facilisis, ligula at viverra iaculis, erat arcu maximus sapien, vitae aliquam nisi justo nec nisl. Sed pulvinar nunc ac urna facilisis, in consequat massa molestie.
+        """
+    }
+
     private var editorTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -652,6 +665,21 @@ struct SettingsSheetView: View {
                         }
                     }
                     .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Preview") {
+                    EditorAppearancePreview(
+                        appearance: store.project.editorAppearance,
+                        previewText: editorAppearancePreviewText
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 130, idealHeight: 150, maxHeight: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+                    .padding(.top, 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1040,7 +1068,13 @@ struct SettingsSheetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             if selectedPromptID == nil {
-                selectedPromptID = store.project.selectedProsePromptID
+                let storedPromptID = UUID(uuidString: storedSettingsPromptTemplateID)
+                let hasStoredPrompt = storedPromptID.flatMap { id in
+                    store.project.prompts.first(where: { $0.id == id })
+                } != nil
+
+                selectedPromptID = (hasStoredPrompt ? storedPromptID : nil)
+                    ?? store.project.selectedProsePromptID
                     ?? store.project.selectedWorkshopPromptID
                     ?? store.project.prompts.first?.id
             }
@@ -1511,6 +1545,122 @@ struct SettingsSheetView: View {
         }
 
         promptTemplateStatus = "Built-in templates updated: \(result.updatedCount) replaced, \(result.addedCount) added."
+    }
+}
+
+private struct EditorAppearancePreview: NSViewRepresentable {
+    let appearance: EditorAppearanceSettings
+    let previewText: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.isRichText = true
+        textView.drawsBackground = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineBreakMode = .byWordWrapping
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainerInset = NSSize(
+            width: appearance.horizontalPadding,
+            height: appearance.verticalPadding
+        )
+
+        scrollView.documentView = textView
+        applyAppearance(to: textView, in: scrollView)
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.frame = NSRect(origin: .zero, size: scrollView.contentSize)
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        applyAppearance(to: textView, in: scrollView)
+    }
+
+    private func applyAppearance(to textView: NSTextView, in scrollView: NSScrollView) {
+        let baseFont = resolvedBaseFont(from: appearance)
+        let textColor = resolvedTextColor(from: appearance)
+        let backgroundColor = resolvedBackgroundColor(from: appearance)
+        let paragraphStyle = resolvedParagraphStyle(from: appearance)
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: baseFont,
+            .foregroundColor: textColor,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        textView.textStorage?.setAttributedString(
+            NSAttributedString(string: previewText, attributes: attributes)
+        )
+        textView.textContainerInset = NSSize(
+            width: appearance.horizontalPadding,
+            height: appearance.verticalPadding
+        )
+        scrollView.backgroundColor = backgroundColor
+    }
+
+    private func resolvedBaseFont(from settings: EditorAppearanceSettings) -> NSFont {
+        let normalizedFamily = SceneFontSelectorData.normalizedFamily(settings.fontFamily)
+        if normalizedFamily == SceneFontSelectorData.systemFamily {
+            if settings.fontSize > 0 {
+                return NSFont.systemFont(ofSize: settings.fontSize)
+            }
+            return NSFont.preferredFont(forTextStyle: .body)
+        }
+
+        let size = settings.fontSize > 0 ? settings.fontSize : NSFont.systemFontSize
+        return NSFont(name: normalizedFamily, size: size)
+            ?? NSFont.preferredFont(forTextStyle: .body)
+    }
+
+    private func resolvedTextColor(from settings: EditorAppearanceSettings) -> NSColor {
+        settings.textColor.map {
+            NSColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha)
+        } ?? .textColor
+    }
+
+    private func resolvedBackgroundColor(from settings: EditorAppearanceSettings) -> NSColor {
+        settings.backgroundColor.map {
+            NSColor(red: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha)
+        } ?? .textBackgroundColor
+    }
+
+    private func resolvedParagraphStyle(from settings: EditorAppearanceSettings) -> NSMutableParagraphStyle {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = max(1.0, settings.lineHeightMultiple)
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.alignment = {
+            switch settings.textAlignment {
+            case .left:
+                return .left
+            case .center:
+                return .center
+            case .right:
+                return .right
+            case .justified:
+                return .justified
+            }
+        }()
+        return paragraphStyle
     }
 }
 
