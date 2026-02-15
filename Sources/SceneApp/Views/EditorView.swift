@@ -60,6 +60,9 @@ private struct SceneEditorFormatting: Equatable {
     var textBackgroundColor: CodableRGBA?
     var hasMixedTextColor: Bool
     var hasMixedTextBackgroundColor: Bool
+    var isBold: Bool
+    var isItalic: Bool
+    var isUnderline: Bool
     var textAlignment: TextAlignmentOption
 
     static let `default` = SceneEditorFormatting(
@@ -69,6 +72,9 @@ private struct SceneEditorFormatting: Equatable {
         textBackgroundColor: nil,
         hasMixedTextColor: false,
         hasMixedTextBackgroundColor: false,
+        isBold: false,
+        isItalic: false,
+        isUnderline: false,
         textAlignment: .left
     )
 }
@@ -128,6 +134,9 @@ private extension SceneEditorFormatting {
         CodableRGBA.areClose(textBackgroundColor, other.textBackgroundColor) &&
         hasMixedTextColor == other.hasMixedTextColor &&
         hasMixedTextBackgroundColor == other.hasMixedTextBackgroundColor &&
+        isBold == other.isBold &&
+        isItalic == other.isItalic &&
+        isUnderline == other.isUnderline &&
         textAlignment == other.textAlignment
     }
 }
@@ -264,6 +273,15 @@ struct EditorView: View {
         return !store.beatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var editorToolbarFontFamily: String {
+        SceneFontSelectorData.normalizedFamily(editorFormatting.fontFamily)
+    }
+
+    private var editorToolbarFontSize: Double {
+        let size = editorFormatting.fontSize
+        return size > 0 ? size : 14
+    }
+
     private var inlineGenerationBinding: Binding<Bool> {
         Binding(
             get: { store.useInlineGeneration },
@@ -358,61 +376,91 @@ struct EditorView: View {
             }
 
             // Formatting toolbar
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Button { sceneEditorCommand = SceneEditorCommand(action: .undo) } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
                 .disabled(!canUndoInSceneEditor)
                 .help("Undo (Cmd+Z)")
 
                 Button { sceneEditorCommand = SceneEditorCommand(action: .redo) } label: {
                     Image(systemName: "arrow.uturn.forward")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
                 .disabled(!canRedoInSceneEditor)
                 .help("Redo (Shift+Cmd+Z)")
 
-                Divider().frame(height: 18).padding(.horizontal, 2)
-
-                // Font family — opens system font panel
-                Button {
-                    sceneEditorCommand = SceneEditorCommand(action: .openFontPanel)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(editorFormatting.fontFamily == "System" ? "System Font" : editorFormatting.fontFamily)
-                            .lineLimit(1)
-                        Text("\(Int(editorFormatting.fontSize))")
-                            .foregroundStyle(.secondary)
+                FontFamilyDropdown(
+                    selectedFamily: editorToolbarFontFamily,
+                    previewPointSize: CGFloat(editorToolbarFontSize),
+                    controlSize: .small,
+                    onSelectFamily: { family in
+                        applyEditorToolbarFont(
+                            family: family,
+                            size: editorToolbarFontSize
+                        )
+                    },
+                    onOpenSystemFontPanel: {
+                        sceneEditorCommand = SceneEditorCommand(action: .openFontPanel)
                     }
-                }
-                .buttonStyle(.bordered)
+                )
+                .frame(width: 140, alignment: .leading)
                 .controlSize(.small)
-                .help("Font (click to open Font Panel)")
+                .help("Font family")
 
-                Divider().frame(height: 18).padding(.horizontal, 2)
+                FontSizeDropdown(
+                    selectedSize: editorToolbarFontSize,
+                    controlSize: .small,
+                    onSelectSize: { size in
+                        applyEditorToolbarFont(
+                            family: editorToolbarFontFamily,
+                            size: size
+                        )
+                    }
+                )
+                .frame(width: 58, alignment: .leading)
+                .controlSize(.small)
+                .help("Font size")
 
                 Button { sceneEditorCommand = SceneEditorCommand(action: .toggleBoldface) } label: {
                     Image(systemName: "bold")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(editorFormatting.isBold ? Color.accentColor.opacity(0.2) : Color.clear)
+                )
                 .help("Bold (Cmd+B)")
 
                 Button { sceneEditorCommand = SceneEditorCommand(action: .toggleItalics) } label: {
                     Image(systemName: "italic")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(editorFormatting.isItalic ? Color.accentColor.opacity(0.2) : Color.clear)
+                )
                 .help("Italic (Cmd+I)")
 
                 Button { sceneEditorCommand = SceneEditorCommand(action: .toggleUnderline) } label: {
                     Image(systemName: "underline")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(editorFormatting.isUnderline ? Color.accentColor.opacity(0.2) : Color.clear)
+                )
                 .help("Underline (Cmd+U)")
 
                 Button {
@@ -422,12 +470,30 @@ struct EditorView: View {
                 } label: {
                     Image(systemName: "eraser")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderless)
                 .controlSize(.small)
+                .padding(4)
                 .disabled(!editorSelection.hasSelection)
                 .help("Clear explicit formatting from selected text")
 
-                Divider().frame(height: 18).padding(.horizontal, 2)
+                Picker("Alignment", selection: Binding(
+                    get: { editorFormatting.textAlignment },
+                    set: { alignment in
+                        editorFormatting.textAlignment = alignment
+                        sceneEditorCommand = SceneEditorCommand(action: .applyAlignment(alignment))
+                    }
+                )) {
+                    Image(systemName: "text.alignleft").tag(TextAlignmentOption.left)
+                    Image(systemName: "text.aligncenter").tag(TextAlignmentOption.center)
+                    Image(systemName: "text.alignright").tag(TextAlignmentOption.right)
+                    Image(systemName: "text.justify").tag(TextAlignmentOption.justified)
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 48)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Text alignment")
 
                 HStack(spacing: 4) {
                     Text("A")
@@ -462,6 +528,8 @@ struct EditorView: View {
                         mixedPlaceholderColor: NSColor.secondaryLabelColor
                     )
                     .frame(width: 36, height: 16)
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                     .id("editor-text-color-well")
                 }
                 .help("Text color")
@@ -498,28 +566,11 @@ struct EditorView: View {
                         mixedPlaceholderColor: NSColor.secondaryLabelColor
                     )
                     .frame(width: 36, height: 16)
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                     .id("editor-highlight-color-well")
                 }
                 .help("Text highlight color")
-
-                Divider().frame(height: 18).padding(.horizontal, 2)
-
-                Picker("Alignment", selection: Binding(
-                    get: { editorFormatting.textAlignment },
-                    set: { alignment in
-                        editorFormatting.textAlignment = alignment
-                        sceneEditorCommand = SceneEditorCommand(action: .applyAlignment(alignment))
-                    }
-                )) {
-                    Image(systemName: "text.alignleft").tag(TextAlignmentOption.left)
-                    Image(systemName: "text.aligncenter").tag(TextAlignmentOption.center)
-                    Image(systemName: "text.alignright").tag(TextAlignmentOption.right)
-                    Image(systemName: "text.justify").tag(TextAlignmentOption.justified)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 120)
-                .help("Text alignment")
 
                 Spacer(minLength: 0)
             }
@@ -772,6 +823,16 @@ struct EditorView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
+    }
+
+    private func applyEditorToolbarFont(family: String, size: Double) {
+        let normalizedFamily = SceneFontSelectorData.normalizedFamily(family)
+        let normalizedSize = max(1, size)
+        editorFormatting.fontFamily = normalizedFamily
+        editorFormatting.fontSize = normalizedSize
+        sceneEditorCommand = SceneEditorCommand(
+            action: .applyFont(family: normalizedFamily, size: normalizedSize)
+        )
     }
 
     private func runPrimaryGenerationAction() {
@@ -1340,12 +1401,13 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             case let .applyFont(family, size):
                 let currentFont = textView.typingAttributes[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
                 let traits = NSFontManager.shared.traits(of: currentFont)
+                let normalizedFamily = SceneFontSelectorData.normalizedFamily(family)
                 let baseFont: NSFont = {
                     let s = max(1, size)
-                    if family == "System" || family.isEmpty {
+                    if normalizedFamily == SceneFontSelectorData.systemFamily {
                         return NSFont.systemFont(ofSize: s)
                     }
-                    return NSFont(name: family, size: s) ?? NSFont.systemFont(ofSize: s)
+                    return NSFont(name: normalizedFamily, size: s) ?? NSFont.systemFont(ofSize: s)
                 }()
                 var newFont = baseFont
                 if traits.contains(.boldFontMask) { newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .boldFontMask) }
@@ -1452,6 +1514,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             applyFormatting(action, to: textView)
             publishChange(from: textView)
             publishSelection(from: textView)
+            publishFormatting(from: textView)
             publishUndoRedoState(from: textView)
         }
 
@@ -1495,7 +1558,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             let selectedRange = clampedRangeForStorage(textView.selectedRange(), textView: textView)
 
             let font = attrs[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
-            let fontFamily = font.familyName ?? font.fontName
+            let fontFamily = SceneFontSelectorData.normalizedFamily(font.familyName ?? font.fontName)
             let fontSize = font.pointSize
 
             let textColorInfo: (color: CodableRGBA?, mixed: Bool)
@@ -1516,6 +1579,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             default:         alignment = .left
             }
 
+            let isBold = selectionHasFontTrait(.boldFontMask, in: textView)
+            let isItalic = selectionHasFontTrait(.italicFontMask, in: textView)
+            let isUnderline = selectionHasUnderline(in: textView)
+
             onFormattingChange(SceneEditorFormatting(
                 fontFamily: fontFamily,
                 fontSize: Double(fontSize),
@@ -1523,6 +1590,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 textBackgroundColor: textBackgroundColorInfo.color,
                 hasMixedTextColor: textColorInfo.mixed,
                 hasMixedTextBackgroundColor: textBackgroundColorInfo.mixed,
+                isBold: isBold,
+                isItalic: isItalic,
+                isUnderline: isUnderline,
                 textAlignment: alignment
             ))
         }
@@ -2082,7 +2152,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         }
 
         private func resolvedBaseFont(from settings: EditorAppearanceSettings) -> NSFont {
-            if settings.fontFamily == "System" || settings.fontFamily.isEmpty {
+            let normalizedFamily = SceneFontSelectorData.normalizedFamily(settings.fontFamily)
+            if normalizedFamily == SceneFontSelectorData.systemFamily {
                 let size = settings.fontSize > 0 ? settings.fontSize : 0
                 return size > 0
                     ? NSFont.systemFont(ofSize: size)
@@ -2090,7 +2161,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             }
 
             let size = settings.fontSize > 0 ? settings.fontSize : NSFont.systemFontSize
-            return NSFont(name: settings.fontFamily, size: size)
+            return NSFont(name: normalizedFamily, size: size)
                 ?? NSFont.preferredFont(forTextStyle: .body)
         }
 

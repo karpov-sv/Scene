@@ -5294,7 +5294,8 @@ final class AppStore: ObservableObject {
     }
 
     private func resolvedEditorBaseFont(from settings: EditorAppearanceSettings) -> NSFont {
-        if settings.fontFamily == "System" || settings.fontFamily.isEmpty {
+        let normalizedFamily = SceneFontSelectorData.normalizedFamily(settings.fontFamily)
+        if normalizedFamily == SceneFontSelectorData.systemFamily {
             if settings.fontSize > 0 {
                 return NSFont.systemFont(ofSize: settings.fontSize)
             }
@@ -5302,7 +5303,7 @@ final class AppStore: ObservableObject {
         }
 
         let size = settings.fontSize > 0 ? settings.fontSize : NSFont.systemFontSize
-        return NSFont(name: settings.fontFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
+        return NSFont(name: normalizedFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
     }
 
     private func resolvedEditorTextColor(from settings: EditorAppearanceSettings) -> NSColor {

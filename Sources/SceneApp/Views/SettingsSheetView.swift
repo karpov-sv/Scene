@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 private extension CodableRGBA {
     static let settingsColorComponentScale: Double = 255.0
@@ -64,6 +65,7 @@ struct SettingsSheetView: View {
     @State private var showBuiltInTemplateResetConfirmation: Bool = false
     @State private var confirmDeletePrompt: Bool = false
     @State private var confirmClearPrompts: Bool = false
+    @State private var editorFontPanelOpenRequestID: UUID?
 
     private var projectTitleBinding: Binding<String> {
         Binding(
@@ -254,14 +256,31 @@ struct SettingsSheetView: View {
 
     private var resolvedEditorFont: NSFont {
         let app = store.project.editorAppearance
-        if app.fontFamily == "System" || app.fontFamily.isEmpty {
+        let normalizedFamily = SceneFontSelectorData.normalizedFamily(app.fontFamily)
+        if normalizedFamily == SceneFontSelectorData.systemFamily {
             return app.fontSize > 0
                 ? NSFont.systemFont(ofSize: app.fontSize)
                 : NSFont.preferredFont(forTextStyle: .body)
         } else {
             let size = app.fontSize > 0 ? app.fontSize : NSFont.systemFontSize
-            return NSFont(name: app.fontFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
+            return NSFont(name: normalizedFamily, size: size) ?? NSFont.preferredFont(forTextStyle: .body)
         }
+    }
+
+    private var editorAppearanceFontFamily: String {
+        SceneFontSelectorData.normalizedFamily(store.project.editorAppearance.fontFamily)
+    }
+
+    private var editorAppearanceFontSize: Double {
+        let stored = store.project.editorAppearance.fontSize
+        return stored > 0 ? stored : Double(resolvedEditorFont.pointSize)
+    }
+
+    private func updateEditorAppearanceFont(family: String, size: Double) {
+        var appearance = store.project.editorAppearance
+        appearance.fontFamily = SceneFontSelectorData.normalizedFamily(family)
+        appearance.fontSize = max(1, size)
+        store.updateEditorAppearance(appearance)
     }
 
     private var textAlignmentBinding: Binding<TextAlignmentOption> {
@@ -354,25 +373,58 @@ struct SettingsSheetView: View {
                         HStack(spacing: 8) {
                             Text("Font")
                                 .frame(width: 100, alignment: .leading)
-                            EditorFontPickerButton(font: resolvedEditorFont) { newFont in
-                                var a = store.project.editorAppearance
-                                a.fontFamily = newFont.familyName ?? newFont.fontName
-                                a.fontSize = newFont.pointSize
-                                store.updateEditorAppearance(a)
-                            }
+
+                            FontFamilyDropdown(
+                                selectedFamily: editorAppearanceFontFamily,
+                                previewPointSize: CGFloat(editorAppearanceFontSize),
+                                controlSize: .regular,
+                                onSelectFamily: { family in
+                                    updateEditorAppearanceFont(
+                                        family: family,
+                                        size: editorAppearanceFontSize
+                                    )
+                                },
+                                onOpenSystemFontPanel: {
+                                    editorFontPanelOpenRequestID = UUID()
+                                }
+                            )
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                            FontSizeDropdown(
+                                selectedSize: editorAppearanceFontSize,
+                                controlSize: .regular,
+                                onSelectSize: { size in
+                                    updateEditorAppearanceFont(
+                                        family: editorAppearanceFontFamily,
+                                        size: size
+                                    )
+                                }
+                            )
+                            .frame(width: 84, alignment: .leading)
+
                             Button("Reset") {
                                 var a = store.project.editorAppearance
                                 a.fontFamily = "System"
                                 a.fontSize = 0
                                 store.updateEditorAppearance(a)
                             }
-                            .controlSize(.small)
                         }
                     }
                     .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                EditorSettingsFontPanelBridge(
+                    font: resolvedEditorFont,
+                    openRequestID: editorFontPanelOpenRequestID,
+                    onFontChange: { newFont in
+                        updateEditorAppearanceFont(
+                            family: newFont.familyName ?? newFont.fontName,
+                            size: Double(newFont.pointSize)
+                        )
+                    }
+                )
+                .frame(width: 0, height: 0)
 
                 GroupBox("Spacing") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1389,23 +1441,24 @@ private struct PromptTemplateRenderPreviewSheet: View {
 
 // MARK: - Font panel integration
 
-private struct EditorFontPickerButton: NSViewRepresentable {
+private struct EditorSettingsFontPanelBridge: NSViewRepresentable {
     let font: NSFont
+    let openRequestID: UUID?
     let onFontChange: (NSFont) -> Void
 
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton()
-        button.bezelStyle = .rounded
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.openFontPanel(_:))
-        return button
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
     }
 
-    func updateNSView(_ nsView: NSButton, context: Context) {
+    func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.currentFont = font
         context.coordinator.onFontChange = onFontChange
-        let name = font.displayName ?? font.familyName ?? font.fontName
-        nsView.title = "\(name)  \(Int(font.pointSize)) pt"
+
+        guard let openRequestID else { return }
+        guard context.coordinator.lastOpenRequestID != openRequestID else { return }
+
+        context.coordinator.lastOpenRequestID = openRequestID
+        context.coordinator.openFontPanel()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1416,24 +1469,26 @@ private struct EditorFontPickerButton: NSViewRepresentable {
     final class Coordinator: NSObject {
         var currentFont: NSFont
         var onFontChange: (NSFont) -> Void
+        var lastOpenRequestID: UUID?
 
         init(font: NSFont, onFontChange: @escaping (NSFont) -> Void) {
             self.currentFont = font
             self.onFontChange = onFontChange
         }
 
-        @objc func openFontPanel(_ sender: NSButton?) {
-            let mgr = NSFontManager.shared
-            mgr.target = self
-            mgr.action = #selector(changeFont(_:))
+        func openFontPanel() {
+            let fontManager = NSFontManager.shared
+            fontManager.target = self
+            fontManager.action = #selector(changeFont(_:))
             let panel = NSFontPanel.shared
             panel.setPanelFont(currentFont, isMultiple: false)
-            panel.orderFront(sender)
+            panel.orderFront(nil)
         }
 
         @objc func changeFont(_ sender: NSFontManager?) {
-            guard let mgr = sender else { return }
-            let newFont = mgr.convert(currentFont)
+            guard let sender else { return }
+            let newFont = sender.convert(currentFont)
+            currentFont = newFont
             onFontChange(newFont)
         }
     }
