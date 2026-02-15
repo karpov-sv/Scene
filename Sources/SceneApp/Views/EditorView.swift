@@ -1517,8 +1517,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             case let .selectRange(targetRange):
                 selectRange(targetRange, in: textView)
             case .toggleBoldface, .toggleItalics, .toggleUnderline:
-                applyFormatting(command.action, to: textView)
-                didMutateText = true
+                _ = applyFormatting(command.action, to: textView)
             case let .replaceSelection(rewrittenText, targetRange, emphasizeWithItalics):
                 replaceSelection(
                     in: textView,
@@ -1543,50 +1542,77 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 if traits.contains(.italicFontMask) { newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .italicFontMask) }
                 let selectedRange = textView.selectedRange()
                 if selectedRange.length > 0 {
-                    textView.textStorage?.addAttribute(.font, value: newFont, range: selectedRange)
+                    didMutateText = applyAttributeMutation(
+                        in: selectedRange,
+                        textView: textView,
+                        actionName: "Set Font"
+                    ) { storage, effectiveRange in
+                        storage.addAttribute(.font, value: newFont, range: effectiveRange)
+                    }
                 }
                 var typingAttrs = textView.typingAttributes
                 typingAttrs[.font] = newFont
                 textView.typingAttributes = typingAttrs
-                didMutateText = selectedRange.length > 0
             case let .applyTextColor(rgba, targetRange):
                 let selectedRange = resolvedTargetRange(targetRange, in: textView)
                 if let rgba {
                     let nsColor = NSColor(red: rgba.red, green: rgba.green, blue: rgba.blue, alpha: rgba.alpha)
                     if selectedRange.length > 0 {
-                        textView.textStorage?.addAttribute(.foregroundColor, value: nsColor, range: selectedRange)
+                        didMutateText = applyAttributeMutation(
+                            in: selectedRange,
+                            textView: textView,
+                            actionName: "Set Text Color"
+                        ) { storage, effectiveRange in
+                            storage.addAttribute(.foregroundColor, value: nsColor, range: effectiveRange)
+                        }
                     }
                     var typingAttrs = textView.typingAttributes
                     typingAttrs[.foregroundColor] = nsColor
                     textView.typingAttributes = typingAttrs
                 } else {
                     if selectedRange.length > 0 {
-                        textView.textStorage?.removeAttribute(.foregroundColor, range: selectedRange)
+                        didMutateText = applyAttributeMutation(
+                            in: selectedRange,
+                            textView: textView,
+                            actionName: "Set Text Color"
+                        ) { storage, effectiveRange in
+                            storage.removeAttribute(.foregroundColor, range: effectiveRange)
+                        }
                     }
                     var typingAttrs = textView.typingAttributes
                     typingAttrs.removeValue(forKey: .foregroundColor)
                     textView.typingAttributes = typingAttrs
                 }
-                didMutateText = selectedRange.length > 0
             case let .applyTextBackgroundColor(rgba, targetRange):
                 let selectedRange = resolvedTargetRange(targetRange, in: textView)
                 if let rgba {
                     let nsColor = NSColor(red: rgba.red, green: rgba.green, blue: rgba.blue, alpha: rgba.alpha)
                     if selectedRange.length > 0 {
-                        textView.textStorage?.addAttribute(.backgroundColor, value: nsColor, range: selectedRange)
+                        didMutateText = applyAttributeMutation(
+                            in: selectedRange,
+                            textView: textView,
+                            actionName: "Set Highlight Color"
+                        ) { storage, effectiveRange in
+                            storage.addAttribute(.backgroundColor, value: nsColor, range: effectiveRange)
+                        }
                     }
                     var typingAttrs = textView.typingAttributes
                     typingAttrs[.backgroundColor] = nsColor
                     textView.typingAttributes = typingAttrs
                 } else {
                     if selectedRange.length > 0 {
-                        textView.textStorage?.removeAttribute(.backgroundColor, range: selectedRange)
+                        didMutateText = applyAttributeMutation(
+                            in: selectedRange,
+                            textView: textView,
+                            actionName: "Set Highlight Color"
+                        ) { storage, effectiveRange in
+                            storage.removeAttribute(.backgroundColor, range: effectiveRange)
+                        }
                     }
                     var typingAttrs = textView.typingAttributes
                     typingAttrs.removeValue(forKey: .backgroundColor)
                     textView.typingAttributes = typingAttrs
                 }
-                didMutateText = selectedRange.length > 0
             case let .applyAlignment(option):
                 let nsAlign: NSTextAlignment
                 switch option {
@@ -1598,10 +1624,16 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 let selectedRange = textView.selectedRange()
                 if let storage = textView.textStorage {
                     let paragraphRange = (storage.string as NSString).paragraphRange(for: selectedRange)
-                    storage.enumerateAttribute(.paragraphStyle, in: paragraphRange, options: []) { value, range, _ in
-                        let ps = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-                        ps.alignment = nsAlign
-                        storage.addAttribute(.paragraphStyle, value: ps, range: range)
+                    didMutateText = applyAttributeMutation(
+                        in: paragraphRange,
+                        textView: textView,
+                        actionName: "Set Alignment"
+                    ) { storage, effectiveRange in
+                        storage.enumerateAttribute(.paragraphStyle, in: effectiveRange, options: []) { value, range, _ in
+                            let ps = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+                            ps.alignment = nsAlign
+                            storage.addAttribute(.paragraphStyle, value: ps, range: range)
+                        }
                     }
                 }
                 let existingPS = textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle
@@ -1610,11 +1642,15 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 var typingAttrs = textView.typingAttributes
                 typingAttrs[.paragraphStyle] = newPS
                 textView.typingAttributes = typingAttrs
-                didMutateText = true
             case let .clearSelectionFormatting(targetRange):
                 let selectedRange = resolvedTargetRange(targetRange, in: textView)
-                clearSelectionFormatting(in: selectedRange, textView: textView)
-                didMutateText = selectedRange.length > 0
+                didMutateText = applyAttributeMutation(
+                    in: selectedRange,
+                    textView: textView,
+                    actionName: "Clear Formatting"
+                ) { _, effectiveRange in
+                    clearSelectionFormatting(in: effectiveRange, textView: textView)
+                }
             case .openFontPanel:
                 let currentFont = textView.typingAttributes[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
                 NSFontManager.shared.setSelectedFont(currentFont, isMultiple: false)
@@ -1640,8 +1676,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         }
 
         func applyFormattingShortcut(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
-            applyFormatting(action, to: textView)
-            publishChange(from: textView)
+            let didMutateText = applyFormatting(action, to: textView)
+            if didMutateText {
+                publishChange(from: textView)
+            }
             publishSelection(from: textView)
             publishFormatting(from: textView)
             publishUndoRedoState(from: textView)
@@ -1726,24 +1764,24 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             ))
         }
 
-        private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) {
+        private func applyFormatting(_ action: SceneEditorCommand.Action, to textView: NSTextView) -> Bool {
             switch action {
             case .toggleBoldface:
-                toggleFontTrait(.boldFontMask, in: textView)
+                return toggleFontTrait(.boldFontMask, in: textView)
             case .toggleItalics:
-                toggleFontTrait(.italicFontMask, in: textView)
+                return toggleFontTrait(.italicFontMask, in: textView)
             case .toggleUnderline:
-                toggleUnderline(in: textView)
+                return toggleUnderline(in: textView)
             case .undo, .redo:
-                break
+                return false
             case .find(query: _, direction: _, caseSensitive: _):
-                break
+                return false
             case .selectRange(targetRange: _):
-                break
+                return false
             case .replaceSelection(rewrittenText: _, targetRange: _, emphasizeWithItalics: _):
-                break
+                return false
             case .applyFont, .applyTextColor, .applyTextBackgroundColor, .clearSelectionFormatting, .applyAlignment, .openFontPanel:
-                break
+                return false
             }
         }
 
@@ -2057,6 +2095,23 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return clampedRangeForStorage(textView.selectedRange(), textView: textView)
         }
 
+        @discardableResult
+        private func applyAttributeMutation(
+            in range: NSRange,
+            textView: NSTextView,
+            actionName: String,
+            mutation: (NSTextStorage, NSRange) -> Void
+        ) -> Bool {
+            let effectiveRange = clampedRangeForStorage(range, textView: textView)
+            guard effectiveRange.length > 0 else { return false }
+            guard let storage = textView.textStorage else { return false }
+            guard textView.shouldChangeText(in: effectiveRange, replacementString: nil) else { return false }
+            mutation(storage, effectiveRange)
+            textView.undoManager?.setActionName(actionName)
+            textView.didChangeText()
+            return true
+        }
+
         private func clearSelectionFormatting(in range: NSRange, textView: NSTextView) {
             guard range.length > 0 else { return }
             guard let storage = textView.textStorage else { return }
@@ -2123,7 +2178,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return textView.font ?? fallback
         }
 
-        private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) {
+        private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) -> Bool {
             let selectedRange = textView.selectedRange()
             let fallbackFont = NSFont.preferredFont(forTextStyle: .body)
             let currentTypingFont = (textView.typingAttributes[.font] as? NSFont) ?? textView.font ?? fallbackFont
@@ -2134,17 +2189,19 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 var typingAttributes = textView.typingAttributes
                 typingAttributes[.font] = updatedFont
                 textView.typingAttributes = typingAttributes
-                return
+                return false
             }
 
-            guard let textStorage = textView.textStorage else { return }
-            textStorage.beginEditing()
-            textStorage.enumerateAttribute(.font, in: selectedRange, options: []) { value, range, _ in
-                let currentFont = (value as? NSFont) ?? currentTypingFont
-                let updatedFont = convertedFont(currentFont, toggling: trait, enable: shouldEnableTrait) ?? currentFont
-                textStorage.addAttribute(.font, value: updatedFont, range: range)
+            let actionName = trait == .boldFontMask ? "Toggle Bold" : "Toggle Italic"
+            return applyAttributeMutation(in: selectedRange, textView: textView, actionName: actionName) { textStorage, effectiveRange in
+                textStorage.beginEditing()
+                textStorage.enumerateAttribute(.font, in: effectiveRange, options: []) { value, range, _ in
+                    let currentFont = (value as? NSFont) ?? currentTypingFont
+                    let updatedFont = convertedFont(currentFont, toggling: trait, enable: shouldEnableTrait) ?? currentFont
+                    textStorage.addAttribute(.font, value: updatedFont, range: range)
+                }
+                textStorage.endEditing()
             }
-            textStorage.endEditing()
         }
 
         private func selectionHasFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) -> Bool {
@@ -2175,7 +2232,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return NSFontManager.shared.convert(font, toNotHaveTrait: trait)
         }
 
-        private func toggleUnderline(in textView: NSTextView) {
+        private func toggleUnderline(in textView: NSTextView) -> Bool {
             let selectedRange = textView.selectedRange()
             let shouldEnableUnderline = !selectionHasUnderline(in: textView)
             let underlineValue = NSUnderlineStyle.single.rawValue
@@ -2188,14 +2245,15 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                     typingAttributes.removeValue(forKey: .underlineStyle)
                 }
                 textView.typingAttributes = typingAttributes
-                return
+                return false
             }
 
-            guard let textStorage = textView.textStorage else { return }
-            if shouldEnableUnderline {
-                textStorage.addAttribute(.underlineStyle, value: underlineValue, range: selectedRange)
-            } else {
-                textStorage.removeAttribute(.underlineStyle, range: selectedRange)
+            return applyAttributeMutation(in: selectedRange, textView: textView, actionName: "Toggle Underline") { textStorage, effectiveRange in
+                if shouldEnableUnderline {
+                    textStorage.addAttribute(.underlineStyle, value: underlineValue, range: effectiveRange)
+                } else {
+                    textStorage.removeAttribute(.underlineStyle, range: effectiveRange)
+                }
             }
         }
 
