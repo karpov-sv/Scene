@@ -59,6 +59,25 @@ enum ProjectDialogs {
         return selectedURL
     }
 
+    static func chooseImportedProjectURL(suggestedName: String = "Imported Project") -> URL? {
+        let panel = NSSavePanel()
+        panel.title = "Import as New Project"
+        panel.message = "Choose where to save a new project created from imported data."
+        panel.prompt = "Import"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = sanitizeFileName(suggestedName)
+        if let projectType = UTType(filenameExtension: ProjectPersistence.projectDirectoryExtension) {
+            panel.allowedContentTypes = [projectType]
+        }
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else {
+            return nil
+        }
+
+        return selectedURL
+    }
+
     static func choosePromptExportURL(defaultProjectName: String) -> URL? {
         chooseJSONExportURL(
             title: "Export Prompt Templates",

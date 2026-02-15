@@ -1605,16 +1605,13 @@ final class AppStore: ObservableObject {
     }
 
     func importProjectExchange(from fileURL: URL) throws {
-        let data = try Data(contentsOf: fileURL)
-        let envelope = try Self.transferDecoder.decode(ProjectTransferEnvelope.self, from: data)
-        guard envelope.type == Self.projectTransferType else {
-            throw DataExchangeError.invalidPayloadType(
-                expected: Self.projectTransferType,
-                actual: envelope.type
-            )
-        }
+        let importedProject = try importedProjectFromExchange(fileURL: fileURL)
+        applyImportedProject(importedProject)
+    }
 
-        applyImportedProject(envelope.project)
+    func createProjectFromImportedExchange(from fileURL: URL, at destinationURL: URL) throws -> URL {
+        let importedProject = try importedProjectFromExchange(fileURL: fileURL)
+        return try createImportedProject(importedProject, at: destinationURL)
     }
 
     func exportProjectAsPlainText(to fileURL: URL) throws {
@@ -1720,6 +1717,28 @@ final class AppStore: ObservableObject {
     }
 
     func importProjectFromEPUB(from fileURL: URL) throws {
+        let importedProject = try importedProjectFromEPUB(fileURL: fileURL, fallbackProject: project)
+        applyImportedProject(importedProject)
+    }
+
+    func createProjectFromImportedEPUB(from fileURL: URL, at destinationURL: URL) throws -> URL {
+        let importedProject = try importedProjectFromEPUB(fileURL: fileURL, fallbackProject: StoryProject.starter())
+        return try createImportedProject(importedProject, at: destinationURL)
+    }
+
+    private func importedProjectFromExchange(fileURL: URL) throws -> StoryProject {
+        let data = try Data(contentsOf: fileURL)
+        let envelope = try Self.transferDecoder.decode(ProjectTransferEnvelope.self, from: data)
+        guard envelope.type == Self.projectTransferType else {
+            throw DataExchangeError.invalidPayloadType(
+                expected: Self.projectTransferType,
+                actual: envelope.type
+            )
+        }
+        return envelope.project
+    }
+
+    private func importedProjectFromEPUB(fileURL: URL, fallbackProject: StoryProject) throws -> StoryProject {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory
             .appendingPathComponent("Scene-EPUB-Import-\(UUID().uuidString)", isDirectory: true)
@@ -1739,8 +1758,7 @@ final class AppStore: ObservableObject {
         let descriptor = try parseEPUBPackageDescriptor(in: packageRoot)
 
         if let embeddedProject = try loadEmbeddedProjectFromEPUB(descriptor: descriptor) {
-            applyImportedProject(embeddedProject)
-            return
+            return embeddedProject
         }
 
         let chapters = try parseEPUBChapters(descriptor: descriptor)
@@ -1748,7 +1766,7 @@ final class AppStore: ObservableObject {
             throw DataExchangeError.invalidEPUB("No readable chapter content found.")
         }
 
-        var importedProject = project
+        var importedProject = fallbackProject
         importedProject.title = descriptor.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Imported EPUB"
             : descriptor.title
@@ -1758,7 +1776,16 @@ final class AppStore: ObservableObject {
         importedProject.sceneContextChapterSummarySelection = [:]
         importedProject.updatedAt = .now
 
-        applyImportedProject(importedProject)
+        return importedProject
+    }
+
+    private func createImportedProject(_ project: StoryProject, at destinationURL: URL) throws -> URL {
+        let normalizedURL = persistence.normalizeProjectURL(destinationURL)
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: normalizedURL.path) {
+            try fileManager.removeItem(at: normalizedURL)
+        }
+        return try persistence.createProject(project, at: normalizedURL)
     }
 
     private func applyImportedProject(_ importedProject: StoryProject) {

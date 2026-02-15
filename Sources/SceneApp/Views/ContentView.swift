@@ -239,7 +239,9 @@ struct ContentView: View {
             exportProjectPlainText: exportProjectPlainTextFromMenu,
             exportProjectHTML: exportProjectHTMLFromMenu,
             exportProjectEPUB: exportProjectEPUBFromMenu,
-            canExportProject: store.isProjectOpen
+            openProjectSettings: { store.showingSettings = true },
+            canExportProject: store.isProjectOpen,
+            canOpenProjectSettings: store.isProjectOpen
         )
     }
 
@@ -339,12 +341,14 @@ struct ContentView: View {
         guard let fileURL = ProjectDialogs.chooseProjectExchangeImportURL() else {
             return
         }
-        guard ProjectDialogs.confirmProjectImportReplacement() else {
+        let suggestedName = fileURL.deletingPathExtension().lastPathComponent
+        guard let destinationURL = ProjectDialogs.chooseImportedProjectURL(suggestedName: suggestedName) else {
             return
         }
 
         do {
-            try store.importProjectExchange(from: fileURL)
+            let projectURL = try store.createProjectFromImportedExchange(from: fileURL, at: destinationURL)
+            openImportedProjectInNewWindow(projectURL)
         } catch {
             store.lastError = "Project import failed: \(error.localizedDescription)"
         }
@@ -402,14 +406,25 @@ struct ContentView: View {
         guard let fileURL = ProjectDialogs.chooseProjectEPUBImportURL() else {
             return
         }
-        guard ProjectDialogs.confirmProjectEPUBImportReplacement() else {
+        let suggestedName = fileURL.deletingPathExtension().lastPathComponent
+        guard let destinationURL = ProjectDialogs.chooseImportedProjectURL(suggestedName: suggestedName) else {
             return
         }
 
         do {
-            try store.importProjectFromEPUB(from: fileURL)
+            let projectURL = try store.createProjectFromImportedEPUB(from: fileURL, at: destinationURL)
+            openImportedProjectInNewWindow(projectURL)
         } catch {
             store.lastError = "EPUB import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func openImportedProjectInNewWindow(_ projectURL: URL) {
+        let normalizedURL = projectURL.standardizedFileURL
+        NSDocumentController.shared.openDocument(withContentsOf: normalizedURL, display: true) { _, _, error in
+            if let error {
+                store.lastError = "Imported project was created, but opening a new window failed: \(error.localizedDescription)"
+            }
         }
     }
 }

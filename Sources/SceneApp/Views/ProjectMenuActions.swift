@@ -7,7 +7,9 @@ struct ProjectMenuActions {
     let exportProjectPlainText: () -> Void
     let exportProjectHTML: () -> Void
     let exportProjectEPUB: () -> Void
+    let openProjectSettings: () -> Void
     let canExportProject: Bool
+    let canOpenProjectSettings: Bool
 }
 
 private struct ProjectMenuActionsKey: FocusedValueKey {

@@ -7,38 +7,45 @@ struct SceneFileCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .saveItem) {
             Menu("Import") {
-                Button("Project JSON...") {
+                Button("JSON...") {
                     actions?.importProjectJSON()
                 }
                 .disabled(actions == nil)
 
-                Button("Project EPUB...") {
+                Button("EPUB...") {
                     actions?.importProjectEPUB()
                 }
                 .disabled(actions == nil)
             }
 
             Menu("Export") {
-                Button("Project JSON...") {
+                Button("JSON...") {
                     actions?.exportProjectJSON()
                 }
                 .disabled(actions?.canExportProject != true)
 
-                Button("Project Plain Text...") {
+                Button("Plain Text...") {
                     actions?.exportProjectPlainText()
                 }
                 .disabled(actions?.canExportProject != true)
 
-                Button("Project HTML...") {
+                Button("HTML...") {
                     actions?.exportProjectHTML()
                 }
                 .disabled(actions?.canExportProject != true)
 
-                Button("Project EPUB...") {
+                Button("EPUB...") {
                     actions?.exportProjectEPUB()
                 }
                 .disabled(actions?.canExportProject != true)
             }
+
+            Divider()
+
+            Button("Project Settings...") {
+                actions?.openProjectSettings()
+            }
+            .disabled(actions?.canOpenProjectSettings != true)
         }
 
         CommandGroup(after: .textEditing) {
