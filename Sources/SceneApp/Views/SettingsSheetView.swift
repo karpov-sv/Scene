@@ -36,7 +36,7 @@ private extension CodableRGBA {
 }
 
 struct SettingsSheetView: View {
-    private enum SettingsTab: Hashable {
+    private enum SettingsTab: String, Hashable {
         case general
         case editor
         case provider
@@ -63,6 +63,8 @@ struct SettingsSheetView: View {
 
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("SceneApp.ui.settingsTab")
+    private var storedSettingsTabRawValue: String = SettingsTab.general.rawValue
     @State private var selectedTab: SettingsTab = .general
     @State private var selectedPromptID: UUID?
     @State private var dataExchangeStatus: String = ""
@@ -237,6 +239,12 @@ struct SettingsSheetView: View {
         .sheet(item: $promptRenderPreview) { preview in
             PromptTemplateRenderPreviewSheet(preview: preview)
         }
+        .onAppear {
+            restoreSettingsTabFromStorage()
+        }
+        .onChange(of: selectedTab) { _, newValue in
+            storedSettingsTabRawValue = newValue.rawValue
+        }
         .confirmationDialog(
             "Update built-in templates to latest defaults?",
             isPresented: $showBuiltInTemplateResetConfirmation,
@@ -249,6 +257,12 @@ struct SettingsSheetView: View {
         } message: {
             Text("This overwrites all built-in templates in this project with the newest defaults. Custom templates are not changed.")
         }
+    }
+
+    private func restoreSettingsTabFromStorage() {
+        let restored = SettingsTab(rawValue: storedSettingsTabRawValue) ?? .general
+        selectedTab = restored
+        storedSettingsTabRawValue = restored.rawValue
     }
 
     private var header: some View {
