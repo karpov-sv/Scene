@@ -1,6 +1,6 @@
 import Foundation
 
-struct AnthropicAIService: AIService {
+final class AnthropicAIService: AIProviderServiceBase, @unchecked Sendable {
     private static let anthropicVersion = "2023-06-01"
 
     private struct TextPart: Codable {
@@ -71,32 +71,12 @@ struct AnthropicAIService: AIService {
         let data: [ModelDescriptor]?
     }
 
-    func generateText(_ request: TextGenerationRequest, settings: GenerationSettings) async throws -> String {
-        let result = try await generateTextResult(request, settings: settings, onPartial: nil)
-        return result.text
-    }
-
-    func generateText(
-        _ request: TextGenerationRequest,
-        settings: GenerationSettings,
-        onPartial: (@MainActor (String) -> Void)?
-    ) async throws -> String {
-        let result = try await generateTextResult(
-            request,
-            settings: settings,
-            onPartial: onPartial
-        )
-        return result.text
-    }
-
-    func generateTextResult(
+    override func generateTextResult(
         _ request: TextGenerationRequest,
         settings: GenerationSettings,
         onPartial: (@MainActor (String) -> Void)?
     ) async throws -> TextGenerationResult {
-        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIServiceError.missingModel
-        }
+        try validateModel(in: request)
 
         let endpoint = try makeMessagesURL(from: settings.endpoint)
         let shouldStream = settings.enableStreaming
@@ -155,10 +135,8 @@ struct AnthropicAIService: AIService {
     func makeRequestPreview(
         request: TextGenerationRequest,
         settings: GenerationSettings
-    ) throws -> OpenAICompatibleAIService.RequestPreview {
-        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIServiceError.missingModel
-        }
+    ) throws -> AIRequestPreview {
+        try validateModel(in: request)
 
         let endpoint = try makeMessagesURL(from: settings.endpoint)
         let payload = MessagesRequest(
@@ -175,23 +153,23 @@ struct AnthropicAIService: AIService {
             stream: settings.enableStreaming
         )
 
-        let bodyData = try prettyPrintedJSONData(payload)
-        let body = String(data: bodyData, encoding: .utf8) ?? "{}"
+        let bodies = try previewBodyStrings(for: payload)
 
         var headers = [
-            OpenAICompatibleAIService.RequestPreview.Header(name: "Content-Type", value: "application/json"),
-            OpenAICompatibleAIService.RequestPreview.Header(name: "anthropic-version", value: Self.anthropicVersion)
+            AIRequestPreview.Header(name: "Content-Type", value: "application/json"),
+            AIRequestPreview.Header(name: "anthropic-version", value: Self.anthropicVersion)
         ]
         let apiKey = settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !apiKey.isEmpty {
-            headers.append(OpenAICompatibleAIService.RequestPreview.Header(name: "x-api-key", value: apiKey))
+            headers.append(AIRequestPreview.Header(name: "x-api-key", value: apiKey))
         }
 
-        return OpenAICompatibleAIService.RequestPreview(
+        return AIRequestPreview(
             url: endpoint.absoluteString,
             method: "POST",
             headers: headers,
-            bodyJSON: body
+            bodyJSON: bodies.rawJSON,
+            bodyHumanReadable: bodies.humanReadable
         )
     }
 
@@ -213,14 +191,7 @@ struct AnthropicAIService: AIService {
         }
 
         let decoded = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        let modelIDs = Set(
-            (decoded.data ?? [])
-                .compactMap(\.id)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
-
-        return modelIDs.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return sortedModelIDs((decoded.data ?? []).compactMap(\.id))
     }
 
     private func generateStreamingText(
@@ -292,55 +263,19 @@ struct AnthropicAIService: AIService {
     }
 
     private func makeMessagesURL(from endpoint: String) throws -> URL {
-        let base = try makeBaseV1URL(from: endpoint)
+        let base = try makeBaseV1URL(
+            from: endpoint,
+            removingSuffixes: ["/v1/messages", "/v1/models", "/messages", "/models"]
+        )
         return base.appendingPathComponent("messages", isDirectory: false)
     }
 
     private func makeModelsURL(from endpoint: String) throws -> URL {
-        let base = try makeBaseV1URL(from: endpoint)
+        let base = try makeBaseV1URL(
+            from: endpoint,
+            removingSuffixes: ["/v1/messages", "/v1/models", "/messages", "/models"]
+        )
         return base.appendingPathComponent("models", isDirectory: false)
-    }
-
-    private func makeBaseV1URL(from endpoint: String) throws -> URL {
-        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw AIServiceError.invalidEndpoint
-        }
-
-        guard var components = URLComponents(string: trimmed),
-              let rawPath = components.path.removingPercentEncoding else {
-            throw AIServiceError.invalidEndpoint
-        }
-
-        let normalizedPath: String
-        if rawPath.hasSuffix("/v1/messages") {
-            normalizedPath = String(rawPath.dropLast("/messages".count))
-        } else if rawPath.hasSuffix("/v1/models") {
-            normalizedPath = String(rawPath.dropLast("/models".count))
-        } else if rawPath.hasSuffix("/messages") {
-            normalizedPath = String(rawPath.dropLast("/messages".count))
-        } else if rawPath.hasSuffix("/models") {
-            normalizedPath = String(rawPath.dropLast("/models".count))
-        } else {
-            normalizedPath = rawPath
-        }
-
-        let trimmedPath = normalizedPath.hasSuffix("/")
-            ? String(normalizedPath.dropLast())
-            : normalizedPath
-
-        if trimmedPath.hasSuffix("/v1") {
-            components.path = trimmedPath
-        } else if trimmedPath.isEmpty {
-            components.path = "/v1"
-        } else {
-            components.path = trimmedPath + "/v1"
-        }
-
-        guard let normalizedURL = components.url else {
-            throw AIServiceError.invalidEndpoint
-        }
-        return normalizedURL
     }
 
     private func applyRequestHeaders(
@@ -359,24 +294,6 @@ struct AnthropicAIService: AIService {
         }
     }
 
-    private func normalizedTimeout(from timeout: Double) -> TimeInterval {
-        TimeInterval(min(max(timeout, 1), 3600))
-    }
-
-    private func prettyPrintedJSONData<T: Encodable>(_ value: T) throws -> Data {
-        let encoded = try JSONEncoder().encode(value)
-        let object = try JSONSerialization.jsonObject(with: encoded)
-        return try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-    }
-
-    private func collectData(from bytes: URLSession.AsyncBytes) async throws -> Data {
-        var data = Data()
-        for try await byte in bytes {
-            data.append(byte)
-        }
-        return data
-    }
-
     private func providerErrorMessage(from data: Data, statusCode: Int) -> String {
         if let decoded = try? JSONDecoder().decode(ProviderErrorEnvelope.self, from: data) {
             if let message = decoded.error?.message?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -389,13 +306,7 @@ struct AnthropicAIService: AIService {
             }
         }
 
-        if let raw = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !raw.isEmpty {
-            return "HTTP \(statusCode): \(String(raw.prefix(280)))"
-        }
-
-        return "HTTP \(statusCode)"
+        return fallbackProviderErrorMessage(from: data, statusCode: statusCode)
     }
 
     private func tokenUsage(from usage: ResponseUsage?) -> TokenUsage? {

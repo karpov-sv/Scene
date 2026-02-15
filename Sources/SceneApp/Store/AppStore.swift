@@ -125,8 +125,9 @@ final class AppStore: ObservableObject {
         let providerLabel: String
         let endpointURL: String?
         let method: String?
-        let headers: [OpenAICompatibleAIService.RequestPreview.Header]
+        let headers: [AIRequestPreview.Header]
         let bodyJSON: String
+        let bodyHumanReadable: String
         let notes: [String]
     }
 
@@ -2294,6 +2295,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         case .openAI, .openRouter, .lmStudio, .openAICompatible:
@@ -2304,6 +2306,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         }
@@ -2340,6 +2343,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         case .openAI, .openRouter, .lmStudio, .openAICompatible:
@@ -2350,6 +2354,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         }
@@ -2507,6 +2512,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         case .openAI, .openRouter, .lmStudio, .openAICompatible:
@@ -2517,6 +2523,7 @@ final class AppStore: ObservableObject {
                 method: preview.method,
                 headers: preview.headers,
                 bodyJSON: preview.bodyJSON,
+                bodyHumanReadable: preview.bodyHumanReadable,
                 notes: notes
             )
         }

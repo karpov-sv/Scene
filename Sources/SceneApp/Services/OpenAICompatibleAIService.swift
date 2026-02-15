@@ -1,18 +1,6 @@
 import Foundation
 
-struct OpenAICompatibleAIService: AIService {
-    struct RequestPreview {
-        struct Header {
-            let name: String
-            let value: String
-        }
-
-        let url: String
-        let method: String
-        let headers: [Header]
-        let bodyJSON: String
-    }
-
+final class OpenAICompatibleAIService: AIProviderServiceBase, @unchecked Sendable {
     private struct ChatMessage: Codable {
         let role: String
         let content: String
@@ -88,18 +76,12 @@ struct OpenAICompatibleAIService: AIService {
         let usage: ProviderUsage?
     }
 
-    func generateText(_ request: TextGenerationRequest, settings: GenerationSettings) async throws -> String {
-        try await generateText(request, settings: settings, onPartial: nil)
-    }
-
-    func generateTextResult(
+    override func generateTextResult(
         _ request: TextGenerationRequest,
         settings: GenerationSettings,
         onPartial: (@MainActor (String) -> Void)?
     ) async throws -> TextGenerationResult {
-        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIServiceError.missingModel
-        }
+        try validateModel(in: request)
 
         let endpoint = try makeChatCompletionsURL(from: settings.endpoint)
         let shouldStream = settings.enableStreaming
@@ -157,10 +139,8 @@ struct OpenAICompatibleAIService: AIService {
         )
     }
 
-    func makeChatRequestPreview(request: TextGenerationRequest, settings: GenerationSettings) throws -> RequestPreview {
-        guard !request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw AIServiceError.missingModel
-        }
+    func makeChatRequestPreview(request: TextGenerationRequest, settings: GenerationSettings) throws -> AIRequestPreview {
+        try validateModel(in: request)
 
         let endpoint = try makeChatCompletionsURL(from: settings.endpoint)
         let shouldStream = settings.enableStreaming
@@ -177,33 +157,20 @@ struct OpenAICompatibleAIService: AIService {
             stream_options: nil
         )
 
-        let bodyData = try prettyPrintedJSONData(payload)
-        let body = String(data: bodyData, encoding: .utf8) ?? "{}"
+        let bodies = try previewBodyStrings(for: payload)
 
-        var headers = [RequestPreview.Header(name: "Content-Type", value: "application/json")]
+        var headers = [AIRequestPreview.Header(name: "Content-Type", value: "application/json")]
         if !settings.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            headers.append(RequestPreview.Header(name: "Authorization", value: "Bearer \(settings.apiKey)"))
+            headers.append(AIRequestPreview.Header(name: "Authorization", value: "Bearer \(settings.apiKey)"))
         }
 
-        return RequestPreview(
+        return AIRequestPreview(
             url: endpoint.absoluteString,
             method: "POST",
             headers: headers,
-            bodyJSON: body
+            bodyJSON: bodies.rawJSON,
+            bodyHumanReadable: bodies.humanReadable
         )
-    }
-
-    func generateText(
-        _ request: TextGenerationRequest,
-        settings: GenerationSettings,
-        onPartial: (@MainActor (String) -> Void)?
-    ) async throws -> String {
-        let result = try await generateTextResult(
-            request,
-            settings: settings,
-            onPartial: onPartial
-        )
-        return result.text
     }
 
     private func generateStreamingText(
@@ -290,78 +257,25 @@ struct OpenAICompatibleAIService: AIService {
             throw AIServiceError.requestFailed(providerError)
         }
 
-        let modelIDs = Set(
-            (decoded.data ?? [])
-                .map(\.id)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        )
-
-        return modelIDs.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return sortedModelIDs((decoded.data ?? []).map(\.id))
     }
 
     private func makeChatCompletionsURL(from endpoint: String) throws -> URL {
-        let base = try makeBaseV1URL(from: endpoint)
+        let base = try makeBaseV1URL(
+            from: endpoint,
+            removingSuffixes: ["/chat/completions", "/models"]
+        )
         return base
             .appendingPathComponent("chat", isDirectory: false)
             .appendingPathComponent("completions", isDirectory: false)
     }
 
     private func makeModelsURL(from endpoint: String) throws -> URL {
-        let base = try makeBaseV1URL(from: endpoint)
+        let base = try makeBaseV1URL(
+            from: endpoint,
+            removingSuffixes: ["/chat/completions", "/models"]
+        )
         return base.appendingPathComponent("models", isDirectory: false)
-    }
-
-    private func makeBaseV1URL(from endpoint: String) throws -> URL {
-        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw AIServiceError.invalidEndpoint
-        }
-
-        guard var components = URLComponents(string: trimmed), let rawPath = components.path.removingPercentEncoding else {
-            throw AIServiceError.invalidEndpoint
-        }
-
-        let normalizedPath: String
-        if rawPath.hasSuffix("/chat/completions") {
-            normalizedPath = String(rawPath.dropLast("/chat/completions".count))
-        } else {
-            normalizedPath = rawPath
-        }
-
-        let trimmedPath = normalizedPath.hasSuffix("/")
-            ? String(normalizedPath.dropLast())
-            : normalizedPath
-
-        if trimmedPath.hasSuffix("/v1") {
-            components.path = trimmedPath
-        } else {
-            components.path = trimmedPath + "/v1"
-        }
-
-        guard let normalizedURL = components.url else {
-            throw AIServiceError.invalidEndpoint
-        }
-        return normalizedURL
-    }
-
-    private func normalizedTimeout(from timeout: Double) -> TimeInterval {
-        let clamped = min(max(timeout, 1), 3600)
-        return TimeInterval(clamped)
-    }
-
-    private func prettyPrintedJSONData<T: Encodable>(_ value: T) throws -> Data {
-        let encoded = try JSONEncoder().encode(value)
-        let object = try JSONSerialization.jsonObject(with: encoded)
-        return try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-    }
-
-    private func collectData(from bytes: URLSession.AsyncBytes) async throws -> Data {
-        var data = Data()
-        for try await byte in bytes {
-            data.append(byte)
-        }
-        return data
     }
 
     private func providerErrorMessage(from data: Data, statusCode: Int) -> String {
@@ -377,13 +291,7 @@ struct OpenAICompatibleAIService: AIService {
             return message
         }
 
-        if let raw = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !raw.isEmpty {
-            return "HTTP \(statusCode): \(String(raw.prefix(280)))"
-        }
-
-        return "HTTP \(statusCode)"
+        return fallbackProviderErrorMessage(from: data, statusCode: statusCode)
     }
 
     private func tokenUsage(from usage: ProviderUsage?) -> TokenUsage? {
