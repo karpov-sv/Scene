@@ -576,6 +576,7 @@ struct EditorView: View {
             }
         }
         .padding(12)
+        .padding(.bottom, -10)
     }
 
     private var writingSplit: some View {

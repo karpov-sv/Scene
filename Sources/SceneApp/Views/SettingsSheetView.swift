@@ -307,7 +307,7 @@ struct SettingsSheetView: View {
             get: { store.project.editorAppearance.lineHeightMultiple },
             set: {
                 var a = store.project.editorAppearance
-                a.lineHeightMultiple = $0
+                a.lineHeightMultiple = min(max($0, 1.0), 2.5)
                 store.updateEditorAppearance(a)
             }
         )
@@ -318,7 +318,7 @@ struct SettingsSheetView: View {
             get: { store.project.editorAppearance.horizontalPadding },
             set: {
                 var a = store.project.editorAppearance
-                a.horizontalPadding = $0
+                a.horizontalPadding = min(max($0, 0), 80)
                 store.updateEditorAppearance(a)
             }
         )
@@ -329,7 +329,7 @@ struct SettingsSheetView: View {
             get: { store.project.editorAppearance.verticalPadding },
             set: {
                 var a = store.project.editorAppearance
-                a.verticalPadding = $0
+                a.verticalPadding = min(max($0, 0), 80)
                 store.updateEditorAppearance(a)
             }
         )
@@ -453,28 +453,46 @@ struct SettingsSheetView: View {
                         HStack(spacing: 8) {
                             Text("Line height")
                                 .frame(width: 100, alignment: .leading)
-                            Slider(value: lineHeightBinding, in: 1.0...2.5, step: 0.05)
-                            Text(String(format: "%.2f×", store.project.editorAppearance.lineHeightMultiple))
-                                .monospacedDigit()
-                                .frame(width: 44, alignment: .trailing)
+                            Spacer(minLength: 0)
+                            TextField(
+                                "",
+                                value: lineHeightBinding,
+                                format: .number.precision(.fractionLength(2))
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 84, alignment: .leading)
+                            Text("× ")
+                                .foregroundStyle(.secondary)
                         }
 
                         HStack(spacing: 8) {
                             Text("H margin")
                                 .frame(width: 100, alignment: .leading)
-                            Slider(value: hPaddingBinding, in: 0...80, step: 1)
-                            Text("\(Int(store.project.editorAppearance.horizontalPadding)) pt")
-                                .monospacedDigit()
-                                .frame(width: 44, alignment: .trailing)
+                            Spacer(minLength: 0)
+                            TextField(
+                                "",
+                                value: hPaddingBinding,
+                                format: .number.precision(.fractionLength(0))
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 84, alignment: .leading)
+                            Text("pt")
+                                .foregroundStyle(.secondary)
                         }
 
                         HStack(spacing: 8) {
                             Text("V margin")
                                 .frame(width: 100, alignment: .leading)
-                            Slider(value: vPaddingBinding, in: 0...80, step: 1)
-                            Text("\(Int(store.project.editorAppearance.verticalPadding)) pt")
-                                .monospacedDigit()
-                                .frame(width: 44, alignment: .trailing)
+                            Spacer(minLength: 0)
+                            TextField(
+                                "",
+                                value: vPaddingBinding,
+                                format: .number.precision(.fractionLength(0))
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 84, alignment: .leading)
+                            Text("pt")
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.top, 4)
