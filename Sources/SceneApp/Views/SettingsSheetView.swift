@@ -181,12 +181,13 @@ struct SettingsSheetView: View {
     }
 
     private var modelPickerOptions: [String] {
-        let current = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        var options = store.availableRemoteModels
-        if !current.isEmpty && !options.contains(current) {
-            options.insert(current, at: 0)
+        let discovered = store.availableRemoteModels
+        if !discovered.isEmpty {
+            return discovered
         }
-        return options
+
+        let current = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return current.isEmpty ? [] : [current]
     }
 
     var body: some View {

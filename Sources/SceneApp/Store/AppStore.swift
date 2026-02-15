@@ -889,6 +889,10 @@ final class AppStore: ObservableObject {
     }
 
     var generationModelOptions: [String] {
+        if !availableRemoteModels.isEmpty {
+            return availableRemoteModels
+        }
+
         var output: [String] = []
         var seen = Set<String>()
 
@@ -910,6 +914,25 @@ final class AppStore: ObservableObject {
     }
 
     var selectedGenerationModels: [String] {
+        if !availableRemoteModels.isEmpty {
+            let discovered = Set(availableRemoteModels)
+            let selected = normalizedModelSelection(project.settings.generationModelSelection)
+                .filter { discovered.contains($0) }
+            if !selected.isEmpty {
+                return selected
+            }
+
+            let current = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if discovered.contains(current) {
+                return [current]
+            }
+
+            if let first = availableRemoteModels.first {
+                return [first]
+            }
+            return []
+        }
+
         let selected = normalizedModelSelection(project.settings.generationModelSelection)
         if !selected.isEmpty {
             return selected
@@ -1256,6 +1279,9 @@ final class AppStore: ObservableObject {
     func toggleGenerationModelSelection(_ model: String) {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if !availableRemoteModels.isEmpty, !availableRemoteModels.contains(trimmed) {
+            return
+        }
 
         var selected = normalizedModelSelection(project.settings.generationModelSelection)
         if let index = selected.firstIndex(of: trimmed) {
@@ -1278,6 +1304,9 @@ final class AppStore: ObservableObject {
     func selectOnlyGenerationModel(_ model: String) {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if !availableRemoteModels.isEmpty, !availableRemoteModels.contains(trimmed) {
+            return
+        }
 
         project.settings.generationModelSelection = [trimmed]
         saveProject(debounced: true)
@@ -1365,21 +1394,16 @@ final class AppStore: ObservableObject {
             } else {
                 discovered = try await openAIService.fetchAvailableModels(settings: project.settings)
             }
-            availableRemoteModels = discovered
+            let normalizedDiscovered = normalizedModelSelection(discovered)
+            availableRemoteModels = normalizedDiscovered
 
-            if discovered.isEmpty {
+            if normalizedDiscovered.isEmpty {
                 modelDiscoveryStatus = "No models returned by endpoint."
                 return
             }
 
-            modelDiscoveryStatus = "Discovered \(discovered.count) model(s)."
-
-            let currentModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-            if currentModel.isEmpty, let first = discovered.first {
-                project.settings.model = first
-                if normalizedModelSelection(project.settings.generationModelSelection).isEmpty {
-                    project.settings.generationModelSelection = [first]
-                }
+            modelDiscoveryStatus = "Discovered \(normalizedDiscovered.count) model(s)."
+            if reconcileGenerationModels(withDiscovered: normalizedDiscovered) {
                 saveProject(debounced: true)
             }
         } catch AIServiceError.invalidEndpoint {
@@ -2461,7 +2485,7 @@ final class AppStore: ObservableObject {
         let request = TextGenerationRequest(
             systemPrompt: resolvedWorkshopSystemPrompt(),
             userPrompt: promptResult.renderedText,
-            model: project.settings.model,
+            model: resolvedPrimaryModel(),
             temperature: project.settings.temperature,
             maxTokens: project.settings.maxTokens
         )
@@ -2650,7 +2674,7 @@ final class AppStore: ObservableObject {
         let request = TextGenerationRequest(
             systemPrompt: systemPrompt,
             userPrompt: prompt,
-            model: project.settings.model,
+            model: resolvedPrimaryModel(),
             temperature: project.settings.temperature,
             maxTokens: project.settings.maxTokens
         )
@@ -3553,6 +3577,19 @@ final class AppStore: ObservableObject {
         return fallback.isEmpty ? [] : [fallback]
     }
 
+    private func resolvedPrimaryModel() -> String {
+        let configured = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if availableRemoteModels.isEmpty {
+            return configured
+        }
+
+        if availableRemoteModels.contains(configured) {
+            return configured
+        }
+
+        return selectedGenerationModels.first ?? availableRemoteModels.first ?? configured
+    }
+
     private func makeProseGenerationRequest(
         beat: String,
         scene: Scene,
@@ -3582,8 +3619,7 @@ final class AppStore: ObservableObject {
             ? project.settings.defaultSystemPrompt
             : activePrompt.systemTemplate
 
-        let configuredModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackModel = configuredModel.isEmpty ? (selectedGenerationModels.first ?? "") : configuredModel
+        let fallbackModel = resolvedPrimaryModel()
         let selectedModel = modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? modelOverride!.trimmingCharacters(in: .whitespacesAndNewlines)
             : fallbackModel
@@ -3641,7 +3677,7 @@ final class AppStore: ObservableObject {
             request: TextGenerationRequest(
                 systemPrompt: systemPrompt,
                 userPrompt: promptResult.renderedText,
-                model: project.settings.model,
+                model: resolvedPrimaryModel(),
                 temperature: project.settings.temperature,
                 maxTokens: project.settings.maxTokens
             ),
@@ -3743,7 +3779,7 @@ final class AppStore: ObservableObject {
             request: TextGenerationRequest(
                 systemPrompt: systemPrompt,
                 userPrompt: promptResult.renderedText,
-                model: project.settings.model,
+                model: resolvedPrimaryModel(),
                 temperature: project.settings.temperature,
                 maxTokens: project.settings.maxTokens
             ),
@@ -3790,7 +3826,7 @@ final class AppStore: ObservableObject {
             request: TextGenerationRequest(
                 systemPrompt: systemPrompt,
                 userPrompt: promptResult.renderedText,
-                model: project.settings.model,
+                model: resolvedPrimaryModel(),
                 temperature: project.settings.temperature,
                 maxTokens: project.settings.maxTokens
             ),
@@ -4041,6 +4077,48 @@ final class AppStore: ObservableObject {
 
         let fallback = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
         project.settings.generationModelSelection = fallback.isEmpty ? [] : [fallback]
+    }
+
+    @discardableResult
+    private func reconcileGenerationModels(withDiscovered discoveredModels: [String]) -> Bool {
+        guard !discoveredModels.isEmpty else { return false }
+
+        let discoveredSet = Set(discoveredModels)
+        var didChange = false
+
+        var selected = normalizedModelSelection(project.settings.generationModelSelection)
+        let filteredSelection = selected.filter { discoveredSet.contains($0) }
+        if filteredSelection != selected {
+            selected = filteredSelection
+            didChange = true
+        }
+
+        var currentModel = project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentModel != project.settings.model {
+            project.settings.model = currentModel
+            didChange = true
+        }
+
+        if !discoveredSet.contains(currentModel) {
+            let replacement = selected.first ?? discoveredModels[0]
+            if project.settings.model != replacement {
+                project.settings.model = replacement
+                didChange = true
+            }
+            currentModel = replacement
+        }
+
+        if selected.isEmpty {
+            selected = [currentModel]
+            didChange = true
+        }
+
+        if project.settings.generationModelSelection != selected {
+            project.settings.generationModelSelection = selected
+            didChange = true
+        }
+
+        return didChange
     }
 
     private func isBuiltInPromptModified(_ prompt: PromptTemplate, comparedTo builtIn: PromptTemplate) -> Bool {
