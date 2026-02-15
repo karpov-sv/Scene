@@ -234,9 +234,11 @@ struct ContentView: View {
     private var projectMenuActions: ProjectMenuActions {
         ProjectMenuActions(
             importProjectJSON: importProjectJSONFromMenu,
+            importProjectEPUB: importProjectEPUBFromMenu,
             exportProjectJSON: exportProjectJSONFromMenu,
             exportProjectPlainText: exportProjectPlainTextFromMenu,
             exportProjectHTML: exportProjectHTMLFromMenu,
+            exportProjectEPUB: exportProjectEPUBFromMenu,
             canExportProject: store.isProjectOpen
         )
     }
@@ -381,6 +383,33 @@ struct ContentView: View {
             try store.exportProjectAsHTML(to: fileURL)
         } catch {
             store.lastError = "HTML export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectEPUBFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectEPUBExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectAsEPUB(to: fileURL)
+        } catch {
+            store.lastError = "EPUB export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importProjectEPUBFromMenu() {
+        guard let fileURL = ProjectDialogs.chooseProjectEPUBImportURL() else {
+            return
+        }
+        guard ProjectDialogs.confirmProjectEPUBImportReplacement() else {
+            return
+        }
+
+        do {
+            try store.importProjectFromEPUB(from: fileURL)
+        } catch {
+            store.lastError = "EPUB import failed: \(error.localizedDescription)"
         }
     }
 }

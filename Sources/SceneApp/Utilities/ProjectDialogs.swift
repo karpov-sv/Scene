@@ -122,6 +122,16 @@ enum ProjectDialogs {
         )
     }
 
+    static func chooseProjectEPUBExportURL(defaultProjectName: String) -> URL? {
+        chooseTypedExportURL(
+            title: "Export Project as EPUB",
+            message: "Export chapter and scene text as an EPUB ebook. This also embeds full Scene project data for Scene-to-Scene import.",
+            prompt: "Export",
+            suggestedName: "\(defaultProjectName).epub",
+            contentType: UTType(filenameExtension: "epub") ?? .data
+        )
+    }
+
     static func chooseProjectExchangeImportURL() -> URL? {
         chooseJSONImportURL(
             title: "Import Project from JSON",
@@ -130,12 +140,41 @@ enum ProjectDialogs {
         )
     }
 
+    static func chooseProjectEPUBImportURL() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Import Project from EPUB"
+        panel.message = "Select an EPUB file to import."
+        panel.prompt = "Import"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "epub") ?? .data]
+
+        guard panel.runModal() == .OK else {
+            return nil
+        }
+
+        return panel.urls.first
+    }
+
     static func confirmProjectImportReplacement() -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Replace Current Project Content?"
         alert.informativeText = "Importing a project JSON will replace chapters, scenes, compendium, prompts, and workshop chats in the current project."
         alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    static func confirmProjectEPUBImportReplacement() -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Import EPUB Into Current Project?"
+        alert.informativeText = "If the EPUB contains embedded Scene project data, it will replace the full project. Otherwise, chapter/scene text and project title will be replaced from EPUB content."
+        alert.addButton(withTitle: "Import")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
     }

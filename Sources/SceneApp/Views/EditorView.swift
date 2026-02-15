@@ -598,6 +598,7 @@ struct EditorView: View {
             contentRefreshID: store.sceneRichTextRefreshID,
             command: sceneEditorCommand,
             shouldAutoScrollExternalUpdates: store.isGenerating,
+            incrementalRewriteSessionActive: isRewritingSelection && store.incrementalRewrite,
             editorAppearance: store.project.editorAppearance,
             onSelectionChange: { selection in
                 editorSelection = selection
@@ -903,6 +904,7 @@ struct EditorView: View {
         HStack(spacing: 4) {
             Image(systemName: icon)
             Text("\(value)")
+                .lineLimit(1)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -980,6 +982,9 @@ struct EditorView: View {
         let selectionSnapshot = editorSelection
         guard selectionSnapshot.hasSelection else { return }
         let emphasizeWithItalics = store.markRewrittenTextAsItalics
+        let incrementalRewrite = store.incrementalRewrite
+        var liveTargetRange = selectionSnapshot.range
+        var lastAppliedPartial = ""
 
         isRewritingSelection = true
         rewriteTask = Task { @MainActor in
@@ -988,12 +993,38 @@ struct EditorView: View {
                 rewriteTask = nil
             }
 
+            let partialHandler: (@MainActor (String) -> Void)?
+            if incrementalRewrite {
+                partialHandler = { partial in
+                    let normalized = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !normalized.isEmpty else { return }
+                    guard normalized != lastAppliedPartial else { return }
+                    lastAppliedPartial = normalized
+
+                    sceneEditorCommand = SceneEditorCommand(
+                        action: .replaceSelection(
+                            rewrittenText: normalized,
+                            targetRange: liveTargetRange,
+                            emphasizeWithItalics: emphasizeWithItalics
+                        )
+                    )
+                    liveTargetRange = SceneEditorRange(
+                        range: NSRange(location: liveTargetRange.location, length: (normalized as NSString).length)
+                    )
+                }
+            } else {
+                partialHandler = nil
+            }
+
             do {
-                let rewritten = try await store.rewriteSelectedSceneText(selectionSnapshot.text)
+                let rewritten = try await store.rewriteSelectedSceneText(
+                    selectionSnapshot.text,
+                    onPartial: partialHandler
+                )
                 sceneEditorCommand = SceneEditorCommand(
                     action: .replaceSelection(
                         rewrittenText: rewritten,
-                        targetRange: selectionSnapshot.range,
+                        targetRange: incrementalRewrite ? liveTargetRange : selectionSnapshot.range,
                         emphasizeWithItalics: emphasizeWithItalics
                     )
                 )
@@ -1017,6 +1048,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let contentRefreshID: UUID
     let command: SceneEditorCommand?
     let shouldAutoScrollExternalUpdates: Bool
+    let incrementalRewriteSessionActive: Bool
     let editorAppearance: EditorAppearanceSettings
     let onSelectionChange: (SceneEditorSelection) -> Void
     let onFormattingChange: (SceneEditorFormatting) -> Void
@@ -1173,7 +1205,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             plainText: plainText,
             richTextData: richTextData,
             contentRefreshID: contentRefreshID,
+            pendingCommand: command,
             shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
+            incrementalRewriteSessionActive: incrementalRewriteSessionActive,
             force: true
         )
         context.coordinator.applyAppearanceIfNeeded(
@@ -1195,7 +1229,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             plainText: plainText,
             richTextData: richTextData,
             contentRefreshID: contentRefreshID,
+            pendingCommand: command,
             shouldAutoScrollExternalUpdates: shouldAutoScrollExternalUpdates,
+            incrementalRewriteSessionActive: incrementalRewriteSessionActive,
             force: false
         )
         context.coordinator.applyCommand(command, to: textView)
@@ -1231,6 +1267,11 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         private var lastAppliedAppearance: EditorAppearanceSettings?
         private var lastAppliedAppearanceSceneID: UUID?
         private var appearanceEverApplied: Bool = false
+        private var undoGroupingDepth: Int = 0
+        private var generationUndoSessionActive: Bool = false
+        private var rewriteUndoSessionActive: Bool = false
+        private var lastGenerationStreamingState: Bool = false
+        private var lastIncrementalRewriteState: Bool = false
         init(
             onSelectionChange: @escaping (SceneEditorSelection) -> Void,
             onFormattingChange: @escaping (SceneEditorFormatting) -> Void,
@@ -1251,7 +1292,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             plainText: String,
             richTextData: Data?,
             contentRefreshID: UUID,
+            pendingCommand: SceneEditorCommand?,
             shouldAutoScrollExternalUpdates: Bool,
+            incrementalRewriteSessionActive: Bool,
             force: Bool
         ) {
             if isApplyingProgrammaticChange {
@@ -1259,6 +1302,24 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             }
 
             let sceneChanged = lastSceneID != sceneID
+            let hasPendingRewriteReplaceCommand: Bool
+            if let pendingCommand, lastHandledCommandID != pendingCommand.id {
+                if case .replaceSelection = pendingCommand.action {
+                    hasPendingRewriteReplaceCommand = true
+                } else {
+                    hasPendingRewriteReplaceCommand = false
+                }
+            } else {
+                hasPendingRewriteReplaceCommand = false
+            }
+            updateUndoGroupingState(
+                for: textView,
+                sceneChanged: sceneChanged,
+                generationStreamingActive: shouldAutoScrollExternalUpdates,
+                incrementalRewriteActive: incrementalRewriteSessionActive,
+                hasPendingRewriteReplaceCommand: hasPendingRewriteReplaceCommand
+            )
+
             let textChanged = textView.string != plainText
             let refreshRequested = lastAppliedContentRefreshID != contentRefreshID
             guard force || sceneChanged || textChanged || refreshRequested else {
@@ -1301,6 +1362,74 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             lastAppliedContentRefreshID = contentRefreshID
             publishSelection(from: textView)
             publishUndoRedoState(from: textView)
+        }
+
+        private func updateUndoGroupingState(
+            for textView: NSTextView,
+            sceneChanged: Bool,
+            generationStreamingActive: Bool,
+            incrementalRewriteActive: Bool,
+            hasPendingRewriteReplaceCommand: Bool
+        ) {
+            if sceneChanged {
+                if rewriteUndoSessionActive {
+                    endUndoGrouping(in: textView)
+                    rewriteUndoSessionActive = false
+                }
+                if generationUndoSessionActive {
+                    endUndoGrouping(in: textView)
+                    generationUndoSessionActive = false
+                }
+                lastGenerationStreamingState = false
+                lastIncrementalRewriteState = false
+            }
+
+            if generationStreamingActive {
+                if !lastGenerationStreamingState {
+                    beginUndoGrouping(actionName: "Generate Text", in: textView)
+                    generationUndoSessionActive = true
+                }
+                lastGenerationStreamingState = true
+            } else if lastGenerationStreamingState {
+                if generationUndoSessionActive {
+                    endUndoGrouping(in: textView)
+                    generationUndoSessionActive = false
+                }
+                lastGenerationStreamingState = false
+            }
+
+            if incrementalRewriteActive {
+                if !lastIncrementalRewriteState {
+                    beginUndoGrouping(actionName: "Rewrite Selection", in: textView)
+                    rewriteUndoSessionActive = true
+                }
+                lastIncrementalRewriteState = true
+            } else if lastIncrementalRewriteState {
+                if rewriteUndoSessionActive && hasPendingRewriteReplaceCommand {
+                    return
+                }
+                if rewriteUndoSessionActive {
+                    endUndoGrouping(in: textView)
+                    rewriteUndoSessionActive = false
+                }
+                lastIncrementalRewriteState = false
+            }
+        }
+
+        private func beginUndoGrouping(actionName: String, in textView: NSTextView) {
+            guard let undoManager = textView.undoManager else { return }
+            undoManager.beginUndoGrouping()
+            undoGroupingDepth += 1
+            if !actionName.isEmpty {
+                undoManager.setActionName(actionName)
+            }
+        }
+
+        private func endUndoGrouping(in textView: NSTextView) {
+            guard undoGroupingDepth > 0 else { return }
+            defer { undoGroupingDepth -= 1 }
+            guard let undoManager = textView.undoManager else { return }
+            undoManager.endUndoGrouping()
         }
 
         func textDidChange(_ notification: Notification) {

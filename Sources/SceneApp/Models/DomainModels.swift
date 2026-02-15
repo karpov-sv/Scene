@@ -476,6 +476,7 @@ struct GenerationSettings: Codable, Equatable {
     var generationModelSelection: [String]
     var useInlineGeneration: Bool
     var markRewrittenTextAsItalics: Bool
+    var incrementalRewrite: Bool
     var temperature: Double
     var maxTokens: Int
     var enableStreaming: Bool
@@ -496,6 +497,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: [String],
         useInlineGeneration: Bool,
         markRewrittenTextAsItalics: Bool,
+        incrementalRewrite: Bool,
         temperature: Double,
         maxTokens: Int,
         enableStreaming: Bool,
@@ -509,6 +511,7 @@ struct GenerationSettings: Codable, Equatable {
         self.generationModelSelection = generationModelSelection
         self.useInlineGeneration = useInlineGeneration
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
+        self.incrementalRewrite = incrementalRewrite
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.enableStreaming = enableStreaming
@@ -524,6 +527,7 @@ struct GenerationSettings: Codable, Equatable {
         case generationModelSelection
         case useInlineGeneration
         case markRewrittenTextAsItalics
+        case incrementalRewrite
         case temperature
         case maxTokens
         case enableStreaming
@@ -554,6 +558,7 @@ struct GenerationSettings: Codable, Equatable {
         }
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
+        incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
         temperature = try container.decode(Double.self, forKey: .temperature)
         maxTokens = try container.decode(Int.self, forKey: .maxTokens)
         enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? true
@@ -569,6 +574,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: ["gpt-4o-mini"],
         useInlineGeneration: false,
         markRewrittenTextAsItalics: true,
+        incrementalRewrite: false,
         temperature: 0.8,
         maxTokens: 700,
         enableStreaming: true,

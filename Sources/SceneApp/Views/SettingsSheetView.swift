@@ -95,6 +95,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var incrementalRewriteBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.incrementalRewrite },
+            set: { store.updateIncrementalRewrite($0) }
+        )
+    }
+
     private var endpointBinding: Binding<String> {
         Binding(
             get: { store.project.settings.endpoint },
@@ -597,6 +604,16 @@ struct SettingsSheetView: View {
                                 .accessibilityLabel("Mark rewritten text as italics")
                                 .help("Italicize AI-rewritten text to distinguish it from original")
                         }
+
+                        HStack(spacing: 8) {
+                            Text("Incremental rewrite")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: incrementalRewriteBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Incremental rewrite")
+                                .help("Update rewritten selection while streaming chunks arrive")
+                        }
                     }
                     .padding(.top, 4)
                 }
@@ -618,7 +635,7 @@ struct SettingsSheetView: View {
 
                 GroupBox("Data Exchange") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Transfer prompt templates, compendium entries, and full projects as JSON files.")
+                        Text("Transfer prompt templates, compendium entries, and full projects as JSON, plus project text as EPUB.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -655,6 +672,18 @@ struct SettingsSheetView: View {
                             }
                             Button("Import...") {
                                 importProjectExchange()
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Project EPUB")
+                                .frame(width: 96, alignment: .leading)
+                            Spacer(minLength: 0)
+                            Button("Export...") {
+                                exportProjectEPUB()
+                            }
+                            Button("Import...") {
+                                importProjectEPUB()
                             }
                         }
 
@@ -1305,6 +1334,38 @@ struct SettingsSheetView: View {
             dataExchangeStatus = "Imported full project JSON."
         } catch {
             store.lastError = "Project import failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportProjectEPUB() {
+        guard let fileURL = ProjectDialogs.chooseProjectEPUBExportURL(defaultProjectName: store.currentProjectName) else {
+            return
+        }
+
+        do {
+            try store.exportProjectAsEPUB(to: fileURL)
+            dataExchangeStatus = "Exported project EPUB."
+        } catch {
+            store.lastError = "Project EPUB export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importProjectEPUB() {
+        guard let fileURL = ProjectDialogs.chooseProjectEPUBImportURL() else {
+            return
+        }
+        guard ProjectDialogs.confirmProjectEPUBImportReplacement() else {
+            return
+        }
+
+        do {
+            try store.importProjectFromEPUB(from: fileURL)
+            selectedPromptID = store.project.selectedProsePromptID
+                ?? store.project.selectedWorkshopPromptID
+                ?? store.project.prompts.first?.id
+            dataExchangeStatus = "Imported project EPUB."
+        } catch {
+            store.lastError = "Project EPUB import failed: \(error.localizedDescription)"
         }
     }
 

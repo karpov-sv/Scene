@@ -11,6 +11,11 @@ struct SceneFileCommands: Commands {
                     actions?.importProjectJSON()
                 }
                 .disabled(actions == nil)
+
+                Button("Project EPUB...") {
+                    actions?.importProjectEPUB()
+                }
+                .disabled(actions == nil)
             }
 
             Menu("Export") {
@@ -26,6 +31,11 @@ struct SceneFileCommands: Commands {
 
                 Button("Project HTML...") {
                     actions?.exportProjectHTML()
+                }
+                .disabled(actions?.canExportProject != true)
+
+                Button("Project EPUB...") {
+                    actions?.exportProjectEPUB()
                 }
                 .disabled(actions?.canExportProject != true)
             }

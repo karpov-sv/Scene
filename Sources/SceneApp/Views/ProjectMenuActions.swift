@@ -2,9 +2,11 @@ import SwiftUI
 
 struct ProjectMenuActions {
     let importProjectJSON: () -> Void
+    let importProjectEPUB: () -> Void
     let exportProjectJSON: () -> Void
     let exportProjectPlainText: () -> Void
     let exportProjectHTML: () -> Void
+    let exportProjectEPUB: () -> Void
     let canExportProject: Bool
 }
 

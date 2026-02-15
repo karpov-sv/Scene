@@ -16,6 +16,7 @@ final class AppStore: ObservableObject {
     private enum DataExchangeError: LocalizedError {
         case projectNotOpen
         case invalidPayloadType(expected: String, actual: String)
+        case invalidEPUB(String)
 
         var errorDescription: String? {
             switch self {
@@ -23,6 +24,8 @@ final class AppStore: ObservableObject {
                 return "No project is currently open."
             case let .invalidPayloadType(expected, actual):
                 return "Invalid import file type '\(actual)'. Expected '\(expected)'."
+            case let .invalidEPUB(message):
+                return "Invalid EPUB: \(message)"
             }
         }
     }
@@ -61,6 +64,36 @@ final class AppStore: ObservableObject {
         var type: String
         var exportedAt: Date
         var project: StoryProject
+    }
+
+    private struct EPUBManifestItem {
+        var id: String
+        var href: String
+        var mediaType: String
+        var properties: String?
+    }
+
+    private struct EPUBPackageDescriptor {
+        var title: String
+        var opfURL: URL
+        var packageBaseURL: URL
+        var manifestByID: [String: EPUBManifestItem]
+        var spineItemIDs: [String]
+    }
+
+    private struct EPUBParsedScene {
+        var title: String
+        var content: String
+    }
+
+    private struct EPUBSceneBuilder {
+        var title: String
+        var paragraphs: [String]
+    }
+
+    private struct EPUBParsedChapter {
+        var title: String
+        var scenes: [EPUBParsedScene]
     }
 
     private static let transferVersion = "1.0"
@@ -905,6 +938,10 @@ final class AppStore: ObservableObject {
         project.settings.markRewrittenTextAsItalics
     }
 
+    var incrementalRewrite: Bool {
+        project.settings.incrementalRewrite
+    }
+
     func isGenerationModelSelected(_ model: String) -> Bool {
         selectedGenerationModels.contains(model.trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -1258,6 +1295,12 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateIncrementalRewrite(_ enabled: Bool) {
+        guard project.settings.incrementalRewrite != enabled else { return }
+        project.settings.incrementalRewrite = enabled
+        saveProject(debounced: true)
+    }
+
     func updateTemperature(_ temperature: Double) {
         project.settings.temperature = temperature
         saveProject(debounced: true)
@@ -1571,9 +1614,157 @@ final class AppStore: ObservableObject {
             )
         }
 
+        applyImportedProject(envelope.project)
+    }
+
+    func exportProjectAsPlainText(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let text = makeProjectPlainTextExport()
+        let data = Data(text.utf8)
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    func exportProjectAsHTML(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let html = makeProjectHTMLExport()
+        let data = Data(html.utf8)
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    func exportProjectAsEPUB(to fileURL: URL) throws {
+        guard isProjectOpen else {
+            throw DataExchangeError.projectNotOpen
+        }
+
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("Scene-EPUB-\(UUID().uuidString)", isDirectory: true)
+        let packageRoot = tempRoot.appendingPathComponent("package", isDirectory: true)
+        let metaInfURL = packageRoot.appendingPathComponent("META-INF", isDirectory: true)
+        let oebpsURL = packageRoot.appendingPathComponent("OEBPS", isDirectory: true)
+
+        try fileManager.createDirectory(at: metaInfURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: oebpsURL, withIntermediateDirectories: true)
+
+        defer {
+            try? fileManager.removeItem(at: tempRoot)
+        }
+
+        let mimetypeURL = packageRoot.appendingPathComponent("mimetype")
+        try Data("application/epub+zip".utf8).write(to: mimetypeURL, options: .atomic)
+
+        let containerXML = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+          <rootfiles>
+            <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+          </rootfiles>
+        </container>
+        """
+        try writeUTF8(containerXML, to: metaInfURL.appendingPathComponent("container.xml"))
+
+        var chapterItems: [(id: String, href: String, title: String)] = []
+        for (chapterIndex, chapter) in project.chapters.enumerated() {
+            let itemID = "chapter-\(chapterIndex + 1)"
+            let href = String(format: "chapter-%03d.xhtml", chapterIndex + 1)
+            let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Chapter \(chapterIndex + 1)"
+                : chapter.title
+
+            let chapterXHTML = makeEPUBChapterXHTML(
+                chapter: chapter,
+                chapterTitle: chapterTitle,
+                chapterIndex: chapterIndex
+            )
+            try writeUTF8(chapterXHTML, to: oebpsURL.appendingPathComponent(href))
+            chapterItems.append((id: itemID, href: href, title: chapterTitle))
+        }
+
+        if chapterItems.isEmpty {
+            let emptyChapter = Chapter(title: "Chapter 1", scenes: [Scene(title: "Scene 1", content: "")])
+            let chapterXHTML = makeEPUBChapterXHTML(
+                chapter: emptyChapter,
+                chapterTitle: "Chapter 1",
+                chapterIndex: 0
+            )
+            try writeUTF8(chapterXHTML, to: oebpsURL.appendingPathComponent("chapter-001.xhtml"))
+            chapterItems.append((id: "chapter-1", href: "chapter-001.xhtml", title: "Chapter 1"))
+        }
+
+        let navXHTML = makeEPUBNavigationXHTML(chapters: chapterItems)
+        try writeUTF8(navXHTML, to: oebpsURL.appendingPathComponent("nav.xhtml"))
+
+        let projectEnvelope = ProjectTransferEnvelope(
+            version: Self.transferVersion,
+            type: Self.projectTransferType,
+            exportedAt: .now,
+            project: project
+        )
+        let projectEnvelopeData = try Self.transferEncoder.encode(projectEnvelope)
+        try projectEnvelopeData.write(to: oebpsURL.appendingPathComponent("scene-project.json"), options: .atomic)
+
+        let packageOPF = makeEPUBPackageOPF(chapters: chapterItems)
+        try writeUTF8(packageOPF, to: oebpsURL.appendingPathComponent("content.opf"))
+
+        if fileManager.fileExists(atPath: fileURL.path) {
+            try fileManager.removeItem(at: fileURL)
+        }
+
+        try createEPUBArchive(from: packageRoot, to: fileURL)
+    }
+
+    func importProjectFromEPUB(from fileURL: URL) throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("Scene-EPUB-Import-\(UUID().uuidString)", isDirectory: true)
+
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: tempRoot)
+        }
+
+        do {
+            try extractEPUBArchive(from: fileURL, to: tempRoot)
+        } catch {
+            throw DataExchangeError.invalidEPUB("Failed to unzip file.")
+        }
+
+        let packageRoot = try locateEPUBRoot(in: tempRoot)
+        let descriptor = try parseEPUBPackageDescriptor(in: packageRoot)
+
+        if let embeddedProject = try loadEmbeddedProjectFromEPUB(descriptor: descriptor) {
+            applyImportedProject(embeddedProject)
+            return
+        }
+
+        let chapters = try parseEPUBChapters(descriptor: descriptor)
+        guard !chapters.isEmpty else {
+            throw DataExchangeError.invalidEPUB("No readable chapter content found.")
+        }
+
+        var importedProject = project
+        importedProject.title = descriptor.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Imported EPUB"
+            : descriptor.title
+        importedProject.chapters = chapters
+        importedProject.sceneContextCompendiumSelection = [:]
+        importedProject.sceneContextSceneSummarySelection = [:]
+        importedProject.sceneContextChapterSummarySelection = [:]
+        importedProject.updatedAt = .now
+
+        applyImportedProject(importedProject)
+    }
+
+    private func applyImportedProject(_ importedProject: StoryProject) {
         cancelProjectTasksForSwitch()
 
-        project = envelope.project
+        project = importedProject
         isProjectOpen = true
         workshopInput = ""
         beatInput = ""
@@ -1599,26 +1790,6 @@ final class AppStore: ObservableObject {
         }
 
         saveProject(forceWrite: true)
-    }
-
-    func exportProjectAsPlainText(to fileURL: URL) throws {
-        guard isProjectOpen else {
-            throw DataExchangeError.projectNotOpen
-        }
-
-        let text = makeProjectPlainTextExport()
-        let data = Data(text.utf8)
-        try data.write(to: fileURL, options: .atomic)
-    }
-
-    func exportProjectAsHTML(to fileURL: URL) throws {
-        guard isProjectOpen else {
-            throw DataExchangeError.projectNotOpen
-        }
-
-        let html = makeProjectHTMLExport()
-        let data = Data(html.utf8)
-        try data.write(to: fileURL, options: .atomic)
     }
 
     // MARK: - Chapter / Scene
@@ -2133,7 +2304,10 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func rewriteSelectedSceneText(_ selectedText: String) async throws -> String {
+    func rewriteSelectedSceneText(
+        _ selectedText: String,
+        onPartial: (@MainActor (String) -> Void)? = nil
+    ) async throws -> String {
         let normalizedSelection = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedSelection.isEmpty else {
             throw AIServiceError.badResponse("Select some scene text first.")
@@ -2148,10 +2322,11 @@ final class AppStore: ObservableObject {
 
         let rewritePartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
-            rewritePartialHandler = { [weak self] partial in
+            rewritePartialHandler = { [weak self, onPartial] partial in
                 guard let self else { return }
                 self.generationStatus = "Rewriting..."
                 self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
+                onPartial?(partial)
             }
         } else {
             rewritePartialHandler = nil
@@ -3988,6 +4163,593 @@ final class AppStore: ObservableObject {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    private func writeUTF8(_ text: String, to url: URL) throws {
+        let data = Data(text.utf8)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func createEPUBArchive(from packageRoot: URL, to outputURL: URL) throws {
+        try runProcess(
+            executablePath: "/usr/bin/zip",
+            arguments: ["-X0", outputURL.path, "mimetype"],
+            currentDirectoryURL: packageRoot
+        )
+        try runProcess(
+            executablePath: "/usr/bin/zip",
+            arguments: ["-Xr9D", outputURL.path, "META-INF", "OEBPS"],
+            currentDirectoryURL: packageRoot
+        )
+    }
+
+    private func extractEPUBArchive(from archiveURL: URL, to destinationURL: URL) throws {
+        try runProcess(
+            executablePath: "/usr/bin/unzip",
+            arguments: ["-q", archiveURL.path, "-d", destinationURL.path]
+        )
+    }
+
+    private func runProcess(
+        executablePath: String,
+        arguments: [String],
+        currentDirectoryURL: URL? = nil
+    ) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.currentDirectoryURL = currentDirectoryURL
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+            let error = String(data: errorData, encoding: .utf8) ?? ""
+            let details = [error, output]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+
+            let description = details.isEmpty
+                ? "Process failed with exit code \(process.terminationStatus)."
+                : details
+            throw NSError(
+                domain: "Scene.Archive",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: description]
+            )
+        }
+    }
+
+    private func makeEPUBChapterXHTML(
+        chapter: Chapter,
+        chapterTitle: String,
+        chapterIndex: Int
+    ) -> String {
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<!DOCTYPE html>")
+        lines.append("<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">")
+        lines.append("<head>")
+        lines.append("  <meta charset=\"utf-8\"/>")
+        lines.append("  <title>\(escapeHTML(chapterTitle))</title>")
+        lines.append("</head>")
+        lines.append("<body>")
+        lines.append("  <h1>\(escapeHTML(chapterTitle))</h1>")
+
+        if chapter.scenes.isEmpty {
+            lines.append("  <section>")
+            lines.append("    <h2>Scene 1</h2>")
+            lines.append("    <p></p>")
+            lines.append("  </section>")
+        } else {
+            for (sceneIndex, scene) in chapter.scenes.enumerated() {
+                let sceneTitle = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Scene \(sceneIndex + 1)"
+                    : scene.title
+                lines.append("  <section id=\"scene-\(chapterIndex + 1)-\(sceneIndex + 1)\">")
+                lines.append("    <h2>\(escapeHTML(sceneTitle))</h2>")
+                lines.append(htmlParagraphs(for: scene.content, indent: "    "))
+                lines.append("  </section>")
+            }
+        }
+
+        lines.append("</body>")
+        lines.append("</html>")
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeEPUBNavigationXHTML(chapters: [(id: String, href: String, title: String)]) -> String {
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<!DOCTYPE html>")
+        lines.append("<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"en\" lang=\"en\">")
+        lines.append("<head>")
+        lines.append("  <meta charset=\"utf-8\"/>")
+        lines.append("  <title>\(escapeHTML(currentProjectName))</title>")
+        lines.append("</head>")
+        lines.append("<body>")
+        lines.append("  <nav epub:type=\"toc\" id=\"toc\">")
+        lines.append("    <h1>\(escapeHTML(currentProjectName))</h1>")
+        lines.append("    <ol>")
+        for chapter in chapters {
+            lines.append("      <li><a href=\"\(escapeHTML(chapter.href))\">\(escapeHTML(chapter.title))</a></li>")
+        }
+        lines.append("    </ol>")
+        lines.append("  </nav>")
+        lines.append("</body>")
+        lines.append("</html>")
+        return lines.joined(separator: "\n")
+    }
+
+    private func makeEPUBPackageOPF(chapters: [(id: String, href: String, title: String)]) -> String {
+        let modifiedFormatter = ISO8601DateFormatter()
+        modifiedFormatter.formatOptions = [.withInternetDateTime]
+        let modified = modifiedFormatter.string(from: .now)
+        let bookIdentifier = "urn:uuid:\(project.id.uuidString.lowercased())"
+
+        var lines: [String] = []
+        lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+        lines.append("<package xmlns=\"http://www.idpf.org/2007/opf\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" version=\"3.0\" unique-identifier=\"book-id\" xml:lang=\"en\">")
+        lines.append("  <metadata>")
+        lines.append("    <dc:identifier id=\"book-id\">\(escapeHTML(bookIdentifier))</dc:identifier>")
+        lines.append("    <dc:title>\(escapeHTML(currentProjectName))</dc:title>")
+        lines.append("    <dc:language>en</dc:language>")
+        lines.append("    <meta property=\"dcterms:modified\">\(modified)</meta>")
+        lines.append("  </metadata>")
+        lines.append("  <manifest>")
+        lines.append("    <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>")
+        for chapter in chapters {
+            lines.append("    <item id=\"\(escapeHTML(chapter.id))\" href=\"\(escapeHTML(chapter.href))\" media-type=\"application/xhtml+xml\"/>")
+        }
+        lines.append("    <item id=\"scene-project\" href=\"scene-project.json\" media-type=\"application/json\"/>")
+        lines.append("  </manifest>")
+        lines.append("  <spine>")
+        for chapter in chapters {
+            lines.append("    <itemref idref=\"\(escapeHTML(chapter.id))\"/>")
+        }
+        lines.append("  </spine>")
+        lines.append("</package>")
+        return lines.joined(separator: "\n")
+    }
+
+    private func locateEPUBRoot(in extractionRoot: URL) throws -> URL {
+        let directContainer = extractionRoot
+            .appendingPathComponent("META-INF", isDirectory: true)
+            .appendingPathComponent("container.xml")
+        if FileManager.default.fileExists(atPath: directContainer.path) {
+            return extractionRoot
+        }
+
+        if let enumerator = FileManager.default.enumerator(at: extractionRoot, includingPropertiesForKeys: nil) {
+            for case let candidate as URL in enumerator {
+                guard candidate.lastPathComponent == "container.xml" else { continue }
+                guard candidate.deletingLastPathComponent().lastPathComponent == "META-INF" else { continue }
+                return candidate.deletingLastPathComponent().deletingLastPathComponent()
+            }
+        }
+
+        throw DataExchangeError.invalidEPUB("Missing META-INF/container.xml.")
+    }
+
+    private func parseEPUBPackageDescriptor(in packageRoot: URL) throws -> EPUBPackageDescriptor {
+        let containerURL = packageRoot
+            .appendingPathComponent("META-INF", isDirectory: true)
+            .appendingPathComponent("container.xml")
+        guard let containerText = try? String(contentsOf: containerURL, encoding: .utf8) else {
+            throw DataExchangeError.invalidEPUB("Cannot read container.xml.")
+        }
+
+        var rootfilePath = firstCapturedValue(
+            in: containerText,
+            pattern: "<rootfile\\b[^>]*full-path\\s*=\\s*['\"]([^'\"]+)['\"][^>]*/?>"
+        )
+
+        if rootfilePath == nil,
+           let opfURL = firstFile(withExtension: "opf", in: packageRoot) {
+            rootfilePath = opfURL.path.replacingOccurrences(of: packageRoot.path + "/", with: "")
+        }
+
+        guard let rootfilePath else {
+            throw DataExchangeError.invalidEPUB("Container does not reference OPF package.")
+        }
+
+        let opfURL = URL(fileURLWithPath: rootfilePath, relativeTo: packageRoot).standardizedFileURL
+        guard let opfText = try? String(contentsOf: opfURL, encoding: .utf8) else {
+            throw DataExchangeError.invalidEPUB("Cannot read OPF package at '\(rootfilePath)'.")
+        }
+
+        let title = normalizedTitle(
+            firstCapturedValue(
+                in: opfText,
+                pattern: "<dc:title\\b[^>]*>(.*?)</dc:title>"
+            ),
+            fallback: "Imported EPUB"
+        )
+
+        var manifestByID: [String: EPUBManifestItem] = [:]
+        for tag in allTagMatches(in: opfText, tagName: "item") {
+            let attributes = parseXMLAttributes(fromTag: tag)
+            guard let id = attributes["id"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !id.isEmpty,
+                  let href = attributes["href"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !href.isEmpty else {
+                continue
+            }
+            let mediaType = attributes["media-type"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            manifestByID[id] = EPUBManifestItem(
+                id: id,
+                href: href,
+                mediaType: mediaType,
+                properties: attributes["properties"]
+            )
+        }
+
+        var spineItemIDs: [String] = []
+        for tag in allTagMatches(in: opfText, tagName: "itemref") {
+            let attributes = parseXMLAttributes(fromTag: tag)
+            if let idref = attributes["idref"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !idref.isEmpty {
+                spineItemIDs.append(idref)
+            }
+        }
+
+        return EPUBPackageDescriptor(
+            title: title,
+            opfURL: opfURL,
+            packageBaseURL: opfURL.deletingLastPathComponent(),
+            manifestByID: manifestByID,
+            spineItemIDs: spineItemIDs
+        )
+    }
+
+    private func loadEmbeddedProjectFromEPUB(descriptor: EPUBPackageDescriptor) throws -> StoryProject? {
+        var candidateURLs: [URL] = []
+
+        if let manifestMatch = descriptor.manifestByID.values.first(where: { item in
+            item.href.lowercased().contains("scene-project.json")
+        }) {
+            let decodedHref = manifestMatch.href.removingPercentEncoding ?? manifestMatch.href
+            let url = URL(fileURLWithPath: decodedHref, relativeTo: descriptor.packageBaseURL).standardizedFileURL
+            candidateURLs.append(url)
+        }
+
+        candidateURLs.append(
+            descriptor.packageBaseURL.appendingPathComponent("scene-project.json")
+        )
+
+        candidateURLs.append(contentsOf: files(named: "scene-project.json", in: descriptor.packageBaseURL))
+
+        var seen = Set<String>()
+        for url in candidateURLs {
+            let standardized = url.standardizedFileURL.path
+            guard seen.insert(standardized).inserted else { continue }
+            guard FileManager.default.fileExists(atPath: standardized) else { continue }
+
+            let data = try Data(contentsOf: url)
+            if let envelope = try? Self.transferDecoder.decode(ProjectTransferEnvelope.self, from: data),
+               envelope.type == Self.projectTransferType {
+                return envelope.project
+            }
+        }
+
+        return nil
+    }
+
+    private func parseEPUBChapters(descriptor: EPUBPackageDescriptor) throws -> [Chapter] {
+        let documentURLs = resolveEPUBDocumentURLs(descriptor: descriptor)
+        var chapters: [Chapter] = []
+
+        for (index, documentURL) in documentURLs.enumerated() {
+            guard let parsed = parseEPUBChapter(from: documentURL, fallbackIndex: index) else {
+                continue
+            }
+
+            let scenes: [Scene] = parsed.scenes.enumerated().map { sceneIndex, parsedScene in
+                Scene(
+                    title: parsedScene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "Scene \(sceneIndex + 1)"
+                        : parsedScene.title,
+                    content: parsedScene.content
+                )
+            }
+
+            guard !scenes.isEmpty else { continue }
+            chapters.append(
+                Chapter(
+                    title: normalizedTitle(parsed.title, fallback: "Chapter \(index + 1)"),
+                    scenes: scenes
+                )
+            )
+        }
+
+        return chapters
+    }
+
+    private func resolveEPUBDocumentURLs(descriptor: EPUBPackageDescriptor) -> [URL] {
+        let preferredMediaTypes = Set([
+            "application/xhtml+xml",
+            "application/x-dtbook+xml",
+            "text/html"
+        ])
+
+        var urls: [URL] = []
+        var seen = Set<String>()
+
+        for idref in descriptor.spineItemIDs {
+            guard let item = descriptor.manifestByID[idref] else { continue }
+            let mediaType = item.mediaType.lowercased()
+            if !mediaType.isEmpty && !preferredMediaTypes.contains(mediaType) {
+                continue
+            }
+
+            let href = item.href.removingPercentEncoding ?? item.href
+            let url = URL(fileURLWithPath: href, relativeTo: descriptor.packageBaseURL).standardizedFileURL
+            if seen.insert(url.path).inserted {
+                urls.append(url)
+            }
+        }
+
+        if !urls.isEmpty {
+            return urls
+        }
+
+        let fallback = files(withExtensions: ["xhtml", "html", "htm"], in: descriptor.packageBaseURL)
+            .sorted { lhs, rhs in
+                lhs.path.localizedCaseInsensitiveCompare(rhs.path) == .orderedAscending
+            }
+
+        for url in fallback where seen.insert(url.path).inserted {
+            urls.append(url)
+        }
+
+        return urls
+    }
+
+    private func parseEPUBChapter(from fileURL: URL, fallbackIndex: Int) -> EPUBParsedChapter? {
+        guard let source = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            return nil
+        }
+
+        let chapterTitleFromH1 = firstCapturedValue(in: source, pattern: "<h1\\b[^>]*>(.*?)</h1>")
+            .map(plainTextFromHTMLFragment(_:))
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        let chapterTitleFromTitleTag = firstCapturedValue(in: source, pattern: "<title\\b[^>]*>(.*?)</title>")
+            .map(plainTextFromHTMLFragment(_:))
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        let fallbackTitle = fileURL.deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+        let chapterTitle = chapterTitleFromH1
+            ?? chapterTitleFromTitleTag
+            ?? normalizedTitle(fallbackTitle, fallback: "Chapter \(fallbackIndex + 1)")
+
+        let tokenPattern = "<(h1|h2|h3|p|li)\\b[^>]*>(.*?)</\\1>"
+        guard let tokenRegex = try? NSRegularExpression(
+            pattern: tokenPattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+
+        let sourceRange = NSRange(source.startIndex..<source.endIndex, in: source)
+        let matches = tokenRegex.matches(in: source, options: [], range: sourceRange)
+
+        var scenes: [EPUBSceneBuilder] = []
+        var pendingParagraphs: [String] = []
+
+        for match in matches {
+            guard let typeRange = Range(match.range(at: 1), in: source),
+                  let valueRange = Range(match.range(at: 2), in: source) else {
+                continue
+            }
+
+            let elementType = source[typeRange].lowercased()
+            let textValue = plainTextFromHTMLFragment(String(source[valueRange]))
+            guard !textValue.isEmpty else { continue }
+
+            switch elementType {
+            case "h2", "h3":
+                if !pendingParagraphs.isEmpty {
+                    if scenes.isEmpty {
+                        scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
+                    } else {
+                        scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
+                    }
+                    pendingParagraphs = []
+                }
+                scenes.append(EPUBSceneBuilder(title: textValue, paragraphs: []))
+
+            case "p", "li":
+                if scenes.isEmpty {
+                    pendingParagraphs.append(textValue)
+                } else {
+                    scenes[scenes.count - 1].paragraphs.append(textValue)
+                }
+
+            default:
+                break
+            }
+        }
+
+        if !pendingParagraphs.isEmpty {
+            if scenes.isEmpty {
+                scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
+            } else {
+                scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
+            }
+        }
+
+        if scenes.isEmpty {
+            let bodyText = extractEPUBBodyText(from: source)
+            let paragraphs = splitIntoParagraphs(bodyText)
+            if !paragraphs.isEmpty {
+                scenes = [EPUBSceneBuilder(title: "Scene 1", paragraphs: paragraphs)]
+            }
+        }
+
+        let parsedScenes: [EPUBParsedScene] = scenes.enumerated().map { index, scene in
+            let title = scene.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Scene \(index + 1)"
+                : scene.title
+            let content = scene.paragraphs.joined(separator: "\n\n")
+            return EPUBParsedScene(title: title, content: content)
+        }.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.title.isEmpty }
+
+        guard !parsedScenes.isEmpty else { return nil }
+        return EPUBParsedChapter(title: chapterTitle, scenes: parsedScenes)
+    }
+
+    private func extractEPUBBodyText(from source: String) -> String {
+        if let bodyFragment = firstCapturedValue(
+            in: source,
+            pattern: "<body\\b[^>]*>(.*?)</body>"
+        ) {
+            return plainTextFromHTMLFragment(bodyFragment)
+        }
+        return plainTextFromHTMLFragment(source)
+    }
+
+    private func splitIntoParagraphs(_ text: String) -> [String] {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+
+        return normalized
+            .components(separatedBy: "\n\n")
+            .map { paragraph in
+                paragraph
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
+            }
+            .filter { !$0.isEmpty }
+    }
+
+    private func plainTextFromHTMLFragment(_ fragment: String) -> String {
+        let wrapped = "<!doctype html><html><body>\(fragment)</body></html>"
+        if let data = wrapped.data(using: .utf8),
+           let attributed = try? NSAttributedString(
+               data: data,
+               options: [
+                .documentType: NSAttributedString.DocumentType.html,
+                .characterEncoding: String.Encoding.utf8.rawValue
+               ],
+               documentAttributes: nil
+           ) {
+            return attributed.string
+                .replacingOccurrences(of: "\u{00A0}", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let tagRegex = try? NSRegularExpression(pattern: "<[^>]+>", options: [.caseInsensitive]) {
+            let range = NSRange(fragment.startIndex..<fragment.endIndex, in: fragment)
+            let stripped = tagRegex.stringByReplacingMatches(in: fragment, options: [], range: range, withTemplate: " ")
+            return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func parseXMLAttributes(fromTag tag: String) -> [String: String] {
+        let attributePattern = "([A-Za-z_:][A-Za-z0-9_:\\.-]*)\\s*=\\s*['\"]([^'\"]*)['\"]"
+        guard let regex = try? NSRegularExpression(pattern: attributePattern, options: []) else {
+            return [:]
+        }
+
+        let range = NSRange(tag.startIndex..<tag.endIndex, in: tag)
+        let matches = regex.matches(in: tag, options: [], range: range)
+        var output: [String: String] = [:]
+        for match in matches {
+            guard let keyRange = Range(match.range(at: 1), in: tag),
+                  let valueRange = Range(match.range(at: 2), in: tag) else {
+                continue
+            }
+            output[String(tag[keyRange]).lowercased()] = String(tag[valueRange])
+        }
+        return output
+    }
+
+    private func allTagMatches(in source: String, tagName: String) -> [String] {
+        let pattern = "<\(tagName)\\b[^>]*>"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return []
+        }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return regex.matches(in: source, options: [], range: range).compactMap { match in
+            guard let matchRange = Range(match.range, in: source) else { return nil }
+            return String(source[matchRange])
+        }
+    }
+
+    private func firstCapturedValue(in source: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        guard let match = regex.firstMatch(in: source, options: [], range: range),
+              match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: source) else {
+            return nil
+        }
+        return String(source[captureRange])
+    }
+
+    private func firstFile(withExtension pathExtension: String, in root: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        for case let fileURL as URL in enumerator where fileURL.pathExtension.lowercased() == pathExtension.lowercased() {
+            return fileURL
+        }
+        return nil
+    }
+
+    private func files(named filename: String, in root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            return []
+        }
+
+        var matches: [URL] = []
+        for case let fileURL as URL in enumerator where fileURL.lastPathComponent.caseInsensitiveCompare(filename) == .orderedSame {
+            matches.append(fileURL)
+        }
+        return matches
+    }
+
+    private func files(withExtensions extensions: [String], in root: URL) -> [URL] {
+        let allowed = Set(extensions.map { $0.lowercased() })
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            return []
+        }
+
+        var matches: [URL] = []
+        for case let fileURL as URL in enumerator where allowed.contains(fileURL.pathExtension.lowercased()) {
+            matches.append(fileURL)
+        }
+        return matches
+    }
+
+    private func normalizedTitle(_ title: String?, fallback: String) -> String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     private static func makeInitialWorkshopSession(name: String) -> WorkshopSession {
