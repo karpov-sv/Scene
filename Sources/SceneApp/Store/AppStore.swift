@@ -642,38 +642,48 @@ final class AppStore: ObservableObject {
 
     var activeProsePrompt: PromptTemplate? {
         guard isProjectOpen else { return nil }
-        if let selectedID = project.selectedProsePromptID,
-           let index = promptIndex(for: selectedID) {
-            return project.prompts[index]
-        }
-        return prosePrompts.first
+        return resolvedActivePrompt(
+            for: .prose,
+            selectedID: project.selectedProsePromptID
+        )
     }
 
     var activeWorkshopPrompt: PromptTemplate? {
         guard isProjectOpen else { return nil }
-        if let selectedID = project.selectedWorkshopPromptID,
-           let index = promptIndex(for: selectedID) {
-            return project.prompts[index]
-        }
-        return workshopPrompts.first
+        return resolvedActivePrompt(
+            for: .workshop,
+            selectedID: project.selectedWorkshopPromptID
+        )
     }
 
     var activeRewritePrompt: PromptTemplate? {
         guard isProjectOpen else { return nil }
-        if let selectedID = project.selectedRewritePromptID,
-           let index = promptIndex(for: selectedID) {
-            return project.prompts[index]
-        }
-        return rewritePrompts.first
+        return resolvedActivePrompt(
+            for: .rewrite,
+            selectedID: project.selectedRewritePromptID
+        )
     }
 
     var activeSummaryPrompt: PromptTemplate? {
         guard isProjectOpen else { return nil }
-        if let selectedID = project.selectedSummaryPromptID,
-           let index = promptIndex(for: selectedID) {
+        return resolvedActivePrompt(
+            for: .summary,
+            selectedID: project.selectedSummaryPromptID
+        )
+    }
+
+    private func resolvedActivePrompt(for category: PromptCategory, selectedID: UUID?) -> PromptTemplate? {
+        if let selectedID, let index = promptIndex(for: selectedID) {
             return project.prompts[index]
         }
-        return summaryPrompts.first
+
+        let defaultID = defaultBuiltInPromptID(for: category)
+        if let index = promptIndex(for: defaultID),
+           project.prompts[index].category == category {
+            return project.prompts[index]
+        }
+
+        return project.prompts.first(where: { $0.category == category })
     }
 
     var workshopInputHistory: [String] {
@@ -1340,6 +1350,12 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updatePreferCompactPromptTemplates(_ enabled: Bool) {
+        guard project.settings.preferCompactPromptTemplates != enabled else { return }
+        project.settings.preferCompactPromptTemplates = enabled
+        saveProject(debounced: true)
+    }
+
     func updateTemperature(_ temperature: Double) {
         project.settings.temperature = temperature
         saveProject(debounced: true)
@@ -1436,7 +1452,10 @@ final class AppStore: ObservableObject {
             throw DataExchangeError.projectNotOpen
         }
 
-        let builtInByID = Dictionary(uniqueKeysWithValues: PromptTemplate.builtInTemplates.map { ($0.id, $0) })
+        let latestBuiltIns = PromptTemplate.latestBuiltInTemplates(
+            preferCompact: project.settings.preferCompactPromptTemplates
+        )
+        let builtInByID = Dictionary(uniqueKeysWithValues: latestBuiltIns.map { ($0.id, $0) })
         let exportablePrompts: [PromptTransferRecord] = project.prompts.compactMap { prompt in
             if let builtIn = builtInByID[prompt.id],
                !isBuiltInPromptModified(prompt, comparedTo: builtIn) {
@@ -2975,7 +2994,7 @@ final class AppStore: ObservableObject {
             let sceneSummary = sceneSummaryText(for: scenePreview.sceneID)
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
-                fallbackTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
+                fallbackTemplate: fallbackUserTemplate(for: prompt, category: .prose),
                 beat: beatPreview,
                 selection: "",
                 sceneExcerpt: sceneExcerpt,
@@ -3004,7 +3023,7 @@ final class AppStore: ObservableObject {
             )
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
-                fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
+                fallbackTemplate: fallbackUserTemplate(for: prompt, category: .rewrite),
                 beat: beatPreview,
                 selection: selectionPreview,
                 sceneExcerpt: sceneExcerpt,
@@ -3032,7 +3051,7 @@ final class AppStore: ObservableObject {
                 notes.append("Summary preview scope: scene.")
                 renderedUser = renderPromptTemplate(
                     template: prompt.userTemplate,
-                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
                     sceneExcerpt: sceneExcerpt,
@@ -3061,7 +3080,7 @@ final class AppStore: ObservableObject {
                 notes.append("Summary preview scope: chapter.")
                 renderedUser = renderPromptTemplate(
                     template: prompt.userTemplate,
-                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
                     sceneExcerpt: sceneSummaryContext,
@@ -3083,7 +3102,7 @@ final class AppStore: ObservableObject {
                 notes.append("No scene or chapter found. Summary preview uses placeholder source text.")
                 renderedUser = renderPromptTemplate(
                     template: prompt.userTemplate,
-                    fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+                    fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
                     sceneExcerpt: "No source text available.",
@@ -3132,9 +3151,7 @@ final class AppStore: ObservableObject {
                 )
             }
 
-            let sceneContext = workshopUseSceneContext
-                ? String(scenePreview.sceneContent.suffix(2400))
-                : "Scene context disabled."
+            let sceneContext = workshopUseSceneContext ? String(scenePreview.sceneContent.suffix(2400)) : ""
             let sceneFullText = workshopUseSceneContext ? scenePreview.sceneContent : ""
 
             let contextSections: SceneContextSections
@@ -3145,10 +3162,10 @@ final class AppStore: ObservableObject {
                 )
             } else {
                 contextSections = SceneContextSections(
-                    combined: "Compendium context disabled.",
-                    compendium: "Compendium context disabled.",
-                    sceneSummaries: "Compendium context disabled.",
-                    chapterSummaries: "Compendium context disabled."
+                    combined: "",
+                    compendium: "",
+                    sceneSummaries: "",
+                    chapterSummaries: ""
                 )
             }
 
@@ -3158,7 +3175,7 @@ final class AppStore: ObservableObject {
 
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
-                fallbackTemplate: PromptTemplate.defaultWorkshopTemplate.userTemplate,
+                fallbackTemplate: fallbackUserTemplate(for: prompt, category: .workshop),
                 beat: "",
                 selection: pendingInput,
                 sceneExcerpt: sceneContext,
@@ -3200,7 +3217,11 @@ final class AppStore: ObservableObject {
         var updatedCount = 0
         var addedCount = 0
 
-        for builtIn in PromptTemplate.builtInTemplates {
+        let latestBuiltIns = PromptTemplate.latestBuiltInTemplates(
+            preferCompact: project.settings.preferCompactPromptTemplates
+        )
+
+        for builtIn in latestBuiltIns {
             if let index = promptIndex(for: builtIn.id) {
                 if project.prompts[index] != builtIn {
                     project.prompts[index] = builtIn
@@ -3224,6 +3245,11 @@ final class AppStore: ObservableObject {
     }
 
     private func defaultPromptTemplate(for category: PromptCategory) -> PromptTemplate {
+        let defaultID = defaultBuiltInPromptID(for: category)
+        if let builtIn = latestBuiltInTemplate(for: defaultID) {
+            return builtIn
+        }
+
         switch category {
         case .prose:
             return PromptTemplate.defaultProseTemplate
@@ -3234,6 +3260,33 @@ final class AppStore: ObservableObject {
         case .summary:
             return PromptTemplate.defaultSummaryTemplate
         }
+    }
+
+    private func defaultBuiltInPromptID(for category: PromptCategory) -> UUID {
+        switch category {
+        case .prose:
+            return PromptTemplate.defaultProseTemplate.id
+        case .workshop:
+            return PromptTemplate.defaultWorkshopTemplate.id
+        case .rewrite:
+            return PromptTemplate.defaultRewriteTemplate.id
+        case .summary:
+            return PromptTemplate.defaultSummaryTemplate.id
+        }
+    }
+
+    private func latestBuiltInTemplate(for templateID: UUID) -> PromptTemplate? {
+        PromptTemplate.latestBuiltInTemplates(
+            preferCompact: project.settings.preferCompactPromptTemplates
+        )
+        .first(where: { $0.id == templateID })
+    }
+
+    private func fallbackUserTemplate(for prompt: PromptTemplate, category: PromptCategory) -> String {
+        if let builtIn = latestBuiltInTemplate(for: prompt.id) {
+            return builtIn.userTemplate
+        }
+        return defaultPromptTemplate(for: category).userTemplate
     }
 
     private func promptTitleBase(for category: PromptCategory) -> String {
@@ -3648,14 +3701,14 @@ final class AppStore: ObservableObject {
         scene: Scene,
         modelOverride: String? = nil
     ) -> PromptRequestBuildResult {
-        let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
+        let activePrompt = activeProsePrompt ?? defaultPromptTemplate(for: .prose)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
         let sceneContext = String(scene.content.suffix(4500))
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let promptResult = renderPromptTemplate(
             template: activePrompt.userTemplate,
-            fallbackTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
+            fallbackTemplate: fallbackUserTemplate(for: activePrompt, category: .prose),
             beat: beat,
             selection: "",
             sceneExcerpt: sceneContext,
@@ -3709,7 +3762,7 @@ final class AppStore: ObservableObject {
 
         let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
-            fallbackTemplate: PromptTemplate.defaultRewriteTemplate.userTemplate,
+            fallbackTemplate: fallbackUserTemplate(for: prompt, category: .rewrite),
             beat: rewriteBeat,
             selection: selectedText,
             sceneExcerpt: sceneContext,
@@ -3809,7 +3862,7 @@ final class AppStore: ObservableObject {
 
         let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
-            fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+            fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
             beat: "",
             selection: "",
             sceneExcerpt: sceneContext,
@@ -3856,7 +3909,7 @@ final class AppStore: ObservableObject {
 
         let promptResult = renderPromptTemplate(
             template: prompt.userTemplate,
-            fallbackTemplate: PromptTemplate.defaultSummaryTemplate.userTemplate,
+            fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
             beat: "",
             selection: "",
             sceneExcerpt: sceneSummaryContext,
@@ -5052,16 +5105,11 @@ final class AppStore: ObservableObject {
 
         let sceneContext: String
         let sceneFullText: String
-        if workshopUseSceneContext {
-            if let scene = selectedScene {
-                sceneContext = String(scene.content.suffix(2400))
-                sceneFullText = scene.content
-            } else {
-                sceneContext = "No scene selected."
-                sceneFullText = "No scene selected."
-            }
+        if workshopUseSceneContext, let scene = selectedScene {
+            sceneContext = String(scene.content.suffix(2400))
+            sceneFullText = scene.content
         } else {
-            sceneContext = "Scene context disabled."
+            sceneContext = ""
             sceneFullText = ""
         }
 
@@ -5073,16 +5121,15 @@ final class AppStore: ObservableObject {
             )
         } else {
             contextSections = SceneContextSections(
-                combined: "Compendium context disabled.",
-                compendium: "Compendium context disabled.",
-                sceneSummaries: "Compendium context disabled.",
-                chapterSummaries: "Compendium context disabled."
+                combined: "",
+                compendium: "",
+                sceneSummaries: "",
+                chapterSummaries: ""
             )
         }
 
-        let template = activeWorkshopPrompt?.userTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? activeWorkshopPrompt!.userTemplate
-            : PromptTemplate.defaultWorkshopTemplate.userTemplate
+        let prompt = activeWorkshopPrompt ?? defaultPromptTemplate(for: .workshop)
+        let template = prompt.userTemplate
 
         let sceneTitle = selectedScene.map { displaySceneTitle($0) } ?? "No scene selected"
         let chapterTitleText = selectedScene.map { self.chapterTitle(forSceneID: $0.id) } ?? "No chapter selected"
@@ -5090,7 +5137,7 @@ final class AppStore: ObservableObject {
 
         return renderPromptTemplate(
             template: template,
-            fallbackTemplate: PromptTemplate.defaultWorkshopTemplate.userTemplate,
+            fallbackTemplate: fallbackUserTemplate(for: prompt, category: .workshop),
             beat: "",
             selection: trimmedPending ?? "",
             sceneExcerpt: sceneContext,
@@ -5211,9 +5258,7 @@ final class AppStore: ObservableObject {
         combinedLines.append(contentsOf: sceneSummariesText)
         combinedLines.append(contentsOf: chapterSummariesText)
 
-        let combined = combinedLines.isEmpty
-            ? "No scene context selected for this scene."
-            : combinedLines.joined(separator: "\n")
+        let combined = combinedLines.isEmpty ? "" : combinedLines.joined(separator: "\n")
 
         return SceneContextSections(
             combined: combined,

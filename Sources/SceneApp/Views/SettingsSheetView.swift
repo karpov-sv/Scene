@@ -116,6 +116,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var preferCompactPromptTemplatesBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.preferCompactPromptTemplates },
+            set: { store.updatePreferCompactPromptTemplates($0) }
+        )
+    }
+
     private var endpointBinding: Binding<String> {
         Binding(
             get: { store.project.settings.endpoint },
@@ -925,6 +932,16 @@ struct SettingsSheetView: View {
                             .accessibilityLabel("Enable Streaming Responses")
                             .help("Stream AI responses token by token as they are generated")
                     }
+
+                    HStack(spacing: 8) {
+                        Text("Prefer Compact Prompt Templates")
+                        Spacer(minLength: 0)
+                        Toggle("", isOn: preferCompactPromptTemplatesBinding)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityLabel("Prefer Compact Prompt Templates")
+                            .help("Use alternate compact built-in templates optimized for instruct-style models. Only affects built-in defaults you have not modified; custom templates are unchanged.")
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -1540,12 +1557,13 @@ struct SettingsSheetView: View {
 
     private func refreshBuiltInTemplates() {
         let result = store.refreshBuiltInPromptTemplatesToLatest()
+        let styleLabel = store.project.settings.preferCompactPromptTemplates ? "compact" : "standard"
         if result.updatedCount == 0, result.addedCount == 0 {
-            promptTemplateStatus = "Built-in templates are already up to date."
+            promptTemplateStatus = "Built-in templates are already up to date for \(styleLabel) style."
             return
         }
 
-        promptTemplateStatus = "Built-in templates updated: \(result.updatedCount) replaced, \(result.addedCount) added."
+        promptTemplateStatus = "Built-in templates updated (\(styleLabel) style): \(result.updatedCount) replaced, \(result.addedCount) added."
     }
 }
 
