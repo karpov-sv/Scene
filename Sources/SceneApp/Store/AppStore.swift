@@ -6078,6 +6078,10 @@ final class AppStore: ObservableObject {
 
         if !current.isEmpty && !current.hasSuffix("\n") {
             current += "\n\n"
+            let appearance = project.editorAppearance
+            let baseFont = resolvedEditorBaseFont(from: appearance)
+            let textColor = resolvedEditorTextColor(from: appearance)
+            let paragraphStyle = resolvedEditorParagraphStyle(from: appearance)
 
             let attributed = makeAttributedSceneContent(
                 plainText: scene.content,
@@ -6086,7 +6090,11 @@ final class AppStore: ObservableObject {
             attributed.append(
                 NSAttributedString(
                     string: "\n\n",
-                    attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
+                    attributes: [
+                        .font: baseFont,
+                        .foregroundColor: textColor,
+                        .paragraphStyle: paragraphStyle
+                    ]
                 )
             )
             currentRichTextData = makeRTFData(from: attributed)
@@ -6113,10 +6121,18 @@ final class AppStore: ObservableObject {
         )
 
         if !generated.isEmpty {
+            let appearance = project.editorAppearance
+            let baseFont = resolvedEditorBaseFont(from: appearance)
+            let textColor = resolvedEditorTextColor(from: appearance)
+            let paragraphStyle = resolvedEditorParagraphStyle(from: appearance)
             composed.append(
-                makeGeneratedMarkdownAttributedText(
-                    from: generated,
-                    baseFont: NSFont.preferredFont(forTextStyle: .body)
+                applyEditorAppearanceToAttributedText(
+                    makeGeneratedMarkdownAttributedText(
+                        from: generated,
+                        baseFont: baseFont
+                    ),
+                    textColor: textColor,
+                    paragraphStyle: paragraphStyle
                 )
             )
         }
@@ -6125,6 +6141,30 @@ final class AppStore: ObservableObject {
             content: composed.string,
             richTextData: makeRTFData(from: composed)
         )
+    }
+
+    private func applyEditorAppearanceToAttributedText(
+        _ attributed: NSAttributedString,
+        textColor: NSColor,
+        paragraphStyle: NSParagraphStyle
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        guard fullRange.length > 0 else { return mutable }
+
+        mutable.beginEditing()
+        mutable.addAttribute(.foregroundColor, value: textColor, range: fullRange)
+        mutable.enumerateAttribute(.paragraphStyle, in: fullRange, options: []) { value, range, _ in
+            let adjustedStyle = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                ?? NSMutableParagraphStyle()
+            adjustedStyle.lineHeightMultiple = paragraphStyle.lineHeightMultiple
+            adjustedStyle.alignment = paragraphStyle.alignment
+            adjustedStyle.lineBreakMode = .byWordWrapping
+            mutable.addAttribute(.paragraphStyle, value: adjustedStyle, range: range)
+        }
+        mutable.endEditing()
+
+        return mutable
     }
 
     private func makeGeneratedMarkdownAttributedText(from text: String, baseFont: NSFont) -> NSAttributedString {
@@ -6184,9 +6224,14 @@ final class AppStore: ObservableObject {
             return NSMutableAttributedString(attributedString: attributed)
         }
 
+        let appearance = project.editorAppearance
         return NSMutableAttributedString(
             string: plainText,
-            attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
+            attributes: [
+                .font: resolvedEditorBaseFont(from: appearance),
+                .foregroundColor: resolvedEditorTextColor(from: appearance),
+                .paragraphStyle: resolvedEditorParagraphStyle(from: appearance)
+            ]
         )
     }
 
@@ -6216,6 +6261,14 @@ final class AppStore: ObservableObject {
             return NSColor(red: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
         }
         return NSColor.textColor
+    }
+
+    private func resolvedEditorParagraphStyle(from settings: EditorAppearanceSettings) -> NSMutableParagraphStyle {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = max(1.0, settings.lineHeightMultiple)
+        paragraphStyle.alignment = nsTextAlignment(from: settings.textAlignment)
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        return paragraphStyle
     }
 
     private func nsTextAlignment(from option: TextAlignmentOption) -> NSTextAlignment {
