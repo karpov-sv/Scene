@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -376,6 +377,8 @@ final class AppStore: ObservableObject {
     private var workshopRequestTask: Task<Void, Never>?
     private var proseRequestTask: Task<Void, Never>?
     private var searchDebounceTask: Task<Void, Never>?
+    private var documentSaveInProgress: Bool = false
+    private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
 
     init(
@@ -6452,7 +6455,34 @@ final class AppStore: ObservableObject {
         if let document = NSDocumentController.shared.documents.first(where: {
             $0.fileURL?.standardizedFileURL == standardizedURL
         }) {
-            document.save(nil)
+            if documentSaveInProgress {
+                pendingDocumentSaveRequest = true
+                return
+            }
+
+            documentSaveInProgress = true
+            pendingDocumentSaveRequest = false
+            let typeName = document.fileType ?? UTType.sceneProject.identifier
+            document.save(
+                to: standardizedURL,
+                ofType: typeName,
+                for: .saveOperation
+            ) { [weak self] error in
+                guard let self else { return }
+                if let error {
+                    self.lastError = "Failed to save document: \(error.localizedDescription)"
+                }
+                self.completeDocumentSaveCycle()
+            }
+        }
+    }
+
+    private func completeDocumentSaveCycle() {
+        documentSaveInProgress = false
+
+        if pendingDocumentSaveRequest {
+            pendingDocumentSaveRequest = false
+            saveCurrentDocumentToDisk()
         }
     }
 
