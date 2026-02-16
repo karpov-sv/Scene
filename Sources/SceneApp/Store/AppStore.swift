@@ -2264,9 +2264,6 @@ final class AppStore: ObservableObject {
 
     func makeProsePayloadPreview() throws -> WorkshopPayloadPreview {
         let beat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !beat.isEmpty else {
-            throw AIServiceError.badResponse("Type a beat to preview payload.")
-        }
 
         guard let scene = selectedScene else {
             throw AIServiceError.badResponse("Select a scene first.")
@@ -2275,16 +2272,17 @@ final class AppStore: ObservableObject {
         let previewModel = resolveGenerationModelSelection(modelsOverride: nil).first
         let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene, modelOverride: previewModel)
         let request = requestBuild.request
-        let notes = previewNotes(
-            base: [
-                "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
-                "Preview request model: \(request.model).",
-                "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                "Candidate-review generation runs in non-streaming mode.",
-                "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-            ],
-            renderWarnings: requestBuild.renderWarnings
-        )
+        var baseNotes = [
+            "Prompt includes beat input, current scene excerpt, and selected scene context entries.",
+            "Preview request model: \(request.model).",
+            "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+            "Candidate-review generation runs in non-streaming mode.",
+            "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+        ]
+        if beat.isEmpty {
+            baseNotes.append("Beat input is empty. Prompt relies on template/context without beat guidance.")
+        }
+        let notes = previewNotes(base: baseNotes, renderWarnings: requestBuild.renderWarnings)
 
         switch project.settings.provider {
         case .anthropic:
@@ -2481,11 +2479,10 @@ final class AppStore: ObservableObject {
         }
 
         let pendingUserInput = workshopInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !pendingUserInput.isEmpty else {
-            throw AIServiceError.badResponse("Type a message to preview payload.")
-        }
-
-        let promptResult = buildWorkshopUserPrompt(sessionID: sessionID, pendingUserInput: pendingUserInput)
+        let promptResult = buildWorkshopUserPrompt(
+            sessionID: sessionID,
+            pendingUserInput: pendingUserInput.isEmpty ? nil : pendingUserInput
+        )
 
         let request = TextGenerationRequest(
             systemPrompt: resolvedWorkshopSystemPrompt(),
@@ -2495,13 +2492,14 @@ final class AppStore: ObservableObject {
             maxTokens: project.settings.maxTokens
         )
 
-        let notes = previewNotes(
-            base: [
-                "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
-                "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
-            ],
-            renderWarnings: promptResult.warnings
-        )
+        var baseNotes = [
+            "Streaming is \(project.settings.enableStreaming ? "enabled" : "disabled").",
+            "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
+        ]
+        if pendingUserInput.isEmpty {
+            baseNotes.append("Workshop input is empty. Preview uses the current chat/context without a new user turn.")
+        }
+        let notes = previewNotes(base: baseNotes, renderWarnings: promptResult.warnings)
 
         switch project.settings.provider {
         case .anthropic:
@@ -2652,17 +2650,15 @@ final class AppStore: ObservableObject {
 
         let userText = workshopInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !workshopIsGenerating else { return }
-        guard !userText.isEmpty else {
-            workshopStatus = "Type a message first."
-            return
-        }
         guard let sessionID = selectedWorkshopSessionID,
               let sessionIndex = workshopSessionIndex(for: sessionID) else {
             workshopStatus = "Select a chat session first."
             return
         }
 
-        appendWorkshopMessage(.init(role: .user, content: userText), to: sessionID)
+        if !userText.isEmpty {
+            appendWorkshopMessage(.init(role: .user, content: userText), to: sessionID)
+        }
         workshopInput = ""
         workshopIsGenerating = true
         workshopLiveUsage = nil
@@ -2927,6 +2923,7 @@ final class AppStore: ObservableObject {
                 mentionSourceText: beatPreview
             )
             let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            let sceneSummary = sceneSummaryText(for: scenePreview.sceneID)
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
                 fallbackTemplate: PromptTemplate.defaultProseTemplate.userTemplate,
@@ -2940,7 +2937,10 @@ final class AppStore: ObservableObject {
                 conversation: "",
                 conversationTurns: [],
                 summaryScope: "",
-                source: sceneExcerpt
+                source: sceneExcerpt,
+                extraVariables: [
+                    "scene_summary": sceneSummary
+                ]
             )
 
         case .rewrite:
@@ -3086,6 +3086,7 @@ final class AppStore: ObservableObject {
             let sceneContext = workshopUseSceneContext
                 ? String(scenePreview.sceneContent.suffix(2400))
                 : "Scene context disabled."
+            let sceneFullText = workshopUseSceneContext ? scenePreview.sceneContent : ""
 
             let contextSections: SceneContextSections
             if workshopUseCompendiumContext {
@@ -3112,7 +3113,7 @@ final class AppStore: ObservableObject {
                 beat: "",
                 selection: pendingInput,
                 sceneExcerpt: sceneContext,
-                sceneFullText: scenePreview.sceneContent,
+                sceneFullText: sceneFullText,
                 sceneTitle: scenePreview.sceneTitle,
                 chapterTitle: scenePreview.chapterTitle,
                 contextSections: contextSections,
@@ -3209,10 +3210,6 @@ final class AppStore: ObservableObject {
     ) async {
         let beat = (beatOverride ?? beatInput).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isGenerating else { return }
-        guard !beat.isEmpty else {
-            generationStatus = "Enter a beat to generate text."
-            return
-        }
         let scene: Scene?
         if let sceneIDOverride, let location = sceneLocation(for: sceneIDOverride) {
             scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
@@ -3605,6 +3602,7 @@ final class AppStore: ObservableObject {
         let activePrompt = activeProsePrompt ?? PromptTemplate.defaultProseTemplate
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
         let sceneContext = String(scene.content.suffix(4500))
+        let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let promptResult = renderPromptTemplate(
             template: activePrompt.userTemplate,
@@ -3619,7 +3617,10 @@ final class AppStore: ObservableObject {
             conversation: "",
             conversationTurns: [],
             summaryScope: "",
-            source: sceneContext
+            source: sceneContext,
+            extraVariables: [
+                "scene_summary": sceneSummary
+            ]
         )
 
         let systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -3968,6 +3969,7 @@ final class AppStore: ObservableObject {
         ensureGenerationModelSelection()
         adoptLegacyPromptIDsForBuiltIns()
         seedMissingBuiltInPrompts()
+        migrateBuiltInPromptTitles()
         ensureDefaultPromptSelections()
 
         if project.workshopSessions.isEmpty {
@@ -4024,6 +4026,16 @@ final class AppStore: ObservableObject {
         for builtIn in PromptTemplate.builtInTemplates where !existingIDs.contains(builtIn.id) {
             project.prompts.append(builtIn)
             existingIDs.insert(builtIn.id)
+        }
+    }
+
+    private func migrateBuiltInPromptTitles() {
+        guard let proseIndex = project.prompts.firstIndex(where: { $0.id == PromptTemplate.cinematicProseID }) else {
+            return
+        }
+
+        if normalizedPromptTitle(project.prompts[proseIndex].title) == "cinematic prose" {
+            project.prompts[proseIndex].title = PromptTemplate.defaultProseTemplate.title
         }
     }
 
@@ -4990,10 +5002,18 @@ final class AppStore: ObservableObject {
         }
 
         let sceneContext: String
+        let sceneFullText: String
         if workshopUseSceneContext {
-            sceneContext = selectedScene.map { String($0.content.suffix(2400)) } ?? "No scene selected."
+            if let scene = selectedScene {
+                sceneContext = String(scene.content.suffix(2400))
+                sceneFullText = scene.content
+            } else {
+                sceneContext = "No scene selected."
+                sceneFullText = "No scene selected."
+            }
         } else {
             sceneContext = "Scene context disabled."
+            sceneFullText = ""
         }
 
         let contextSections: SceneContextSections
@@ -5025,7 +5045,7 @@ final class AppStore: ObservableObject {
             beat: "",
             selection: trimmedPending ?? "",
             sceneExcerpt: sceneContext,
-            sceneFullText: selectedScene?.content ?? sceneContext,
+            sceneFullText: sceneFullText,
             sceneTitle: sceneTitle,
             chapterTitle: chapterTitleText,
             contextSections: contextSections,
@@ -5588,6 +5608,17 @@ final class AppStore: ObservableObject {
             return "Untitled Chapter"
         }
         return displayChapterTitle(project.chapters[location.chapterIndex])
+    }
+
+    private func sceneSummaryText(for sceneID: UUID?) -> String {
+        guard let sceneID,
+              let location = sceneLocation(for: sceneID) else {
+            return ""
+        }
+        return project.chapters[location.chapterIndex]
+            .scenes[location.sceneIndex]
+            .summary
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func resolvePromptPreviewSceneContext() -> PromptPreviewSceneContext {

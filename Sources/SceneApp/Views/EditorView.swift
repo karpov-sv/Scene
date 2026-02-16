@@ -267,10 +267,7 @@ struct EditorView: View {
             }
             return editorSelection.hasSelection && store.activeRewritePrompt != nil && !store.isGenerating
         }
-        if store.isGenerating {
-            return true
-        }
-        return !store.beatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return true
     }
 
     private var editorToolbarFontFamily: String {

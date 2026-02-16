@@ -525,7 +525,9 @@ struct WorkshopChatView: View {
                 .padding(.leading, 8)
 
                 Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
+                    .help("Include the current scene excerpt in workshop prompts. Disabling also blanks `scene_tail(...)` variables.")
                 Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
+                    .help("Include selected scene context entries (compendium and linked summaries) in `{{context}}` variables.")
 
                 Spacer(minLength: 0)
             }
@@ -634,7 +636,6 @@ struct WorkshopChatView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.regular)
                     .tint(store.workshopIsGenerating ? .red : .accentColor)
-                    .disabled(!store.workshopIsGenerating && store.workshopInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .frame(width: actionButtonWidth, alignment: .center)
                 }
                 .fixedSize(horizontal: false, vertical: true)

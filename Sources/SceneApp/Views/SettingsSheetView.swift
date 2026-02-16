@@ -1316,6 +1316,7 @@ struct SettingsSheetView: View {
         case .prose:
             return [
                 .init(token: "{{beat}}", meaning: "Text from the \"Generate from beat\" input."),
+                .init(token: "{{scene_summary}}", meaning: "Current scene summary text (user-written or generated)."),
                 .init(token: "{{scene}}", meaning: "Current scene excerpt for continuity."),
                 .init(token: "{{scene_tail(chars=4500)}}", meaning: "Tail of full scene text; `chars` is configurable."),
                 .init(token: "{{context}}", meaning: "Selected/mentioned scene context (compendium + summaries)."),

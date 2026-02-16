@@ -239,6 +239,8 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
     }
 
     static let cinematicProseID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+    static let summaryExpansionProseID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
+    static let summaryContinuationProseID = UUID(uuidString: "00000000-0000-0000-0000-000000000103")!
     static let rewriteID = UUID(uuidString: "00000000-0000-0000-0000-000000000201")!
     static let expandID = UUID(uuidString: "00000000-0000-0000-0000-000000000202")!
     static let shortenID = UUID(uuidString: "00000000-0000-0000-0000-000000000203")!
@@ -247,7 +249,7 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
 
     static let defaultProseTemplate = PromptTemplate(
         id: cinematicProseID,
-        title: "Cinematic Prose",
+        title: "Continue from Scene Beat",
         userTemplate: """
         <TASK>Continue the scene from the provided beat.</TASK>
 
@@ -277,6 +279,83 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
         </RULES>
         """,
         systemTemplate: "You are an expert fiction writing assistant. Preserve continuity, character voice, and factual consistency. Show, do not tell. Return only final prose."
+    )
+
+    static let defaultSummaryExpansionProseTemplate = PromptTemplate(
+        id: summaryExpansionProseID,
+        title: "Expand from Scene Summary",
+        userTemplate: """
+        <TASK>Write extended prose for this scene from the user's scene summary.</TASK>
+
+        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
+        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
+        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+
+        <SCENE_SUMMARY>
+        {{scene_summary}}
+        </SCENE_SUMMARY>
+
+        <OPTIONAL_GUIDANCE>
+        {{beat}}
+        </OPTIONAL_GUIDANCE>
+
+        <SCENE_TAIL chars="3000">
+        {{scene_tail(chars=3000)}}
+        </SCENE_TAIL>
+
+        <CONTEXT>
+        {{context}}
+        </CONTEXT>
+
+        <RULES>
+        - Treat SCENE_SUMMARY as the primary source of facts and intent.
+        - Expand into vivid, continuous prose with concrete action, sensory detail, and emotional texture.
+        - Preserve chronology, POV, tense, and continuity with SCENE_TAIL and CONTEXT.
+        - Use OPTIONAL_GUIDANCE only when present and non-conflicting.
+        - Return prose only (no labels, no markdown, no commentary).
+        </RULES>
+        """,
+        systemTemplate: "You are an expert fiction writing assistant. Expand scene summaries into polished prose while preserving continuity and intent. Return only final prose."
+    )
+
+    static let defaultSummaryContinuationProseTemplate = PromptTemplate(
+        id: summaryContinuationProseID,
+        title: "Continue Following Scene Summary",
+        userTemplate: """
+        <TASK>Continue the scene from existing text while following the scene summary.</TASK>
+
+        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
+        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
+        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+
+        <SCENE_SUMMARY>
+        {{scene_summary}}
+        </SCENE_SUMMARY>
+
+        <OPTIONAL_GUIDANCE>
+        {{beat}}
+        </OPTIONAL_GUIDANCE>
+
+        <EXISTING_SCENE_TAIL chars="4500">
+        {{scene_tail(chars=4500)}}
+        </EXISTING_SCENE_TAIL>
+
+        <CONTEXT>
+        {{context}}
+        </CONTEXT>
+
+        <RULES>
+        - If EXISTING_SCENE_TAIL is non-empty, continue immediately after its final line.
+        - Do not rewrite or summarize EXISTING_SCENE_TAIL; output only new continuation.
+        - Treat EXISTING_SCENE_TAIL as canonical for established facts.
+        - Use SCENE_SUMMARY as the roadmap for what should happen next.
+        - If SCENE_SUMMARY conflicts with EXISTING_SCENE_TAIL, keep continuity with EXISTING_SCENE_TAIL and adapt forward.
+        - Use OPTIONAL_GUIDANCE only when present and non-conflicting.
+        - Preserve POV, tense, voice, chronology, and continuity.
+        - Return prose only (no labels, no markdown, no commentary).
+        </RULES>
+        """,
+        systemTemplate: "You are an expert fiction writing assistant. Continue existing scene text while following the intended summary and preserving continuity. Return only final prose."
     )
 
     static let defaultRewriteTemplate = PromptTemplate(
@@ -458,6 +537,8 @@ struct PromptTemplate: Codable, Identifiable, Equatable {
     static var builtInTemplates: [PromptTemplate] {
         [
             defaultProseTemplate,
+            defaultSummaryExpansionProseTemplate,
+            defaultSummaryContinuationProseTemplate,
             defaultRewriteTemplate,
             defaultExpandTemplate,
             defaultShortenTemplate,
