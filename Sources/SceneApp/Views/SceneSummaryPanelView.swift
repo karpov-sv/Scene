@@ -89,19 +89,17 @@ struct SceneSummaryPanelView: View {
             header
             Divider()
 
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    Picker("Summary Scope", selection: $scope) {
-                        ForEach(SummaryScope.allCases) { value in
-                            Text(value.title).tag(value)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 280)
-
-                    Spacer(minLength: 0)
+            Picker("", selection: $scope) {
+                ForEach(SummaryScope.allCases) { value in
+                    Text(value.title).tag(value)
                 }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(6)
+            .padding(.top, 6)
 
+            VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Picker("Summary Template", selection: selectedSummaryPromptBinding) {
                         ForEach(store.summaryPrompts) { prompt in

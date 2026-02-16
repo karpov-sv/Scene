@@ -21,6 +21,7 @@ struct ContentView: View {
         case none
         case compendium
         case summary
+        case notes
     }
 
     @EnvironmentObject private var store: AppStore
@@ -33,6 +34,7 @@ struct ContentView: View {
     @State private var selectedTab: WorkspaceTab = .writing
     @State private var writingSidePanel: WritingSidePanel = .compendium
     @State private var summaryScope: SummaryScope = .scene
+    @State private var notesScope: NotesScope = .scene
     @State private var isConversationsVisible: Bool = true
 
     private var hasErrorBinding: Binding<Bool> {
@@ -83,17 +85,34 @@ struct ContentView: View {
     private var workspaceRoot: some View {
         NavigationSplitView {
             BinderSidebarView(
+                onOpenProjectNotes: {
+                    selectedTab = .writing
+                    writingSidePanel = .notes
+                    notesScope = .project
+                },
                 onOpenSceneSummary: { sceneID, chapterID in
                     store.selectScene(sceneID, chapterID: chapterID)
                     summaryScope = .scene
                     selectedTab = .writing
                     writingSidePanel = .summary
                 },
+                onOpenSceneNotes: { sceneID, chapterID in
+                    store.selectScene(sceneID, chapterID: chapterID)
+                    notesScope = .scene
+                    selectedTab = .writing
+                    writingSidePanel = .notes
+                },
                 onOpenChapterSummary: { chapterID in
                     store.selectChapter(chapterID)
                     summaryScope = .chapter
                     selectedTab = .writing
                     writingSidePanel = .summary
+                },
+                onOpenChapterNotes: { chapterID in
+                    store.selectChapter(chapterID)
+                    notesScope = .chapter
+                    selectedTab = .writing
+                    writingSidePanel = .notes
                 },
                 onActivateSearchResult: activateSearchResult
             )
@@ -131,9 +150,16 @@ struct ContentView: View {
                     Button {
                         toggleSummaryPanel()
                     } label: {
-                        Image(systemName: writingSidePanel == .summary ? "doc.plaintext.fill" : "doc.plaintext")
+                        Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
                     }
                     .help(summaryToggleHelpText)
+
+                    Button {
+                        toggleNotesPanel()
+                    } label: {
+                        Image(systemName: writingSidePanel == .notes ? "list.clipboard.fill" : "list.clipboard")
+                    }
+                    .help(notesToggleHelpText)
                 }
             } else {
                 ToolbarItem(placement: .primaryAction) {
@@ -179,6 +205,9 @@ struct ContentView: View {
                 .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
         case .summary:
             SceneSummaryPanelView(scope: $summaryScope)
+                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
+        case .notes:
+            NotesPanelView(scope: $notesScope)
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
         case .none:
             EmptyView()
@@ -243,6 +272,10 @@ struct ContentView: View {
 
     private var summaryToggleHelpText: String {
         writingSidePanel == .summary ? "Hide Summary" : "Show Summary"
+    }
+
+    private var notesToggleHelpText: String {
+        writingSidePanel == .notes ? "Hide Notes" : "Show Notes"
     }
 
     private var conversationsToggleHelpText: String {
@@ -339,6 +372,28 @@ struct ContentView: View {
             summaryScope = .chapter
             store.selectChapter(chapterID)
 
+        case .projectNote:
+            selectedTab = .writing
+            writingSidePanel = .notes
+            notesScope = .project
+
+        case .chapterNote:
+            guard let chapterID = result.chapterID else { return }
+            selectedTab = .writing
+            writingSidePanel = .notes
+            notesScope = .chapter
+            store.selectChapter(chapterID)
+
+        case .sceneNote:
+            guard let chapterID = result.chapterID,
+                  let sceneID = result.sceneID else {
+                return
+            }
+            selectedTab = .writing
+            writingSidePanel = .notes
+            notesScope = .scene
+            store.selectScene(sceneID, chapterID: chapterID)
+
         case .chatMessage:
             guard let sessionID = result.workshopSessionID else { return }
             selectedTab = .workshop
@@ -353,6 +408,10 @@ struct ContentView: View {
 
     private func toggleSummaryPanel() {
         writingSidePanel = writingSidePanel == .summary ? .none : .summary
+    }
+
+    private func toggleNotesPanel() {
+        writingSidePanel = writingSidePanel == .notes ? .none : .notes
     }
 
     private func restoreSidebarStateFromStorage() {

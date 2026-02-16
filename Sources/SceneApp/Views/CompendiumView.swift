@@ -55,9 +55,8 @@ struct CompendiumView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 6)
 
             List(selection: selectedEntryBinding) {
                 ForEach(filteredEntries) { entry in

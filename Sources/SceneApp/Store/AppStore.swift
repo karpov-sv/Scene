@@ -184,6 +184,7 @@ final class AppStore: ObservableObject {
         case project
         case compendium
         case summaries
+        case notes
         case chats
 
         var id: String { rawValue }
@@ -200,6 +201,8 @@ final class AppStore: ObservableObject {
                 return "Compendium"
             case .summaries:
                 return "Summaries"
+            case .notes:
+                return "Notes"
             case .chats:
                 return "Chats"
             }
@@ -212,6 +215,9 @@ final class AppStore: ObservableObject {
             case compendium
             case sceneSummary
             case chapterSummary
+            case projectNote
+            case chapterNote
+            case sceneNote
             case chatMessage
         }
 
@@ -2072,6 +2078,25 @@ final class AppStore: ObservableObject {
         updateChapterSummary(chapterID: selectedChapterID, summary: summary, debounced: true)
     }
 
+    func updateProjectNotes(_ notes: String) {
+        project.notes = notes
+        saveProject(debounced: true)
+    }
+
+    func updateSelectedSceneNotes(_ notes: String) {
+        guard let selectedSceneID else {
+            return
+        }
+        updateSceneNotes(sceneID: selectedSceneID, notes: notes, debounced: true)
+    }
+
+    func updateSelectedChapterNotes(_ notes: String) {
+        guard let selectedChapterID else {
+            return
+        }
+        updateChapterNotes(chapterID: selectedChapterID, notes: notes, debounced: true)
+    }
+
     private func updateSceneSummary(sceneID: UUID, summary: String, debounced: Bool) {
         guard let location = sceneLocation(for: sceneID) else {
             return
@@ -2089,6 +2114,27 @@ final class AppStore: ObservableObject {
         }
 
         project.chapters[chapterIndex].summary = summary
+        project.chapters[chapterIndex].updatedAt = .now
+        saveProject(debounced: debounced)
+    }
+
+    private func updateSceneNotes(sceneID: UUID, notes: String, debounced: Bool) {
+        guard let location = sceneLocation(for: sceneID) else {
+            return
+        }
+
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].notes = notes
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+        project.chapters[location.chapterIndex].updatedAt = .now
+        saveProject(debounced: debounced)
+    }
+
+    private func updateChapterNotes(chapterID: UUID, notes: String, debounced: Bool) {
+        guard let chapterIndex = chapterIndex(for: chapterID) else {
+            return
+        }
+
+        project.chapters[chapterIndex].notes = notes
         project.chapters[chapterIndex].updatedAt = .now
         saveProject(debounced: debounced)
     }
@@ -5298,6 +5344,13 @@ final class AppStore: ObservableObject {
                 output: &output
             )
             if output.count >= maxResults { return output }
+            appendNotesMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+            if output.count >= maxResults { return output }
             appendChatMatches(
                 query: normalizedQuery,
                 options: compareOptions,
@@ -5348,6 +5401,14 @@ final class AppStore: ObservableObject {
 
         case .summaries:
             appendSummaryMatches(
+                query: normalizedQuery,
+                options: compareOptions,
+                maxResults: maxResults,
+                output: &output
+            )
+
+        case .notes:
+            appendNotesMatches(
                 query: normalizedQuery,
                 options: compareOptions,
                 maxResults: maxResults,
@@ -5531,6 +5592,110 @@ final class AppStore: ObservableObject {
                         title: sceneTitle,
                         subtitle: "\(chapterTitle) • Scene Summary",
                         snippet: searchSnippet(in: summaryText, matchRange: foundRange),
+                        chapterID: chapter.id,
+                        sceneID: scene.id,
+                        compendiumEntryID: nil,
+                        workshopSessionID: nil,
+                        workshopMessageID: nil,
+                        location: foundRange.location,
+                        length: foundRange.length
+                    )
+                }
+
+                if output.count >= maxResults {
+                    return
+                }
+            }
+        }
+    }
+
+    private func appendNotesMatches(
+        query: String,
+        options: NSString.CompareOptions,
+        maxResults: Int,
+        output: inout [GlobalSearchResult]
+    ) {
+        let projectTitle = currentProjectName
+        let projectNotes = project.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !projectNotes.isEmpty {
+            appendSearchMatches(
+                query: query,
+                in: projectNotes,
+                options: options,
+                output: &output,
+                maxResults: maxResults
+            ) { foundRange, notesText in
+                GlobalSearchResult(
+                    id: "project-note:\(foundRange.location)",
+                    kind: .projectNote,
+                    title: projectTitle,
+                    subtitle: "Project Notes",
+                    snippet: searchSnippet(in: notesText, matchRange: foundRange),
+                    chapterID: nil,
+                    sceneID: nil,
+                    compendiumEntryID: nil,
+                    workshopSessionID: nil,
+                    workshopMessageID: nil,
+                    location: foundRange.location,
+                    length: foundRange.length
+                )
+            }
+        }
+
+        if output.count >= maxResults {
+            return
+        }
+
+        for chapter in project.chapters {
+            let chapterTitle = displayChapterTitle(chapter)
+            let chapterNotes = chapter.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !chapterNotes.isEmpty {
+                appendSearchMatches(
+                    query: query,
+                    in: chapterNotes,
+                    options: options,
+                    output: &output,
+                    maxResults: maxResults
+                ) { foundRange, notesText in
+                    GlobalSearchResult(
+                        id: "chapter-note:\(chapter.id.uuidString):\(foundRange.location)",
+                        kind: .chapterNote,
+                        title: chapterTitle,
+                        subtitle: "Chapter Notes",
+                        snippet: searchSnippet(in: notesText, matchRange: foundRange),
+                        chapterID: chapter.id,
+                        sceneID: nil,
+                        compendiumEntryID: nil,
+                        workshopSessionID: nil,
+                        workshopMessageID: nil,
+                        location: foundRange.location,
+                        length: foundRange.length
+                    )
+                }
+            }
+
+            if output.count >= maxResults {
+                return
+            }
+
+            for scene in chapter.scenes {
+                let sceneNotes = scene.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !sceneNotes.isEmpty else { continue }
+
+                let sceneTitle = displaySceneTitle(scene)
+                appendSearchMatches(
+                    query: query,
+                    in: sceneNotes,
+                    options: options,
+                    output: &output,
+                    maxResults: maxResults
+                ) { foundRange, notesText in
+                    GlobalSearchResult(
+                        id: "scene-note:\(scene.id.uuidString):\(foundRange.location)",
+                        kind: .sceneNote,
+                        title: sceneTitle,
+                        subtitle: "\(chapterTitle) • Scene Notes",
+                        snippet: searchSnippet(in: notesText, matchRange: foundRange),
                         chapterID: chapter.id,
                         sceneID: scene.id,
                         compendiumEntryID: nil,

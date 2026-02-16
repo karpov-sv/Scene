@@ -12,17 +12,26 @@ struct BinderSidebarView: View {
     @State private var isEditingProjectTitle: Bool = false
     @State private var editingTitle: String = ""
     @FocusState private var isRenameFieldFocused: Bool
+    let onOpenProjectNotes: (() -> Void)?
     let onOpenSceneSummary: ((UUID, UUID) -> Void)?
+    let onOpenSceneNotes: ((UUID, UUID) -> Void)?
     let onOpenChapterSummary: ((UUID) -> Void)?
+    let onOpenChapterNotes: ((UUID) -> Void)?
     let onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)?
 
     init(
+        onOpenProjectNotes: (() -> Void)? = nil,
         onOpenSceneSummary: ((UUID, UUID) -> Void)? = nil,
+        onOpenSceneNotes: ((UUID, UUID) -> Void)? = nil,
         onOpenChapterSummary: ((UUID) -> Void)? = nil,
+        onOpenChapterNotes: ((UUID) -> Void)? = nil,
         onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)? = nil
     ) {
+        self.onOpenProjectNotes = onOpenProjectNotes
         self.onOpenSceneSummary = onOpenSceneSummary
+        self.onOpenSceneNotes = onOpenSceneNotes
         self.onOpenChapterSummary = onOpenChapterSummary
+        self.onOpenChapterNotes = onOpenChapterNotes
         self.onActivateSearchResult = onActivateSearchResult
     }
 
@@ -164,6 +173,12 @@ struct BinderSidebarView: View {
                             beginProjectRename()
                         } label: {
                             Label("Rename", systemImage: "pencil")
+                        }
+
+                        Button {
+                            onOpenProjectNotes?()
+                        } label: {
+                            Label("Open Project Notes", systemImage: "note.text")
                         }
                     }
             }
@@ -578,6 +593,12 @@ struct BinderSidebarView: View {
         }
 
         Button {
+            onOpenChapterNotes?(chapter.id)
+        } label: {
+            Label("Open Chapter Notes", systemImage: "note.text")
+        }
+
+        Button {
             store.moveChapterUp(chapter.id)
         } label: {
             Label("Move Chapter Up", systemImage: "arrow.up")
@@ -610,6 +631,12 @@ struct BinderSidebarView: View {
             onOpenSceneSummary?(scene.id, chapterID)
         } label: {
             Label("Open Scene Summary", systemImage: "text.alignleft")
+        }
+
+        Button {
+            onOpenSceneNotes?(scene.id, chapterID)
+        } label: {
+            Label("Open Scene Notes", systemImage: "note.text")
         }
 
         Button {
@@ -666,6 +693,8 @@ struct BinderSidebarView: View {
             return "books.vertical"
         case .sceneSummary, .chapterSummary:
             return "text.alignleft"
+        case .projectNote, .chapterNote, .sceneNote:
+            return "note.text"
         case .chatMessage:
             return "bubble.left.and.bubble.right"
         }

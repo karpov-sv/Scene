@@ -50,6 +50,25 @@ enum SummaryScope: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum NotesScope: String, Codable, CaseIterable, Identifiable {
+    case scene
+    case chapter
+    case project
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .project:
+            return "Project"
+        case .chapter:
+            return "Chapter"
+        case .scene:
+            return "Scene"
+        }
+    }
+}
+
 enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case openAI
     case anthropic
@@ -134,6 +153,7 @@ struct Scene: Codable, Identifiable, Equatable {
     var content: String
     var contentRTFData: Data?
     var summary: String
+    var notes: String
     var updatedAt: Date
 
     init(
@@ -142,6 +162,7 @@ struct Scene: Codable, Identifiable, Equatable {
         content: String = "",
         contentRTFData: Data? = nil,
         summary: String = "",
+        notes: String = "",
         updatedAt: Date = .now
     ) {
         self.id = id
@@ -149,7 +170,29 @@ struct Scene: Codable, Identifiable, Equatable {
         self.content = content
         self.contentRTFData = contentRTFData
         self.summary = summary
+        self.notes = notes
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case content
+        case contentRTFData
+        case summary
+        case notes
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        contentRTFData = try container.decodeIfPresent(Data.self, forKey: .contentRTFData)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 }
 
@@ -158,6 +201,7 @@ struct Chapter: Codable, Identifiable, Equatable {
     var title: String
     var scenes: [Scene]
     var summary: String
+    var notes: String
     var updatedAt: Date
 
     init(
@@ -165,12 +209,14 @@ struct Chapter: Codable, Identifiable, Equatable {
         title: String,
         scenes: [Scene] = [],
         summary: String = "",
+        notes: String = "",
         updatedAt: Date = .now
     ) {
         self.id = id
         self.title = title
         self.scenes = scenes
         self.summary = summary
+        self.notes = notes
         self.updatedAt = updatedAt
     }
 
@@ -179,6 +225,7 @@ struct Chapter: Codable, Identifiable, Equatable {
         case title
         case scenes
         case summary
+        case notes
         case updatedAt
     }
 
@@ -188,6 +235,7 @@ struct Chapter: Codable, Identifiable, Equatable {
         title = try container.decode(String.self, forKey: .title)
         scenes = try container.decode([Scene].self, forKey: .scenes)
         summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 }
@@ -796,6 +844,7 @@ struct EditorAppearanceSettings: Codable, Equatable {
 struct StoryProject: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
+    var notes: String
     var autosaveEnabled: Bool
     var chapters: [Chapter]
     var compendium: [CompendiumEntry]
@@ -816,6 +865,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     init(
         id: UUID,
         title: String,
+        notes: String,
         autosaveEnabled: Bool,
         chapters: [Chapter],
         compendium: [CompendiumEntry],
@@ -835,6 +885,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.title = title
+        self.notes = notes
         self.autosaveEnabled = autosaveEnabled
         self.chapters = chapters
         self.compendium = compendium
@@ -856,6 +907,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case notes
         case autosaveEnabled
         case chapters
         case compendium
@@ -879,6 +931,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
 
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         autosaveEnabled = try container.decodeIfPresent(Bool.self, forKey: .autosaveEnabled) ?? true
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         compendium = try container.decode([CompendiumEntry].self, forKey: .compendium)
@@ -932,6 +985,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         return StoryProject(
             id: UUID(),
             title: "Untitled Project",
+            notes: "",
             autosaveEnabled: true,
             chapters: [firstChapter],
             compendium: compendium,

@@ -232,6 +232,7 @@ final class ProjectPersistence {
         var schemaVersion: Int
         var id: UUID
         var title: String
+        var notes: String?
         var autosaveEnabled: Bool?
         var updatedAt: Date
         var selectedProsePromptID: UUID?
@@ -257,6 +258,7 @@ final class ProjectPersistence {
         var updatedAt: Date
         var sceneIDs: [UUID]
         var summary: String
+        var notes: String
 
         private enum CodingKeys: String, CodingKey {
             case id
@@ -264,14 +266,16 @@ final class ProjectPersistence {
             case updatedAt
             case sceneIDs
             case summary
+            case notes
         }
 
-        init(id: UUID, title: String, updatedAt: Date, sceneIDs: [UUID], summary: String) {
+        init(id: UUID, title: String, updatedAt: Date, sceneIDs: [UUID], summary: String, notes: String) {
             self.id = id
             self.title = title
             self.updatedAt = updatedAt
             self.sceneIDs = sceneIDs
             self.summary = summary
+            self.notes = notes
         }
 
         init(from decoder: Decoder) throws {
@@ -281,6 +285,7 @@ final class ProjectPersistence {
             updatedAt = try container.decode(Date.self, forKey: .updatedAt)
             sceneIDs = try container.decode([UUID].self, forKey: .sceneIDs)
             summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+            notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         }
     }
 
@@ -290,6 +295,7 @@ final class ProjectPersistence {
         var updatedAt: Date
         var contentPath: String
         var summary: String
+        var notes: String
 
         private enum CodingKeys: String, CodingKey {
             case id
@@ -297,14 +303,16 @@ final class ProjectPersistence {
             case updatedAt
             case contentPath
             case summary
+            case notes
         }
 
-        init(id: UUID, title: String, updatedAt: Date, contentPath: String, summary: String) {
+        init(id: UUID, title: String, updatedAt: Date, contentPath: String, summary: String, notes: String) {
             self.id = id
             self.title = title
             self.updatedAt = updatedAt
             self.contentPath = contentPath
             self.summary = summary
+            self.notes = notes
         }
 
         init(from decoder: Decoder) throws {
@@ -314,6 +322,7 @@ final class ProjectPersistence {
             updatedAt = try container.decode(Date.self, forKey: .updatedAt)
             contentPath = try container.decode(String.self, forKey: .contentPath)
             summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+            notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         }
     }
 
@@ -401,6 +410,7 @@ final class ProjectPersistence {
                 content: content,
                 contentRTFData: contentRTFData,
                 summary: record.summary,
+                notes: record.notes,
                 updatedAt: record.updatedAt
             )
         }
@@ -418,6 +428,7 @@ final class ProjectPersistence {
                 title: record.title,
                 scenes: scenes,
                 summary: record.summary,
+                notes: record.notes,
                 updatedAt: record.updatedAt
             )
         }
@@ -475,6 +486,7 @@ final class ProjectPersistence {
         return StoryProject(
             id: manifest.id,
             title: manifest.title,
+            notes: manifest.notes ?? "",
             autosaveEnabled: manifest.autosaveEnabled ?? true,
             chapters: chapters,
             compendium: compendium,
@@ -528,7 +540,8 @@ final class ProjectPersistence {
                         title: scene.title,
                         updatedAt: scene.updatedAt,
                         contentPath: contentPath,
-                        summary: scene.summary
+                        summary: scene.summary,
+                        notes: scene.notes
                     )
                 )
             }
@@ -596,7 +609,8 @@ final class ProjectPersistence {
                 title: chapter.title,
                 updatedAt: chapter.updatedAt,
                 sceneIDs: chapter.scenes.map(\.id),
-                summary: chapter.summary
+                summary: chapter.summary,
+                notes: chapter.notes
             )
         }
 
@@ -604,6 +618,7 @@ final class ProjectPersistence {
             schemaVersion: Self.schemaVersion,
             id: project.id,
             title: project.title,
+            notes: project.notes,
             autosaveEnabled: project.autosaveEnabled,
             updatedAt: project.updatedAt,
             selectedProsePromptID: project.selectedProsePromptID,
