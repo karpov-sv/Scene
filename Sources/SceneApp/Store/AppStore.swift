@@ -113,6 +113,29 @@ final class AppStore: ObservableObject {
     private static let rewriteSceneContextChars = 2200
     private static let summarySourceChars = 2800
     private static let workshopSceneTailChars = 1800
+    private static let epubAuxDocumentKeepThresholdChars = 1200
+    private static let epubNonBodyNameMarkers: [String] = [
+        "cover",
+        "titlepage",
+        "title-page",
+        "copyright",
+        "imprint",
+        "toc",
+        "tableofcontents",
+        "contents",
+        "nav",
+        "navigation",
+        "colophon",
+        "about",
+        "credits"
+    ]
+    private static let epubNotesNameMarkers: [String] = [
+        "footnote",
+        "footnotes",
+        "endnote",
+        "endnotes",
+        "notes"
+    ]
 
     private static let transferEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -5417,6 +5440,13 @@ final class AppStore: ObservableObject {
             }
 
             guard !scenes.isEmpty else { continue }
+            let chapterTextLength = scenes.reduce(0) { $0 + $1.content.count }
+            if shouldSkipLikelyAuxiliaryEPUBDocument(
+                documentURL: documentURL,
+                chapterTextLength: chapterTextLength
+            ) {
+                continue
+            }
             chapters.append(
                 Chapter(
                     title: normalizedTitle(parsed.title, fallback: "Chapter \(index + 1)"),
@@ -5442,6 +5472,9 @@ final class AppStore: ObservableObject {
             guard let item = descriptor.manifestByID[idref] else { continue }
             let mediaType = item.mediaType.lowercased()
             if !mediaType.isEmpty && !preferredMediaTypes.contains(mediaType) {
+                continue
+            }
+            if item.properties?.localizedCaseInsensitiveContains("nav") == true {
                 continue
             }
 
@@ -5488,7 +5521,7 @@ final class AppStore: ObservableObject {
             ?? chapterTitleFromTitleTag
             ?? normalizedTitle(fallbackTitle, fallback: "Chapter \(fallbackIndex + 1)")
 
-        let tokenPattern = "<(h1|h2|h3|p|li)\\b[^>]*>(.*?)</\\1>"
+        let tokenPattern = "<(h[1-6]|p|li|blockquote)\\b[^>]*>(.*?)</\\1>"
         guard let tokenRegex = try? NSRegularExpression(
             pattern: tokenPattern,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
@@ -5513,18 +5546,25 @@ final class AppStore: ObservableObject {
             guard !textValue.isEmpty else { continue }
 
             switch elementType {
-            case "h2", "h3":
-                if !pendingParagraphs.isEmpty {
-                    if scenes.isEmpty {
-                        scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
-                    } else {
-                        scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
+            case "h1", "h2", "h3", "h4", "h5", "h6":
+                let headingLevel = Int(elementType.dropFirst()) ?? 1
+                if shouldTreatEPUBHeadingAsSceneTitle(textValue, headingLevel: headingLevel) {
+                    if !pendingParagraphs.isEmpty {
+                        if scenes.isEmpty {
+                            scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
+                        } else {
+                            scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
+                        }
+                        pendingParagraphs = []
                     }
-                    pendingParagraphs = []
+                    scenes.append(EPUBSceneBuilder(title: textValue, paragraphs: []))
+                } else if scenes.isEmpty {
+                    pendingParagraphs.append(textValue)
+                } else {
+                    scenes[scenes.count - 1].paragraphs.append(textValue)
                 }
-                scenes.append(EPUBSceneBuilder(title: textValue, paragraphs: []))
 
-            case "p", "li":
+            case "p", "li", "blockquote":
                 if scenes.isEmpty {
                     pendingParagraphs.append(textValue)
                 } else {
@@ -5562,6 +5602,59 @@ final class AppStore: ObservableObject {
 
         guard !parsedScenes.isEmpty else { return nil }
         return EPUBParsedChapter(title: chapterTitle, scenes: parsedScenes)
+    }
+
+    private func shouldTreatEPUBHeadingAsSceneTitle(_ text: String, headingLevel: Int) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let wordCount = trimmed
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .count
+        let characterCount = trimmed.count
+        let hasTerminalSentencePunctuation = trimmed.range(
+            of: #"[.!?…]["'”’)]?$"#,
+            options: .regularExpression
+        ) != nil
+
+        // Long heading-tag text is usually body prose in malformed EPUBs.
+        if characterCount >= 160 || wordCount >= 22 {
+            return false
+        }
+
+        // H1 is often repurposed by generated EPUBs; require stricter heading shape.
+        if headingLevel == 1 {
+            return characterCount <= 90
+                && wordCount <= 12
+                && !hasTerminalSentencePunctuation
+        }
+
+        // For H2-H6, allow slightly longer structural headings.
+        return characterCount <= 140
+            && wordCount <= 18
+            && !hasTerminalSentencePunctuation
+    }
+
+    private func shouldSkipLikelyAuxiliaryEPUBDocument(
+        documentURL: URL,
+        chapterTextLength: Int
+    ) -> Bool {
+        let fullPath = documentURL.path.lowercased()
+        let fileName = documentURL.deletingPathExtension().lastPathComponent.lowercased()
+
+        let hasNonBodyMarker = Self.epubNonBodyNameMarkers.contains { marker in
+            fileName.contains(marker) || fullPath.contains("/\(marker)")
+        }
+        let hasNotesMarker = Self.epubNotesNameMarkers.contains { marker in
+            fileName.contains(marker) || fullPath.contains("/\(marker)")
+        }
+
+        guard hasNonBodyMarker || hasNotesMarker else {
+            return false
+        }
+
+        // Keep auxiliary docs only when they carry substantial textual content.
+        return chapterTextLength < Self.epubAuxDocumentKeepThresholdChars
     }
 
     private func extractEPUBBodyText(from source: String) -> String {
