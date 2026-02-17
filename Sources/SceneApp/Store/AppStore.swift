@@ -3157,20 +3157,11 @@ final class AppStore: ObservableObject {
                 : ""
             let sceneFullText = workshopUseSceneContext ? scenePreview.sceneContent : ""
 
-            let contextSections: SceneContextSections
-            if workshopUseCompendiumContext {
-                contextSections = buildCompendiumContextSections(
-                    for: scenePreview.sceneID,
-                    mentionSourceText: pendingInput
-                )
-            } else {
-                contextSections = SceneContextSections(
-                    combined: "",
-                    compendium: "",
-                    sceneSummaries: "",
-                    chapterSummaries: ""
-                )
-            }
+            let contextSections = buildCompendiumContextSections(
+                for: scenePreview.sceneID,
+                mentionSourceText: pendingInput,
+                includeSelectedSceneContext: workshopUseCompendiumContext
+            )
 
             let sessionName = (selectedWorkshopSession ?? project.workshopSessions.first)?.name
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5146,20 +5137,11 @@ final class AppStore: ObservableObject {
             sceneFullText = ""
         }
 
-        let contextSections: SceneContextSections
-        if workshopUseCompendiumContext {
-            contextSections = buildCompendiumContextSections(
-                for: selectedScene?.id,
-                mentionSourceText: mentionSourceText
-            )
-        } else {
-            contextSections = SceneContextSections(
-                combined: "",
-                compendium: "",
-                sceneSummaries: "",
-                chapterSummaries: ""
-            )
-        }
+        let contextSections = buildCompendiumContextSections(
+            for: selectedScene?.id,
+            mentionSourceText: mentionSourceText,
+            includeSelectedSceneContext: workshopUseCompendiumContext
+        )
 
         let prompt = activeWorkshopPrompt ?? defaultPromptTemplate(for: .workshop)
         let template = prompt.userTemplate
@@ -5253,14 +5235,28 @@ final class AppStore: ObservableObject {
 
     private func buildCompendiumContextSections(
         for sceneID: UUID?,
-        mentionSourceText: String? = nil
+        mentionSourceText: String? = nil,
+        includeSelectedSceneContext: Bool = true
     ) -> SceneContextSections {
-        let selectedEntryIDs = compendiumContextIDs(for: sceneID)
-        let selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
-        let selectedSceneSummaryIDs = sceneSummaryContextIDs(for: sceneID)
-        let selectedChapterSummaryIDs = chapterSummaryContextIDs(for: sceneID)
-        let selectedSceneSummaries = sceneSummaryEntries(forIDs: selectedSceneSummaryIDs)
-        let selectedChapterSummaries = chapterSummaryEntries(forIDs: selectedChapterSummaryIDs)
+        let selectedEntries: [CompendiumEntry]
+        let selectedSceneSummaries: [(chapterTitle: String, sceneTitle: String, summary: String)]
+        let selectedChapterSummaries: [(chapterTitle: String, summary: String)]
+
+        if includeSelectedSceneContext {
+            let selectedEntryIDs = compendiumContextIDs(for: sceneID)
+            selectedEntries = compendiumEntries(forIDs: selectedEntryIDs)
+
+            let selectedSceneSummaryIDs = sceneSummaryContextIDs(for: sceneID)
+            selectedSceneSummaries = sceneSummaryEntries(forIDs: selectedSceneSummaryIDs)
+
+            let selectedChapterSummaryIDs = chapterSummaryContextIDs(for: sceneID)
+            selectedChapterSummaries = chapterSummaryEntries(forIDs: selectedChapterSummaryIDs)
+        } else {
+            selectedEntries = []
+            selectedSceneSummaries = []
+            selectedChapterSummaries = []
+        }
+
         let mentionContext = resolveMentionContext(from: mentionSourceText)
 
         let mergedCompendiumEntries = mergeCompendiumEntries(

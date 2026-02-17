@@ -528,7 +528,7 @@ struct WorkshopChatView: View {
                 Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
                     .help("Include the current scene excerpt in workshop prompts. Disabling also blanks scene_tail(...) variables.")
                 Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
-                    .help("Include selected scene context entries (compendium and linked summaries) in {{context}} variables.")
+                    .help("Include selected scene context entries (compendium and linked summaries) in {{context}} variables. Explicit @/# mentions are included either way.")
 
                 Spacer(minLength: 0)
             }
