@@ -30,12 +30,22 @@ struct ContentView: View {
     private var storedWorkspaceTabRawValue: String = WorkspaceTab.writing.rawValue
     @AppStorage("SceneApp.ui.writingSidePanel")
     private var storedWritingSidePanelRawValue: String = WritingSidePanel.compendium.rawValue
-    @State private var selectedTab: WorkspaceTab = .writing
-    @State private var writingSidePanel: WritingSidePanel = .compendium
+    @AppStorage("SceneApp.ui.binderVisible")
+    private var storedBinderVisible: Bool = true
     @State private var summaryScope: SummaryScope = .scene
     @State private var notesScope: NotesScope = .scene
     @State private var workspaceColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingCheckpointRestoreSheet: Bool = false
+
+    private var selectedTab: WorkspaceTab {
+        get { WorkspaceTab(rawValue: store.workspaceTab) ?? .writing }
+        nonmutating set { store.workspaceTab = newValue.rawValue }
+    }
+
+    private var writingSidePanel: WritingSidePanel {
+        get { WritingSidePanel(rawValue: store.writingSidePanel) ?? .compendium }
+        nonmutating set { store.writingSidePanel = newValue.rawValue }
+    }
 
     private var hasErrorBinding: Binding<Bool> {
         Binding(
@@ -67,12 +77,16 @@ struct ContentView: View {
             }
             .onAppear {
                 restoreSidebarStateFromStorage()
+                restoreBinderVisibilityFromStorage()
             }
             .onChange(of: selectedTab) { _, newValue in
                 storedWorkspaceTabRawValue = newValue.rawValue
             }
             .onChange(of: writingSidePanel) { _, newValue in
                 storedWritingSidePanelRawValue = newValue.rawValue
+            }
+            .onChange(of: workspaceColumnVisibility) { _, newValue in
+                storedBinderVisible = newValue != .detailOnly
             }
     }
 
@@ -133,74 +147,91 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var workspaceToolbar: some ToolbarContent {
-        if store.isProjectOpen {
-            ToolbarItem(placement: .status) {
-                Picker("Workspace", selection: $selectedTab) {
-                    ForEach(WorkspaceTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
+        ToolbarItem(placement: .status) {
+            Picker("Workspace", selection: Binding(
+                get: { selectedTab },
+                set: { newTab in
+                    guard selectedTab != newTab else { return }
+                    selectedTab = newTab
+                    switch newTab {
+                    case .writing:
+                        store.requestSceneEditorFocus()
+                    case .workshop:
+                        store.requestWorkshopInputFocus()
                     }
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 260)
+            )) {
+                ForEach(WorkspaceTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
             }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+        }
 
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    toggleCompendiumPanel()
-                } label: {
-                    Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
-                }
-                .help(compendiumToggleHelpText)
-
-                Button {
-                    toggleSummaryPanel()
-                } label: {
-                    Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
-                }
-                .help(summaryToggleHelpText)
-
-                Button {
-                    toggleNotesPanel()
-                } label: {
-                    Image(systemName: writingSidePanel == .notes ? "list.clipboard.fill" : "list.clipboard")
-                }
-                .help(notesToggleHelpText)
-
-                Button {
-                    toggleConversationsPanel()
-                } label: {
-                    Image(systemName: writingSidePanel == .conversations ? "text.bubble.fill" : "text.bubble")
-                }
-                .help(conversationsToggleHelpText)
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                toggleCompendiumPanel()
+            } label: {
+                Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
             }
+            .help(compendiumToggleHelpText)
+
+            Button {
+                toggleSummaryPanel()
+            } label: {
+                Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
+            }
+            .help(summaryToggleHelpText)
+
+            Button {
+                toggleNotesPanel()
+            } label: {
+                Image(systemName: writingSidePanel == .notes ? "list.clipboard.fill" : "list.clipboard")
+            }
+            .help(notesToggleHelpText)
+
+            Button {
+                toggleConversationsPanel()
+            } label: {
+                Image(systemName: writingSidePanel == .conversations ? "text.bubble.fill" : "text.bubble")
+            }
+            .help(conversationsToggleHelpText)
         }
     }
 
-    @ViewBuilder
-    private var workspacePanel: some View {
-        if writingSidePanel == .none {
-            workspaceMainPanel
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            HSplitView {
-                workspaceMainPanel
-                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+    // MARK: - Workspace panels
 
+    // Always renders inside a stable HSplitView so toggling the side panel
+    // does not destroy/recreate the main panel (preserving editor state).
+    private var workspacePanel: some View {
+        HSplitView {
+            workspaceMainPanel
+                .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+
+            if writingSidePanel != .none {
                 writingSidePanelContent
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
+    // Both tabs are kept alive via opacity/zIndex layering so switching
+    // tabs doesn't destroy @State (scroll position, undo stack, etc.).
     private var workspaceMainPanel: some View {
-        if selectedTab == .writing {
+        ZStack {
             EditorView()
-        } else {
+                .zIndex(selectedTab == .writing ? 1 : 0)
+                .opacity(selectedTab == .writing ? 1 : 0)
+                .allowsHitTesting(selectedTab == .writing)
+
             WorkshopChatView(
                 layout: .embeddedTrailingSessions,
                 showsConversationsSidebar: false
             )
+            .zIndex(selectedTab == .workshop ? 1 : 0)
+            .opacity(selectedTab == .workshop ? 1 : 0)
+            .allowsHitTesting(selectedTab == .workshop)
         }
     }
 
@@ -463,6 +494,10 @@ struct ContentView: View {
     private func toggleBinderSidebar() {
         guard store.isProjectOpen else { return }
         workspaceColumnVisibility = workspaceColumnVisibility == .detailOnly ? .all : .detailOnly
+    }
+
+    private func restoreBinderVisibilityFromStorage() {
+        workspaceColumnVisibility = storedBinderVisible ? .all : .detailOnly
     }
 
     private func restoreSidebarStateFromStorage() {

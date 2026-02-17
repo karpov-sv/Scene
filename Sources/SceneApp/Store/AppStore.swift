@@ -451,6 +451,10 @@ final class AppStore: ObservableObject {
 
     @Published var showingSettings: Bool = false
 
+    // Per-document UI layout state (avoids global @AppStorage cross-window contamination)
+    @Published var workspaceTab: String = "writing"
+    @Published var writingSidePanel: String = "compendium"
+
     private let persistence: ProjectPersistence
     private let openAIService: OpenAICompatibleAIService
     private let anthropicService: AnthropicAIService
