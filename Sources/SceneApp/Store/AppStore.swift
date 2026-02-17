@@ -102,6 +102,10 @@ final class AppStore: ObservableObject {
     private static let compendiumTransferType = "scene-compendium"
     private static let projectTransferType = "scene-project"
     private static let builtInPromptIDs = Set(PromptTemplate.builtInTemplates.map(\.id))
+    private static let proseSceneTailChars = 2400
+    private static let rewriteSceneContextChars = 2200
+    private static let summarySourceChars = 2800
+    private static let workshopSceneTailChars = 1800
 
     private static let transferEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -2990,7 +2994,7 @@ final class AppStore: ObservableObject {
                 for: scenePreview.sceneID,
                 mentionSourceText: beatPreview
             )
-            let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            let sceneExcerpt = String(scenePreview.sceneContent.suffix(Self.proseSceneTailChars))
             let sceneSummary = sceneSummaryText(for: scenePreview.sceneID)
             renderedUser = renderPromptTemplate(
                 template: prompt.userTemplate,
@@ -3016,7 +3020,7 @@ final class AppStore: ObservableObject {
                 for: scenePreview.sceneID,
                 mentionSourceText: beatPreview
             )
-            let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+            let sceneExcerpt = String(scenePreview.sceneContent.suffix(Self.rewriteSceneContextChars))
             let localSelectionContext = selectionLocalContext(
                 selectedText: selectionPreview,
                 in: scenePreview.sceneContent
@@ -3047,7 +3051,7 @@ final class AppStore: ObservableObject {
                 Scope: scene summary
                 \(contextSections.combined)
                 """
-                let sceneExcerpt = String(scenePreview.sceneContent.suffix(4500))
+                let sceneExcerpt = String(scenePreview.sceneContent.suffix(Self.summarySourceChars))
                 notes.append("Summary preview scope: scene.")
                 renderedUser = renderPromptTemplate(
                     template: prompt.userTemplate,
@@ -3151,7 +3155,9 @@ final class AppStore: ObservableObject {
                 )
             }
 
-            let sceneContext = workshopUseSceneContext ? String(scenePreview.sceneContent.suffix(2400)) : ""
+            let sceneContext = workshopUseSceneContext
+                ? String(scenePreview.sceneContent.suffix(Self.workshopSceneTailChars))
+                : ""
             let sceneFullText = workshopUseSceneContext ? scenePreview.sceneContent : ""
 
             let contextSections: SceneContextSections
@@ -3703,7 +3709,7 @@ final class AppStore: ObservableObject {
     ) -> PromptRequestBuildResult {
         let activePrompt = activeProsePrompt ?? defaultPromptTemplate(for: .prose)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
-        let sceneContext = String(scene.content.suffix(4500))
+        let sceneContext = String(scene.content.suffix(Self.proseSceneTailChars))
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let promptResult = renderPromptTemplate(
@@ -3754,7 +3760,7 @@ final class AppStore: ObservableObject {
         let prompt = activeRewritePrompt ?? defaultPromptTemplate(for: .rewrite)
         let rewriteBeat = (beatOverride ?? beatInput).trimmingCharacters(in: .whitespacesAndNewlines)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: rewriteBeat)
-        let sceneContext = String(scene.content.suffix(4500))
+        let sceneContext = String(scene.content.suffix(Self.rewriteSceneContextChars))
         let localSelectionContext = selectionLocalContext(
             selectedText: selectedText,
             in: scene.content
@@ -3854,7 +3860,7 @@ final class AppStore: ObservableObject {
     private func makeSummaryRequest(scene: Scene) -> PromptRequestBuildResult {
         let prompt = activeSummaryPrompt ?? defaultPromptTemplate(for: .summary)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id)
-        let sceneContext = String(scene.content.suffix(4500))
+        let sceneContext = String(scene.content.suffix(Self.summarySourceChars))
         let scopeContext = """
         Scope: scene summary
         \(sceneContextSections.combined)
@@ -5106,7 +5112,7 @@ final class AppStore: ObservableObject {
         let sceneContext: String
         let sceneFullText: String
         if workshopUseSceneContext, let scene = selectedScene {
-            sceneContext = String(scene.content.suffix(2400))
+            sceneContext = String(scene.content.suffix(Self.workshopSceneTailChars))
             sceneFullText = scene.content
         } else {
             sceneContext = ""
@@ -5882,6 +5888,8 @@ final class AppStore: ObservableObject {
         source: String,
         extraVariables: [String: String] = [:]
     ) -> PromptRenderer.Result {
+        // TODO: Add a structured STATE block (POV/tense/location/time/goal/emotion)
+        // as first-class template variables once scene metadata supports it.
         var variables: [String: String] = [
             "beat": beat,
             "selection": selection,
@@ -5952,7 +5960,8 @@ final class AppStore: ObservableObject {
 
                     var content = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     if content.isEmpty {
-                        content = String(scene.content.suffix(2400)).trimmingCharacters(in: .whitespacesAndNewlines)
+                        content = String(scene.content.suffix(Self.workshopSceneTailChars))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                     guard !content.isEmpty else { continue }
 

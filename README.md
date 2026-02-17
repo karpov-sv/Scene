@@ -234,7 +234,7 @@ Common variables:
 
 Built-in functions:
 
-- `{{scene_tail(chars=4500)}}`
+- `{{scene_tail(chars=2400)}}`
 - `{{chat_history(turns=8)}}`
 - `{{context(max_chars=4000)}}`
 - `{{context_compendium(max_chars=4000)}}`

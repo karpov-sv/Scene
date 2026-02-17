@@ -164,7 +164,7 @@ struct PromptRenderer {
             let chars = intArgument(
                 named: "chars",
                 in: arguments,
-                defaultValue: 4500,
+                defaultValue: 2400,
                 minimum: 0,
                 functionName: name,
                 warnings: &warnings
