@@ -113,6 +113,10 @@ final class AppStore: ObservableObject {
     private static let rewriteSceneContextChars = 2200
     private static let summarySourceChars = 2800
     private static let workshopSceneTailChars = 1800
+    private static let rollingWorkshopMemoryMinDeltaMessages = 4
+    private static let rollingWorkshopMemoryDeltaWindow = 18
+    private static let rollingWorkshopMemoryMaxChars = 3200
+    private static let rollingSceneMemoryMaxChars = 2200
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
         "cover",
@@ -467,6 +471,7 @@ final class AppStore: ObservableObject {
     private var autosaveTask: Task<Void, Never>?
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
+    private var workshopRollingMemoryTask: Task<Void, Never>?
     private var proseRequestTask: Task<Void, Never>?
     private var searchDebounceTask: Task<Void, Never>?
     private var documentSaveInProgress: Bool = false
@@ -543,6 +548,7 @@ final class AppStore: ObservableObject {
         autosaveTask?.cancel()
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
+        workshopRollingMemoryTask?.cancel()
         proseRequestTask?.cancel()
     }
 
@@ -798,6 +804,26 @@ final class AppStore: ObservableObject {
             return []
         }
         return project.workshopInputHistoryBySession[selectedWorkshopSessionID.uuidString] ?? []
+    }
+
+    var selectedWorkshopRollingMemorySummary: String {
+        guard let selectedWorkshopSessionID else { return "" }
+        return project.rollingWorkshopMemoryBySession[selectedWorkshopSessionID.uuidString]?.summary ?? ""
+    }
+
+    var selectedWorkshopRollingMemoryUpdatedAt: Date? {
+        guard let selectedWorkshopSessionID else { return nil }
+        return project.rollingWorkshopMemoryBySession[selectedWorkshopSessionID.uuidString]?.updatedAt
+    }
+
+    var selectedSceneRollingMemorySummary: String {
+        guard let selectedSceneID else { return "" }
+        return project.rollingSceneMemoryByScene[selectedSceneID.uuidString]?.summary ?? ""
+    }
+
+    var selectedSceneRollingMemoryUpdatedAt: Date? {
+        guard let selectedSceneID else { return nil }
+        return project.rollingSceneMemoryByScene[selectedSceneID.uuidString]?.updatedAt
     }
 
     var beatInputHistory: [String] {
@@ -2171,6 +2197,8 @@ final class AppStore: ObservableObject {
         importedProject.sceneNarrativeStates = [:]
         importedProject.workshopInputHistoryBySession = [:]
         importedProject.beatInputHistoryByScene = [:]
+        importedProject.rollingWorkshopMemoryBySession = [:]
+        importedProject.rollingSceneMemoryByScene = [:]
         importedProject.selectedSceneID = chapters.first?.scenes.first?.id
         importedProject.updatedAt = .now
 
@@ -2433,6 +2461,7 @@ final class AppStore: ObservableObject {
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
+        project.rollingSceneMemoryByScene.removeValue(forKey: selectedSceneID.uuidString)
         saveProject(debounced: true)
     }
 
@@ -2441,6 +2470,19 @@ final class AppStore: ObservableObject {
             return
         }
         updateSceneSummary(sceneID: selectedSceneID, summary: summary, debounced: true)
+    }
+
+    func updateSelectedSceneRollingMemory(_ summary: String) {
+        guard let selectedSceneID,
+              let scene = selectedScene else {
+            return
+        }
+        updateRollingSceneMemory(
+            sceneID: selectedSceneID,
+            summary: summary,
+            sourceContent: scene.content
+        )
+        saveProject(debounced: true)
     }
 
     func updateSelectedChapterSummary(_ summary: String) {
@@ -2856,6 +2898,11 @@ final class AppStore: ObservableObject {
         }
 
         updateSceneSummary(sceneID: sceneID, summary: normalizedSummary, debounced: false)
+        updateRollingSceneMemory(
+            sceneID: sceneID,
+            summary: normalizedSummary,
+            sourceContent: scene.content
+        )
         return normalizedSummary
     }
 
@@ -2892,6 +2939,15 @@ final class AppStore: ObservableObject {
 
     func applyWorkshopInputFromHistory(_ text: String) {
         workshopInput = text
+    }
+
+    func updateSelectedWorkshopRollingMemory(_ summary: String) {
+        guard let selectedWorkshopSessionID else { return }
+        updateWorkshopRollingMemory(
+            sessionID: selectedWorkshopSessionID,
+            summary: summary,
+            summarizedMessageCount: selectedWorkshopSession?.messages.count ?? 0
+        )
     }
 
     func makeWorkshopPayloadPreview() throws -> WorkshopPayloadPreview {
@@ -3049,15 +3105,19 @@ final class AppStore: ObservableObject {
 
     func deleteWorkshopSession(_ sessionID: UUID) {
         guard canDeleteWorkshopSession(sessionID) else { return }
+        workshopRollingMemoryTask?.cancel()
         project.workshopSessions.removeAll { $0.id == sessionID }
+        project.rollingWorkshopMemoryBySession.removeValue(forKey: sessionID.uuidString)
         ensureValidSelections()
         saveProject()
     }
 
     func clearWorkshopSessionMessages(_ sessionID: UUID) {
         guard let index = workshopSessionIndex(for: sessionID) else { return }
+        workshopRollingMemoryTask?.cancel()
         project.workshopSessions[index].messages = []
         project.workshopSessions[index].updatedAt = .now
+        project.rollingWorkshopMemoryBySession.removeValue(forKey: sessionID.uuidString)
         saveProject()
     }
 
@@ -3157,6 +3217,7 @@ final class AppStore: ObservableObject {
             workshopStatus = "Response generated."
             project.workshopSessions[sessionIndex].updatedAt = .now
             saveProject()
+            scheduleWorkshopRollingMemoryRefresh(for: sessionID)
         } catch is CancellationError {
             workshopStatus = "Request cancelled."
 
@@ -3547,6 +3608,7 @@ final class AppStore: ObservableObject {
                 conversationTurns: conversationTurns,
                 summaryScope: "",
                 source: transcript,
+                workshopSessionID: selectedWorkshopSessionID,
                 extraVariables: [
                     "chat_name": resolvedSessionName,
                     "last_user_message": messages.reversed().first(where: { $0.role == .user })?.content ?? "",
@@ -4488,6 +4550,12 @@ final class AppStore: ObservableObject {
             checkpoint: checkpointProject.selectedWorkshopSessionID,
             validIDs: availableSessionIDs
         )
+        merged.rollingWorkshopMemoryBySession = mergeDictionaryEntries(
+            current: merged.rollingWorkshopMemoryBySession,
+            source: checkpointProject.rollingWorkshopMemoryBySession,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
         selectedWorkshopSessionID = merged.selectedWorkshopSessionID
     }
 
@@ -4538,6 +4606,12 @@ final class AppStore: ObservableObject {
         merged.sceneNarrativeStates = mergeDictionaryEntries(
             current: merged.sceneNarrativeStates,
             source: checkpointProject.sceneNarrativeStates,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.rollingSceneMemoryByScene = mergeDictionaryEntries(
+            current: merged.rollingSceneMemoryByScene,
+            source: checkpointProject.rollingSceneMemoryByScene,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
@@ -4839,11 +4913,13 @@ final class AppStore: ObservableObject {
         autosaveTask?.cancel()
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
+        workshopRollingMemoryTask?.cancel()
         proseRequestTask?.cancel()
 
         autosaveTask = nil
         modelDiscoveryTask = nil
         workshopRequestTask = nil
+        workshopRollingMemoryTask = nil
         proseRequestTask = nil
     }
 
@@ -5942,6 +6018,162 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    private func updateWorkshopRollingMemory(
+        sessionID: UUID,
+        summary: String,
+        summarizedMessageCount: Int
+    ) {
+        let key = sessionID.uuidString
+        let normalizedSummary = normalizedRollingMemorySummary(
+            summary,
+            maxChars: Self.rollingWorkshopMemoryMaxChars
+        )
+
+        guard let sessionIndex = workshopSessionIndex(for: sessionID) else {
+            project.rollingWorkshopMemoryBySession.removeValue(forKey: key)
+            return
+        }
+
+        guard !normalizedSummary.isEmpty else {
+            project.rollingWorkshopMemoryBySession.removeValue(forKey: key)
+            saveProject(debounced: true)
+            return
+        }
+
+        let clampedCount = min(
+            max(0, summarizedMessageCount),
+            project.workshopSessions[sessionIndex].messages.count
+        )
+        project.rollingWorkshopMemoryBySession[key] = RollingWorkshopMemory(
+            summary: normalizedSummary,
+            summarizedMessageCount: clampedCount,
+            updatedAt: .now
+        )
+        saveProject(debounced: true)
+    }
+
+    private func updateRollingSceneMemory(
+        sceneID: UUID,
+        summary: String,
+        sourceContent: String
+    ) {
+        let normalizedSummary = normalizedRollingMemorySummary(
+            summary,
+            maxChars: Self.rollingSceneMemoryMaxChars
+        )
+        let key = sceneID.uuidString
+        guard !normalizedSummary.isEmpty else {
+            project.rollingSceneMemoryByScene.removeValue(forKey: key)
+            return
+        }
+
+        project.rollingSceneMemoryByScene[key] = RollingSceneMemory(
+            summary: normalizedSummary,
+            sourceContentHash: stableContentHash(sourceContent),
+            updatedAt: .now
+        )
+    }
+
+    private func scheduleWorkshopRollingMemoryRefresh(for sessionID: UUID) {
+        workshopRollingMemoryTask?.cancel()
+        workshopRollingMemoryTask = Task { [weak self] in
+            await self?.refreshWorkshopRollingMemoryIfNeeded(sessionID: sessionID)
+        }
+    }
+
+    private func refreshWorkshopRollingMemoryIfNeeded(sessionID: UUID) async {
+        guard !Task.isCancelled else { return }
+        guard let sessionIndex = workshopSessionIndex(for: sessionID) else { return }
+
+        let session = project.workshopSessions[sessionIndex]
+        let messages = session.messages.filter {
+            !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !messages.isEmpty else { return }
+
+        let key = sessionID.uuidString
+        let existingMemory = project.rollingWorkshopMemoryBySession[key]
+        let alreadySummarized = min(
+            max(0, existingMemory?.summarizedMessageCount ?? 0),
+            messages.count
+        )
+        guard messages.count > alreadySummarized else { return }
+
+        let deltaMessages = Array(messages.dropFirst(alreadySummarized))
+        guard deltaMessages.count >= Self.rollingWorkshopMemoryMinDeltaMessages else { return }
+        let deltaWindow = Array(deltaMessages.suffix(Self.rollingWorkshopMemoryDeltaWindow))
+
+        let systemPrompt = """
+        You maintain concise long-lived memory for a fiction workshop chat.
+
+        Output rules:
+        - Return plain prose bullets or short paragraphs only.
+        - Keep stable facts, decisions, constraints, unresolved questions, and user preferences.
+        - Remove repetition and low-value chatter.
+        - Do not invent facts not present in input.
+        """
+
+        let existingSummary = existingMemory?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sessionTitle = displayWorkshopSessionTitle(session)
+        let transcript = deltaWindow
+            .map { message in
+                let role = message.role == .user ? "User" : "Assistant"
+                return "\(role): \(message.content)"
+            }
+            .joined(separator: "\n\n")
+
+        let userPrompt = """
+        CHAT: \(sessionTitle)
+
+        EXISTING_MEMORY:
+        <<<
+        \(existingSummary)
+        >>>
+
+        NEW_TURNS:
+        <<<
+        \(transcript)
+        >>>
+
+        TASK:
+        Merge EXISTING_MEMORY with NEW_TURNS into an updated memory. Keep it compact and high-signal.
+        """
+
+        let request = TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: resolvedPrimaryModel(),
+            temperature: min(project.settings.temperature, 0.3),
+            maxTokens: min(project.settings.maxTokens, 900)
+        )
+
+        do {
+            let result = try await generateTextResult(request)
+            guard !Task.isCancelled else { return }
+
+            let normalizedSummary = normalizedRollingMemorySummary(
+                result.text,
+                maxChars: Self.rollingWorkshopMemoryMaxChars
+            )
+            guard !normalizedSummary.isEmpty else { return }
+
+            // Re-read session state after async boundary to avoid stale counters.
+            guard let latestSessionIndex = workshopSessionIndex(for: sessionID) else { return }
+            let latestCount = project.workshopSessions[latestSessionIndex].messages.filter {
+                !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }.count
+
+            project.rollingWorkshopMemoryBySession[key] = RollingWorkshopMemory(
+                summary: normalizedSummary,
+                summarizedMessageCount: latestCount,
+                updatedAt: .now
+            )
+            saveProject(debounced: true)
+        } catch {
+            // Rolling memory refresh is best-effort and should not affect chat flow.
+        }
+    }
+
     private func appendWorkshopMessage(_ message: WorkshopMessage, to sessionID: UUID) {
         guard let index = workshopSessionIndex(for: sessionID) else { return }
         project.workshopSessions[index].messages.append(message)
@@ -6022,6 +6254,30 @@ final class AppStore: ObservableObject {
         return max(1, max(characterBasedEstimate, wordBasedEstimate))
     }
 
+    private func normalizedRollingMemorySummary(_ value: String, maxChars: Int) -> String {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+\\n", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        guard maxChars > 0 else { return "" }
+        return normalized.count > maxChars ? String(normalized.prefix(maxChars)) : normalized
+    }
+
+    private func stableContentHash(_ value: String) -> String {
+        // FNV-1a 64-bit hash for deterministic lightweight content fingerprints.
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(hash, radix: 16)
+    }
+
+    private func scene(for sceneID: UUID) -> Scene? {
+        guard let location = sceneLocation(for: sceneID) else { return nil }
+        return project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+    }
+
     private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> PromptRenderer.Result {
         guard let sessionIndex = workshopSessionIndex(for: sessionID) else {
             return PromptRenderer.Result(renderedText: "", warnings: [])
@@ -6093,6 +6349,7 @@ final class AppStore: ObservableObject {
             conversationTurns: conversationTurns,
             summaryScope: "",
             source: transcript,
+            workshopSessionID: sessionID,
             extraVariables: [
                 "chat_name": selectedSessionName.isEmpty ? "Untitled Chat" : selectedSessionName,
                 "last_user_message": messages.reversed().first(where: { $0.role == .user })?.content ?? "",
@@ -6224,6 +6481,66 @@ final class AppStore: ObservableObject {
             sceneSummaries: sceneSummariesText.joined(separator: "\n"),
             chapterSummaries: chapterSummariesText.joined(separator: "\n")
         )
+    }
+
+    private func mergedContextWithRolling(context: String, rolling: String) -> String {
+        let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRolling = rolling.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedRolling.isEmpty {
+            return trimmedContext
+        }
+        if trimmedContext.isEmpty {
+            return trimmedRolling
+        }
+        return "\(trimmedRolling)\n\(trimmedContext)"
+    }
+
+    private func combinedRollingSummaryText(
+        sceneRolling: String,
+        workshopRolling: String
+    ) -> String {
+        var lines: [String] = []
+        let trimmedWorkshop = workshopRolling.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedWorkshop.isEmpty {
+            lines.append("- [Rolling Workshop Memory] \(trimmedWorkshop)")
+        }
+
+        let trimmedScene = sceneRolling.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedScene.isEmpty {
+            lines.append("- [Rolling Scene Memory] \(trimmedScene)")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func rollingWorkshopSummary(for sessionID: UUID?) -> String {
+        guard let sessionID else { return "" }
+        let key = sessionID.uuidString
+        return project.rollingWorkshopMemoryBySession[key]?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func rollingSceneSummary(for sceneID: UUID?) -> String {
+        guard let sceneID,
+              let scene = scene(for: sceneID) else {
+            return ""
+        }
+
+        let key = sceneID.uuidString
+        guard let memory = project.rollingSceneMemoryByScene[key] else {
+            return ""
+        }
+
+        let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else {
+            return ""
+        }
+
+        let currentHash = stableContentHash(scene.content)
+        guard memory.sourceContentHash == currentHash else {
+            return ""
+        }
+
+        return summary
     }
 
     private func previewNotes(base: [String], renderWarnings: [String]) -> [String] {
@@ -6935,11 +7252,23 @@ final class AppStore: ObservableObject {
         conversationTurns: [PromptRenderer.ChatTurn],
         summaryScope: String,
         source: String,
+        workshopSessionID: UUID? = nil,
         extraVariables: [String: String] = [:]
     ) -> PromptRenderer.Result {
         let stateStyle = narrativeStateBlockStyle(
             template: template,
             fallbackTemplate: fallbackTemplate
+        )
+
+        let rollingScene = rollingSceneSummary(for: sceneID)
+        let rollingWorkshop = rollingWorkshopSummary(for: workshopSessionID)
+        let rollingCombined = combinedRollingSummaryText(
+            sceneRolling: rollingScene,
+            workshopRolling: rollingWorkshop
+        )
+        let contextWithRolling = mergedContextWithRolling(
+            context: contextSections.combined,
+            rolling: rollingCombined
         )
 
         var variables: [String: String] = [
@@ -6949,10 +7278,14 @@ final class AppStore: ObservableObject {
             "scene_full": sceneFullText,
             "scene_title": sceneTitle,
             "chapter_title": chapterTitle,
-            "context": contextSections.combined,
+            "context": contextWithRolling,
             "context_compendium": contextSections.compendium,
             "context_scene_summaries": contextSections.sceneSummaries,
             "context_chapter_summaries": contextSections.chapterSummaries,
+            "context_rolling": rollingCombined,
+            "rolling_summary": rollingCombined,
+            "rolling_scene_summary": rollingScene,
+            "rolling_workshop_summary": rollingWorkshop,
             "conversation": conversation,
             "summary_scope": summaryScope,
             "source": source,
@@ -6975,10 +7308,11 @@ final class AppStore: ObservableObject {
                 sceneFullText: sceneFullText,
                 conversationTurns: conversationTurns,
                 contextSections: [
-                    "context": contextSections.combined,
+                    "context": contextWithRolling,
                     "context_compendium": contextSections.compendium,
                     "context_scene_summaries": contextSections.sceneSummaries,
-                    "context_chapter_summaries": contextSections.chapterSummaries
+                    "context_chapter_summaries": contextSections.chapterSummaries,
+                    "context_rolling": rollingCombined
                 ]
             )
         )
@@ -7303,6 +7637,7 @@ final class AppStore: ObservableObject {
         project.sceneContextSceneSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneContextChapterSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneNarrativeStates.removeValue(forKey: sceneID.uuidString)
+        project.rollingSceneMemoryByScene.removeValue(forKey: sceneID.uuidString)
     }
 
     private func removeCompendiumEntryFromSceneContextSelections(_ entryID: UUID) {
@@ -7407,6 +7742,51 @@ final class AppStore: ObservableObject {
             }
         }
         project.workshopInputHistoryBySession = sanitizedWorkshopHistoryBySession
+    }
+
+    private func sanitizeRollingMemories() {
+        let sessionMessageCountByKey = Dictionary(
+            uniqueKeysWithValues: project.workshopSessions.map { ($0.id.uuidString, $0.messages.count) }
+        )
+
+        var sanitizedWorkshopMemory: [String: RollingWorkshopMemory] = [:]
+        for (sessionKey, memory) in project.rollingWorkshopMemoryBySession {
+            guard let messageCount = sessionMessageCountByKey[sessionKey] else { continue }
+            let summary = normalizedRollingMemorySummary(
+                memory.summary,
+                maxChars: Self.rollingWorkshopMemoryMaxChars
+            )
+            guard !summary.isEmpty else { continue }
+            sanitizedWorkshopMemory[sessionKey] = RollingWorkshopMemory(
+                summary: summary,
+                summarizedMessageCount: min(max(0, memory.summarizedMessageCount), messageCount),
+                updatedAt: memory.updatedAt
+            )
+        }
+        project.rollingWorkshopMemoryBySession = sanitizedWorkshopMemory
+
+        let sceneByKey = Dictionary(
+            uniqueKeysWithValues: project.chapters.flatMap(\.scenes).map { ($0.id.uuidString, $0) }
+        )
+        var sanitizedSceneMemory: [String: RollingSceneMemory] = [:]
+        for (sceneKey, memory) in project.rollingSceneMemoryByScene {
+            guard let scene = sceneByKey[sceneKey] else { continue }
+            let summary = normalizedRollingMemorySummary(
+                memory.summary,
+                maxChars: Self.rollingSceneMemoryMaxChars
+            )
+            guard !summary.isEmpty else { continue }
+            let resolvedHash: String = {
+                let normalizedHash = memory.sourceContentHash.trimmingCharacters(in: .whitespacesAndNewlines)
+                return normalizedHash.isEmpty ? stableContentHash(scene.content) : normalizedHash
+            }()
+            sanitizedSceneMemory[sceneKey] = RollingSceneMemory(
+                summary: summary,
+                sourceContentHash: resolvedHash,
+                updatedAt: memory.updatedAt
+            )
+        }
+        project.rollingSceneMemoryByScene = sanitizedSceneMemory
     }
 
     private struct GenerationAppendBase {
@@ -7686,6 +8066,7 @@ final class AppStore: ObservableObject {
         sanitizeSceneContextSelections()
         sanitizeSceneNarrativeStates()
         sanitizeInputHistories()
+        sanitizeRollingMemories()
 
         if let selectedSceneID,
            sceneLocation(for: selectedSceneID) == nil {

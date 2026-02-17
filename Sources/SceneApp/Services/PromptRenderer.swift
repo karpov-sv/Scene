@@ -69,6 +69,9 @@ struct PromptRenderer {
         if normalizedVariables["context_chapter_summaries"] == nil {
             normalizedVariables["context_chapter_summaries"] = context.contextSections["context_chapter_summaries"] ?? ""
         }
+        if normalizedVariables["context_rolling"] == nil {
+            normalizedVariables["context_rolling"] = context.contextSections["context_rolling"] ?? ""
+        }
         if normalizedVariables["conversation"] == nil {
             normalizedVariables["conversation"] = Self.formattedConversation(from: context.conversationTurns)
         }
@@ -232,6 +235,16 @@ struct PromptRenderer {
                 warnings: &warnings
             )
             return truncate(context.variables["context_chapter_summaries"] ?? "", maxChars: maxChars)
+
+        case "context_rolling", "rolling_summary":
+            let maxChars = optionalIntArgument(
+                named: "max_chars",
+                in: arguments,
+                minimum: 0,
+                functionName: name,
+                warnings: &warnings
+            )
+            return truncate(context.variables["context_rolling"] ?? context.variables["rolling_summary"] ?? "", maxChars: maxChars)
 
         default:
             warnings.append("Unknown template function `{{\(rawName)(...)}}`.")

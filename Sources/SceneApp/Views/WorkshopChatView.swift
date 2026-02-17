@@ -24,6 +24,8 @@ struct WorkshopChatView: View {
     @State private var workshopMentionAnchor: CGPoint?
     @State private var isEditingChatTitle: Bool = false
     @FocusState private var isChatTitleFocused: Bool
+    @State private var isRollingMemorySheetPresented: Bool = false
+    @State private var rollingMemoryDraft: String = ""
     @State private var editingSessionID: UUID?
     @State private var editingSessionName: String = ""
     @FocusState private var isSessionRenameFocused: Bool
@@ -114,6 +116,20 @@ struct WorkshopChatView: View {
         rootLayout
             .sheet(item: $payloadPreview) { payloadPreview in
                 WorkshopPayloadPreviewSheet(preview: payloadPreview)
+            }
+            .sheet(isPresented: $isRollingMemorySheetPresented) {
+                WorkshopRollingMemorySheet(
+                    sessionTitle: sessionTitleForMemorySheet,
+                    updatedAt: store.selectedWorkshopRollingMemoryUpdatedAt,
+                    draftSummary: $rollingMemoryDraft,
+                    onSave: {
+                        store.updateSelectedWorkshopRollingMemory(rollingMemoryDraft)
+                    },
+                    onClear: {
+                        rollingMemoryDraft = ""
+                        store.updateSelectedWorkshopRollingMemory("")
+                    }
+                )
             }
             .alert("Clear Messages", isPresented: clearMessagesAlertBinding) {
                 Button("Clear", role: .destructive) {
@@ -342,6 +358,16 @@ struct WorkshopChatView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
+                rollingMemoryDraft = store.selectedWorkshopRollingMemorySummary
+                isRollingMemorySheetPresented = true
+            } label: {
+                Image(systemName: "text.book.closed")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Edit Rolling Memory")
+            .help("Show and edit rolling memory for this chat.")
+
+            Button {
                 if let id = store.selectedWorkshopSession?.id {
                     requestClearMessages(for: id)
                 }
@@ -353,6 +379,11 @@ struct WorkshopChatView: View {
             .help("Clear all messages in this chat.")
         }
         .padding(12)
+    }
+
+    private var sessionTitleForMemorySheet: String {
+        guard let session = store.selectedWorkshopSession else { return "Untitled Chat" }
+        return sessionTitle(session)
     }
 
     private var messagesList: some View {
@@ -801,6 +832,78 @@ struct WorkshopChatView: View {
         workshopMentionAnchor = anchor
     }
 
+}
+
+private struct WorkshopRollingMemorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let sessionTitle: String
+    let updatedAt: Date?
+    @Binding var draftSummary: String
+    let onSave: () -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Rolling Memory")
+                        .font(.title3.weight(.semibold))
+                    Text(sessionTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if let updatedAt {
+                    Text("Updated \(Self.timestampFormatter.string(from: updatedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            TextEditor(text: $draftSummary)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .background(Color(nsColor: .textBackgroundColor))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Button("Clear", role: .destructive) {
+                    onClear()
+                    dismiss()
+                }
+
+                Spacer(minLength: 0)
+
+                Button("Cancel") {
+                    dismiss()
+                }
+
+                Button("Save") {
+                    onSave()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 540, minHeight: 360)
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
 
 private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {

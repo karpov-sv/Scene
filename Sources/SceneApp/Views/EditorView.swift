@@ -162,6 +162,8 @@ struct EditorView: View {
     @State private var beatMentionQueryIdentity: String = ""
     @State private var beatMentionAnchor: CGPoint?
     @State private var isEditingSceneTitle: Bool = false
+    @State private var isSceneRollingMemorySheetPresented: Bool = false
+    @State private var sceneRollingMemoryDraft: String = ""
     @FocusState private var isSceneTitleFocused: Bool
 
     private let generationButtonWidth: CGFloat = 150
@@ -223,6 +225,12 @@ struct EditorView: View {
             get: { store.selectedScene?.title ?? "" },
             set: { store.updateSelectedSceneTitle($0) }
         )
+    }
+
+    private var sceneTitleForRollingMemorySheet: String {
+        guard let scene = store.selectedScene else { return "Untitled Scene" }
+        let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Scene" : trimmed
     }
 
     private var isRewriteMode: Bool {
@@ -314,6 +322,20 @@ struct EditorView: View {
             SceneHistorySheet(sceneID: request.id)
                 .environmentObject(store)
         }
+        .sheet(isPresented: $isSceneRollingMemorySheetPresented) {
+            SceneRollingMemorySheet(
+                sceneTitle: sceneTitleForRollingMemorySheet,
+                updatedAt: store.selectedSceneRollingMemoryUpdatedAt,
+                draftSummary: $sceneRollingMemoryDraft,
+                onSave: {
+                    store.updateSelectedSceneRollingMemory(sceneRollingMemoryDraft)
+                },
+                onClear: {
+                    sceneRollingMemoryDraft = ""
+                    store.updateSelectedSceneRollingMemory("")
+                }
+            )
+        }
         .sheet(isPresented: proseGenerationReviewPresented) {
             ProseGenerationReviewSheet()
                 .environmentObject(store)
@@ -368,6 +390,18 @@ struct EditorView: View {
                             DispatchQueue.main.async { isSceneTitleFocused = true }
                         }
                 }
+
+                Button {
+                    sceneRollingMemoryDraft = store.selectedSceneRollingMemorySummary
+                    isSceneRollingMemorySheetPresented = true
+                } label: {
+                    Image(systemName: "text.book.closed")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .padding(4)
+                .help("Show and edit rolling memory for this scene.")
+                .disabled(store.selectedScene == nil)
 
                 Button {
                     store.requestSceneHistory()
@@ -1024,6 +1058,78 @@ struct EditorView: View {
     private func cancelRewriteSelection() {
         rewriteTask?.cancel()
     }
+}
+
+private struct SceneRollingMemorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let sceneTitle: String
+    let updatedAt: Date?
+    @Binding var draftSummary: String
+    let onSave: () -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Scene Rolling Memory")
+                        .font(.title3.weight(.semibold))
+                    Text(sceneTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if let updatedAt {
+                    Text("Updated \(Self.timestampFormatter.string(from: updatedAt))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            TextEditor(text: $draftSummary)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .background(Color(nsColor: .textBackgroundColor))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Button("Clear", role: .destructive) {
+                    onClear()
+                    dismiss()
+                }
+
+                Spacer(minLength: 0)
+
+                Button("Cancel") {
+                    dismiss()
+                }
+
+                Button("Save") {
+                    onSave()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 540, minHeight: 360)
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
 
 private struct SceneRichTextEditorView: NSViewRepresentable {

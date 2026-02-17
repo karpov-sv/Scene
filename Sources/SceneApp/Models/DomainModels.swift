@@ -1055,6 +1055,64 @@ struct WorkshopSession: Codable, Identifiable, Equatable {
     }
 }
 
+struct RollingWorkshopMemory: Codable, Equatable {
+    var summary: String
+    var summarizedMessageCount: Int
+    var updatedAt: Date
+
+    init(
+        summary: String = "",
+        summarizedMessageCount: Int = 0,
+        updatedAt: Date = .now
+    ) {
+        self.summary = summary
+        self.summarizedMessageCount = max(0, summarizedMessageCount)
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+        case summarizedMessageCount
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        summarizedMessageCount = max(0, try container.decodeIfPresent(Int.self, forKey: .summarizedMessageCount) ?? 0)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+}
+
+struct RollingSceneMemory: Codable, Equatable {
+    var summary: String
+    var sourceContentHash: String
+    var updatedAt: Date
+
+    init(
+        summary: String = "",
+        sourceContentHash: String = "",
+        updatedAt: Date = .now
+    ) {
+        self.summary = summary
+        self.sourceContentHash = sourceContentHash
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+        case sourceContentHash
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        sourceContentHash = try container.decodeIfPresent(String.self, forKey: .sourceContentHash) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+}
+
 struct GenerationSettings: Codable, Equatable {
     var provider: AIProvider
     var endpoint: String
@@ -1323,6 +1381,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
     var sceneNarrativeStates: [String: SceneNarrativeState]
+    var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]
+    var rollingSceneMemoryByScene: [String: RollingSceneMemory]
     var settings: GenerationSettings
     var editorAppearance: EditorAppearanceSettings
     var updatedAt: Date
@@ -1349,6 +1409,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
         sceneNarrativeStates: [String: SceneNarrativeState],
+        rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory],
+        rollingSceneMemoryByScene: [String: RollingSceneMemory],
         settings: GenerationSettings,
         editorAppearance: EditorAppearanceSettings,
         updatedAt: Date
@@ -1374,6 +1436,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
         self.sceneNarrativeStates = sceneNarrativeStates
+        self.rollingWorkshopMemoryBySession = rollingWorkshopMemoryBySession
+        self.rollingSceneMemoryByScene = rollingSceneMemoryByScene
         self.settings = settings
         self.editorAppearance = editorAppearance
         self.updatedAt = updatedAt
@@ -1401,6 +1465,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
         case sceneNarrativeStates
+        case rollingWorkshopMemoryBySession
+        case rollingSceneMemoryByScene
         case settings
         case editorAppearance
         case updatedAt
@@ -1430,6 +1496,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
         sceneNarrativeStates = try container.decodeIfPresent([String: SceneNarrativeState].self, forKey: .sceneNarrativeStates) ?? [:]
+        rollingWorkshopMemoryBySession = try container.decodeIfPresent([String: RollingWorkshopMemory].self, forKey: .rollingWorkshopMemoryBySession) ?? [:]
+        rollingSceneMemoryByScene = try container.decodeIfPresent([String: RollingSceneMemory].self, forKey: .rollingSceneMemoryByScene) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
         editorAppearance = try container.decodeIfPresent(EditorAppearanceSettings.self, forKey: .editorAppearance) ?? .default
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
@@ -1489,6 +1557,8 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
             sceneNarrativeStates: [:],
+            rollingWorkshopMemoryBySession: [:],
+            rollingSceneMemoryByScene: [:],
             settings: .default,
             editorAppearance: .default,
             updatedAt: .now

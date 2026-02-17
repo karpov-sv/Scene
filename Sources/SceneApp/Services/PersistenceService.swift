@@ -360,6 +360,8 @@ final class ProjectPersistence {
         var sceneContextSceneSummarySelection: [String: [UUID]]?
         var sceneContextChapterSummarySelection: [String: [UUID]]?
         var sceneNarrativeStates: [String: SceneNarrativeState]?
+        var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]?
+        var rollingSceneMemoryByScene: [String: RollingSceneMemory]?
         var settings: GenerationSettings
         var editorAppearance: EditorAppearanceSettings?
         var chapters: [ChapterRecord]
@@ -661,6 +663,8 @@ final class ProjectPersistence {
             sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
             sceneNarrativeStates: manifest.sceneNarrativeStates ?? [:],
+            rollingWorkshopMemoryBySession: manifest.rollingWorkshopMemoryBySession ?? [:],
+            rollingSceneMemoryByScene: manifest.rollingSceneMemoryByScene ?? [:],
             settings: manifest.settings,
             editorAppearance: manifest.editorAppearance ?? .default,
             updatedAt: manifest.updatedAt
@@ -797,6 +801,8 @@ final class ProjectPersistence {
             sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,
             sceneNarrativeStates: project.sceneNarrativeStates,
+            rollingWorkshopMemoryBySession: project.rollingWorkshopMemoryBySession,
+            rollingSceneMemoryByScene: project.rollingSceneMemoryByScene,
             settings: project.settings,
             editorAppearance: project.editorAppearance,
             chapters: chapterRecords,
