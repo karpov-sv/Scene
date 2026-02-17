@@ -164,6 +164,9 @@ struct EditorView: View {
     @State private var isEditingSceneTitle: Bool = false
     @State private var isSceneRollingMemorySheetPresented: Bool = false
     @State private var sceneRollingMemoryDraft: String = ""
+    @State private var sceneRollingMemoryRefreshTask: Task<Void, Never>?
+    @State private var isRefreshingSceneRollingMemory: Bool = false
+    @State private var sceneRollingMemoryRefreshError: String = ""
     @FocusState private var isSceneTitleFocused: Bool
 
     private let generationButtonWidth: CGFloat = 150
@@ -231,6 +234,10 @@ struct EditorView: View {
         guard let scene = store.selectedScene else { return "Untitled Scene" }
         let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Untitled Scene" : trimmed
+    }
+
+    private var selectedSceneMemorySourceText: String {
+        editorSelection.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isRewriteMode: Bool {
@@ -327,12 +334,21 @@ struct EditorView: View {
                 sceneTitle: sceneTitleForRollingMemorySheet,
                 updatedAt: store.selectedSceneRollingMemoryUpdatedAt,
                 draftSummary: $sceneRollingMemoryDraft,
+                canUpdateFromSelection: !selectedSceneMemorySourceText.isEmpty,
+                isUpdating: isRefreshingSceneRollingMemory,
+                updateErrorMessage: sceneRollingMemoryRefreshError.isEmpty ? nil : sceneRollingMemoryRefreshError,
                 onSave: {
                     store.updateSelectedSceneRollingMemory(sceneRollingMemoryDraft)
                 },
                 onClear: {
                     sceneRollingMemoryDraft = ""
                     store.updateSelectedSceneRollingMemory("")
+                },
+                onUpdateFromSelection: {
+                    refreshSceneRollingMemory(from: selectedSceneMemorySourceText)
+                },
+                onUpdateFromFullScene: {
+                    refreshSceneRollingMemory(from: store.selectedScene?.content ?? "")
                 }
             )
         }
@@ -346,6 +362,10 @@ struct EditorView: View {
         }
         .onChange(of: store.selectedSceneID) { _, _ in
             isEditingSceneTitle = false
+            sceneRollingMemoryRefreshTask?.cancel()
+            sceneRollingMemoryRefreshTask = nil
+            isRefreshingSceneRollingMemory = false
+            sceneRollingMemoryRefreshError = ""
             applyPendingSceneSearchSelectionIfNeeded()
         }
         .onChange(of: store.sceneHistorySheetRequestID) { _, _ in
@@ -393,6 +413,7 @@ struct EditorView: View {
 
                 Button {
                     sceneRollingMemoryDraft = store.selectedSceneRollingMemorySummary
+                    sceneRollingMemoryRefreshError = ""
                     isSceneRollingMemorySheetPresented = true
                 } label: {
                     Image(systemName: "text.book.closed")
@@ -979,6 +1000,32 @@ struct EditorView: View {
         beatMentionAnchor = anchor
     }
 
+    private func refreshSceneRollingMemory(from sourceText: String) {
+        let trimmedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty else { return }
+
+        sceneRollingMemoryRefreshTask?.cancel()
+        isRefreshingSceneRollingMemory = true
+        sceneRollingMemoryRefreshError = ""
+
+        sceneRollingMemoryRefreshTask = Task { @MainActor in
+            defer {
+                isRefreshingSceneRollingMemory = false
+                sceneRollingMemoryRefreshTask = nil
+            }
+
+            do {
+                let refreshed = try await store.refreshSelectedSceneRollingMemory(from: trimmedSource)
+                sceneRollingMemoryDraft = refreshed
+            } catch is CancellationError {
+                return
+            } catch {
+                sceneRollingMemoryRefreshError = error.localizedDescription
+                store.lastError = error.localizedDescription
+            }
+        }
+    }
+
     private func applyPendingSceneSearchSelectionIfNeeded() {
         guard let pending = store.pendingSceneSearchSelection else { return }
         guard store.selectedSceneID == pending.sceneID else { return }
@@ -1066,8 +1113,13 @@ private struct SceneRollingMemorySheet: View {
     let sceneTitle: String
     let updatedAt: Date?
     @Binding var draftSummary: String
+    let canUpdateFromSelection: Bool
+    let isUpdating: Bool
+    let updateErrorMessage: String?
     let onSave: () -> Void
     let onClear: () -> Void
+    let onUpdateFromSelection: () -> Void
+    let onUpdateFromFullScene: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1102,24 +1154,51 @@ private struct SceneRollingMemorySheet: View {
             Divider()
 
             HStack(spacing: 8) {
-                Button("Clear", role: .destructive) {
-                    onClear()
-                    dismiss()
+                Button("Update from Selection") {
+                    onUpdateFromSelection()
+                }
+                .disabled(!canUpdateFromSelection || isUpdating)
+
+                Button("Update from Full Scene") {
+                    onUpdateFromFullScene()
+                }
+                .disabled(isUpdating)
+
+                if isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
                 }
 
                 Spacer(minLength: 0)
 
+                Button("Clear", role: .destructive) {
+                    onClear()
+                    dismiss()
+                }
+                .disabled(isUpdating)
+
                 Button("Cancel") {
                     dismiss()
                 }
+                .disabled(isUpdating)
 
                 Button("Save") {
                     onSave()
                     dismiss()
                 }
+                .disabled(isUpdating)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(12)
+
+            if let updateErrorMessage, !updateErrorMessage.isEmpty {
+                Text(updateErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
         }
         .frame(minWidth: 540, minHeight: 360)
     }

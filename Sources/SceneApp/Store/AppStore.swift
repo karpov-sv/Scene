@@ -117,6 +117,7 @@ final class AppStore: ObservableObject {
     private static let rollingWorkshopMemoryDeltaWindow = 18
     private static let rollingWorkshopMemoryMaxChars = 3200
     private static let rollingSceneMemoryMaxChars = 2200
+    private static let rollingSceneMemorySourceChars = 12000
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
         "cover",
@@ -2483,6 +2484,76 @@ final class AppStore: ObservableObject {
             sourceContent: scene.content
         )
         saveProject(debounced: true)
+    }
+
+    func refreshSelectedSceneRollingMemory(from sourceText: String) async throws -> String {
+        guard let scene = selectedScene else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        let trimmedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty else {
+            throw AIServiceError.badResponse("Source text is empty.")
+        }
+
+        let sourceExcerpt = String(trimmedSource.prefix(Self.rollingSceneMemorySourceChars))
+        let sceneID = scene.id
+        let sceneTitle = displaySceneTitle(scene)
+        let chapterTitleText = chapterTitle(forSceneID: sceneID)
+        let existingMemory = project.rollingSceneMemoryByScene[sceneID.uuidString]?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let systemPrompt = """
+        You maintain concise long-lived memory for a single fiction scene.
+
+        Output rules:
+        - Return plain prose bullets or short paragraphs only.
+        - Keep stable facts, decisions, constraints, unresolved questions, and character intentions.
+        - Remove repetition and low-value narration details.
+        - Do not invent facts not present in input.
+        """
+
+        let userPrompt = """
+        CHAPTER: \(chapterTitleText)
+        SCENE: \(sceneTitle)
+
+        EXISTING_MEMORY:
+        <<<
+        \(existingMemory)
+        >>>
+
+        SOURCE_TEXT:
+        <<<
+        \(sourceExcerpt)
+        >>>
+
+        TASK:
+        Update the scene memory by merging EXISTING_MEMORY with SOURCE_TEXT. Keep the result compact and high-signal.
+        """
+
+        let request = TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: resolvedPrimaryModel(),
+            temperature: min(project.settings.temperature, 0.3),
+            maxTokens: min(project.settings.maxTokens, 900)
+        )
+
+        let result = try await generateTextResult(request)
+        let normalizedSummary = normalizedRollingMemorySummary(
+            result.text,
+            maxChars: Self.rollingSceneMemoryMaxChars
+        )
+        guard !normalizedSummary.isEmpty else {
+            throw AIServiceError.badResponse("Scene memory update was empty.")
+        }
+
+        updateRollingSceneMemory(
+            sceneID: sceneID,
+            summary: normalizedSummary,
+            sourceContent: scene.content
+        )
+        saveProject(debounced: true)
+        return normalizedSummary
     }
 
     func updateSelectedChapterSummary(_ summary: String) {
