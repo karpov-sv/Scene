@@ -239,7 +239,9 @@ final class ProjectPersistence {
         var selectedRewritePromptID: UUID?
         var selectedSummaryPromptID: UUID?
         var selectedWorkshopSessionID: UUID?
+        var workshopInputHistoryBySession: [String: [String]]?
         var selectedWorkshopPromptID: UUID?
+        var beatInputHistoryByScene: [String: [String]]?
         var sceneContextCompendiumSelection: [String: [UUID]]
         var sceneContextSceneSummarySelection: [String: [UUID]]?
         var sceneContextChapterSummarySelection: [String: [UUID]]?
@@ -496,7 +498,9 @@ final class ProjectPersistence {
             selectedSummaryPromptID: manifest.selectedSummaryPromptID,
             workshopSessions: workshopSessions,
             selectedWorkshopSessionID: manifest.selectedWorkshopSessionID,
+            workshopInputHistoryBySession: manifest.workshopInputHistoryBySession ?? [:],
             selectedWorkshopPromptID: manifest.selectedWorkshopPromptID,
+            beatInputHistoryByScene: manifest.beatInputHistoryByScene ?? [:],
             sceneContextCompendiumSelection: manifest.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
@@ -625,7 +629,9 @@ final class ProjectPersistence {
             selectedRewritePromptID: project.selectedRewritePromptID,
             selectedSummaryPromptID: project.selectedSummaryPromptID,
             selectedWorkshopSessionID: project.selectedWorkshopSessionID,
+            workshopInputHistoryBySession: project.workshopInputHistoryBySession,
             selectedWorkshopPromptID: project.selectedWorkshopPromptID,
+            beatInputHistoryByScene: project.beatInputHistoryByScene,
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,

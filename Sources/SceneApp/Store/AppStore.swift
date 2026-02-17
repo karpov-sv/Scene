@@ -352,7 +352,6 @@ final class AppStore: ObservableObject {
     @Published private(set) var workshopLiveUsage: TokenUsage?
 
     @Published var beatInput: String = ""
-    @Published private(set) var beatInputHistory: [String] = []
     @Published var isGenerating: Bool = false
     @Published var generationStatus: String = ""
     @Published private(set) var proseLiveUsage: TokenUsage?
@@ -691,24 +690,17 @@ final class AppStore: ObservableObject {
     }
 
     var workshopInputHistory: [String] {
-        guard let session = selectedWorkshopSession else {
+        guard let selectedWorkshopSessionID else {
             return []
         }
+        return project.workshopInputHistoryBySession[selectedWorkshopSessionID.uuidString] ?? []
+    }
 
-        var seen = Set<String>()
-        var output: [String] = []
-
-        for message in session.messages.reversed() where message.role == .user {
-            let normalized = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
-            seen.insert(normalized)
-            output.append(normalized)
-            if output.count >= 30 {
-                break
-            }
+    var beatInputHistory: [String] {
+        guard let selectedSceneID else {
+            return []
         }
-
-        return output
+        return project.beatInputHistoryByScene[selectedSceneID.uuidString] ?? []
     }
 
     var canRetryLastWorkshopTurn: Bool {
@@ -1834,6 +1826,8 @@ final class AppStore: ObservableObject {
         importedProject.sceneContextCompendiumSelection = [:]
         importedProject.sceneContextSceneSummarySelection = [:]
         importedProject.sceneContextChapterSummarySelection = [:]
+        importedProject.workshopInputHistoryBySession = [:]
+        importedProject.beatInputHistoryByScene = [:]
         importedProject.updatedAt = .now
 
         return importedProject
@@ -1855,7 +1849,6 @@ final class AppStore: ObservableObject {
         isProjectOpen = true
         workshopInput = ""
         beatInput = ""
-        beatInputHistory = []
         generationStatus = ""
         workshopStatus = ""
         isGenerating = false
@@ -2732,6 +2725,7 @@ final class AppStore: ObservableObject {
         }
 
         if !userText.isEmpty {
+            rememberWorkshopInputHistory(userText, for: sessionID)
             appendWorkshopMessage(.init(role: .user, content: userText), to: sessionID)
         }
         workshopInput = ""
@@ -3428,7 +3422,7 @@ final class AppStore: ObservableObject {
             sceneID: scene.id,
             beat: beat
         )
-        rememberBeatInputHistory(beat)
+        rememberBeatInputHistory(beat, for: scene.id)
 
         isGenerating = true
         proseLiveUsage = nil
@@ -3557,7 +3551,7 @@ final class AppStore: ObservableObject {
             scene: scene,
             modelOverride: modelOverride
         ).request
-        rememberBeatInputHistory(beat)
+        rememberBeatInputHistory(beat, for: scene.id)
 
         proseGenerationReview = nil
         proseGenerationSessionContext = nil
@@ -3953,16 +3947,48 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func rememberBeatInputHistory(_ value: String) {
+    private func rememberBeatInputHistory(_ value: String, for sceneID: UUID?) {
+        guard let sceneID else { return }
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
 
-        beatInputHistory.removeAll { $0 == normalized }
-        beatInputHistory.insert(normalized, at: 0)
+        let key = sceneID.uuidString
+        var history = project.beatInputHistoryByScene[key] ?? []
+        history.removeAll { $0 == normalized }
+        history.insert(normalized, at: 0)
 
-        if beatInputHistory.count > 30 {
-            beatInputHistory.removeLast(beatInputHistory.count - 30)
+        project.beatInputHistoryByScene[key] = normalizedHistoryEntries(history)
+    }
+
+    private func rememberWorkshopInputHistory(_ value: String, for sessionID: UUID?) {
+        guard let sessionID else { return }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        let key = sessionID.uuidString
+        var history = project.workshopInputHistoryBySession[key] ?? []
+        history.removeAll { $0 == normalized }
+        history.insert(normalized, at: 0)
+
+        project.workshopInputHistoryBySession[key] = normalizedHistoryEntries(history)
+    }
+
+    private func normalizedHistoryEntries(_ values: [String]) -> [String] {
+        var output: [String] = []
+        var seen = Set<String>()
+
+        for value in values {
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { continue }
+            guard seen.insert(normalized).inserted else { continue }
+
+            output.append(normalized)
+            if output.count >= 30 {
+                break
+            }
         }
+
+        return output
     }
 
     // MARK: - Helpers
@@ -3981,7 +4007,6 @@ final class AppStore: ObservableObject {
 
         workshopInput = ""
         beatInput = ""
-        beatInputHistory = []
         generationStatus = ""
         workshopStatus = ""
         isGenerating = false
@@ -4028,7 +4053,6 @@ final class AppStore: ObservableObject {
 
         workshopInput = ""
         beatInput = ""
-        beatInputHistory = []
         generationStatus = ""
         workshopStatus = ""
         isGenerating = false
@@ -6266,6 +6290,32 @@ final class AppStore: ObservableObject {
         project.sceneContextChapterSummarySelection = sanitizedChapterSummaries
     }
 
+    private func sanitizeInputHistories() {
+        let validSceneKeys = Set(
+            project.chapters
+                .flatMap(\.scenes)
+                .map(\.id.uuidString)
+        )
+        var sanitizedBeatHistoryByScene: [String: [String]] = [:]
+        for (sceneKey, entries) in project.beatInputHistoryByScene where validSceneKeys.contains(sceneKey) {
+            let normalized = normalizedHistoryEntries(entries)
+            if !normalized.isEmpty {
+                sanitizedBeatHistoryByScene[sceneKey] = normalized
+            }
+        }
+        project.beatInputHistoryByScene = sanitizedBeatHistoryByScene
+
+        let validSessionKeys = Set(project.workshopSessions.map(\.id.uuidString))
+        var sanitizedWorkshopHistoryBySession: [String: [String]] = [:]
+        for (sessionKey, entries) in project.workshopInputHistoryBySession where validSessionKeys.contains(sessionKey) {
+            let normalized = normalizedHistoryEntries(entries)
+            if !normalized.isEmpty {
+                sanitizedWorkshopHistoryBySession[sessionKey] = normalized
+            }
+        }
+        project.workshopInputHistoryBySession = sanitizedWorkshopHistoryBySession
+    }
+
     private struct GenerationAppendBase {
         let content: String
         let richTextData: Data?
@@ -6537,6 +6587,7 @@ final class AppStore: ObservableObject {
     private func ensureValidSelections() {
         guard isProjectOpen else { return }
         sanitizeSceneContextSelections()
+        sanitizeInputHistories()
 
         if let selectedSceneID,
            sceneLocation(for: selectedSceneID) == nil {

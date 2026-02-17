@@ -1244,7 +1244,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var selectedSummaryPromptID: UUID?
     var workshopSessions: [WorkshopSession]
     var selectedWorkshopSessionID: UUID?
+    var workshopInputHistoryBySession: [String: [String]]
     var selectedWorkshopPromptID: UUID?
+    var beatInputHistoryByScene: [String: [String]]
     var sceneContextCompendiumSelection: [String: [UUID]]
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
@@ -1265,7 +1267,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedSummaryPromptID: UUID?,
         workshopSessions: [WorkshopSession],
         selectedWorkshopSessionID: UUID?,
+        workshopInputHistoryBySession: [String: [String]],
         selectedWorkshopPromptID: UUID?,
+        beatInputHistoryByScene: [String: [String]],
         sceneContextCompendiumSelection: [String: [UUID]],
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
@@ -1285,7 +1289,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.selectedSummaryPromptID = selectedSummaryPromptID
         self.workshopSessions = workshopSessions
         self.selectedWorkshopSessionID = selectedWorkshopSessionID
+        self.workshopInputHistoryBySession = workshopInputHistoryBySession
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
+        self.beatInputHistoryByScene = beatInputHistoryByScene
         self.sceneContextCompendiumSelection = sceneContextCompendiumSelection
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
@@ -1307,7 +1313,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case selectedSummaryPromptID
         case workshopSessions
         case selectedWorkshopSessionID
+        case workshopInputHistoryBySession
         case selectedWorkshopPromptID
+        case beatInputHistoryByScene
         case sceneContextCompendiumSelection
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
@@ -1331,7 +1339,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedSummaryPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedSummaryPromptID)
         workshopSessions = try container.decodeIfPresent([WorkshopSession].self, forKey: .workshopSessions) ?? []
         selectedWorkshopSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopSessionID)
+        workshopInputHistoryBySession = try container.decodeIfPresent([String: [String]].self, forKey: .workshopInputHistoryBySession) ?? [:]
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
+        beatInputHistoryByScene = try container.decodeIfPresent([String: [String]].self, forKey: .beatInputHistoryByScene) ?? [:]
         sceneContextCompendiumSelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextCompendiumSelection) ?? [:]
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
@@ -1385,7 +1395,9 @@ struct StoryProject: Codable, Identifiable, Equatable {
             selectedSummaryPromptID: PromptTemplate.defaultSummaryTemplate.id,
             workshopSessions: [workshopSession],
             selectedWorkshopSessionID: workshopSession.id,
+            workshopInputHistoryBySession: [:],
             selectedWorkshopPromptID: PromptTemplate.defaultWorkshopTemplate.id,
+            beatInputHistoryByScene: [:],
             sceneContextCompendiumSelection: [:],
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
