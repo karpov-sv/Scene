@@ -6022,24 +6022,24 @@ final class AppStore: ObservableObject {
             case .compact:
                 var lines: [String] = []
                 if let pov = normalized.pov {
-                    lines.append("<<<POV>>>\n\(pov)\n<<<END_POV>>>")
+                    lines.append("POV: \(pov)")
                 }
                 if let tense = normalized.tense {
-                    lines.append("<<<TENSE>>>\n\(tense)\n<<<END_TENSE>>>")
+                    lines.append("TENSE: \(tense)")
                 }
                 if let location = normalized.location {
-                    lines.append("<<<LOCATION>>>\n\(location)\n<<<END_LOCATION>>>")
+                    lines.append("LOCATION: \(location)")
                 }
                 if let time = normalized.time {
-                    lines.append("<<<TIME>>>\n\(time)\n<<<END_TIME>>>")
+                    lines.append("TIME: \(time)")
                 }
                 if let goal = normalized.goal {
-                    lines.append("<<<GOAL>>>\n\(goal)\n<<<END_GOAL>>>")
+                    lines.append("GOAL: \(goal)")
                 }
                 if let emotion = normalized.emotion {
-                    lines.append("<<<EMOTION>>>\n\(emotion)\n<<<END_EMOTION>>>")
+                    lines.append("EMOTION: \(emotion)")
                 }
-                return lines.isEmpty ? "" : "<<<STATE>>>\n\(lines.joined(separator: "\n\n"))\n<<<END_STATE>>>"
+                return lines.isEmpty ? "" : "STATE:\n\(lines.joined(separator: "\n"))"
             }
         }()
 

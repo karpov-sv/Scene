@@ -569,35 +569,27 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: cinematicProseCompactID,
 	        title: "Continue from Scene Beat (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        continue_scene_from_beat
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<PROJECT_TITLE>>>
-	        {{project_title}}
-	        <<<END_PROJECT_TITLE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: continue_scene_from_beat
+	        PROJECT: {{project_title}}
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<BEAT>>>
+	        BEAT:
+	        <<<
 	        {{beat}}
-	        <<<END_BEAT>>>
+	        >>>
 
-	        <<<SCENE_TAIL chars=2400>>>
+	        SCENE_TAIL (chars=2400):
+	        <<<
 	        {{scene_tail(chars=2400)}}
-	        <<<END_SCENE_TAIL>>>
+	        >>>
 
-	        <<<CONTEXT_BACKGROUND>>>
+	        CONTEXT_BACKGROUND:
+	        <<<
 	        {{context}}
-	        <<<END_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are an expert fiction writing assistant.
@@ -619,39 +611,32 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryExpansionProseCompactID,
 	        title: "Expand from Scene Summary (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        draft_scene_from_beats
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<PROJECT_TITLE>>>
-	        {{project_title}}
-	        <<<END_PROJECT_TITLE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: draft_scene_from_beats
+	        PROJECT: {{project_title}}
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SCENE_SUMMARY>>>
+	        SCENE_SUMMARY:
+	        <<<
 	        {{scene_summary}}
-	        <<<END_SCENE_SUMMARY>>>
+	        >>>
 
-	        <<<OPTIONAL_GUIDANCE>>>
+	        OPTIONAL_GUIDANCE:
+	        <<<
 	        {{beat}}
-	        <<<END_OPTIONAL_GUIDANCE>>>
+	        >>>
 
-	        <<<SCENE_TAIL chars=2000>>>
+	        SCENE_TAIL (chars=2000):
+	        <<<
 	        {{scene_tail(chars=2000)}}
-	        <<<END_SCENE_TAIL>>>
+	        >>>
 
-	        <<<CONTEXT_BACKGROUND>>>
+	        CONTEXT_BACKGROUND:
+	        <<<
 	        {{context}}
-	        <<<END_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are an expert fiction writing assistant.
@@ -673,39 +658,32 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryContinuationProseCompactID,
 	        title: "Continue Following Scene Summary (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        continue_scene
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<PROJECT_TITLE>>>
-	        {{project_title}}
-	        <<<END_PROJECT_TITLE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: continue_scene
+	        PROJECT: {{project_title}}
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SCENE_SUMMARY>>>
+	        SCENE_SUMMARY:
+	        <<<
 	        {{scene_summary}}
-	        <<<END_SCENE_SUMMARY>>>
+	        >>>
 
-	        <<<OPTIONAL_GUIDANCE>>>
+	        OPTIONAL_GUIDANCE:
+	        <<<
 	        {{beat}}
-	        <<<END_OPTIONAL_GUIDANCE>>>
+	        >>>
 
-	        <<<EXISTING_SCENE_TAIL chars=2600>>>
+	        EXISTING_SCENE_TAIL (chars=2600):
+	        <<<
 	        {{scene_tail(chars=2600)}}
-	        <<<END_EXISTING_SCENE_TAIL>>>
+	        >>>
 
-	        <<<CONTEXT_BACKGROUND>>>
+	        CONTEXT_BACKGROUND:
+	        <<<
 	        {{context}}
-	        <<<END_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are an expert fiction writing assistant.
@@ -728,35 +706,31 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Rewrite (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        rewrite_excerpt_preserve_meaning
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: rewrite_excerpt_preserve_meaning
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SELECTION>>>
+	        SELECTION:
+	        <<<
 	        {{selection}}
-	        <<<END_SELECTION>>>
+	        >>>
 
-	        <<<SELECTION_CONTEXT>>>
+	        SELECTION_CONTEXT:
+	        <<<
 	        {{selection_context}}
-	        <<<END_SELECTION_CONTEXT>>>
+	        >>>
 
-	        <<<REWRITE_GUIDANCE>>>
+	        REWRITE_GUIDANCE:
+	        <<<
 	        {{beat}}
-	        <<<END_REWRITE_GUIDANCE>>>
+	        >>>
 
-	        <<<SCENE_CONTEXT_BACKGROUND max_chars=2200>>>
+	        SCENE_CONTEXT_BACKGROUND (max_chars=2200):
+	        <<<
 	        {{context(max_chars=2200)}}
-	        <<<END_SCENE_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are a strict fiction line editor.
@@ -780,35 +754,31 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Expand (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        style_rewrite_excerpt
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: style_rewrite_excerpt
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SELECTION>>>
+	        SELECTION:
+	        <<<
 	        {{selection}}
-	        <<<END_SELECTION>>>
+	        >>>
 
-	        <<<SELECTION_CONTEXT>>>
+	        SELECTION_CONTEXT:
+	        <<<
 	        {{selection_context}}
-	        <<<END_SELECTION_CONTEXT>>>
+	        >>>
 
-	        <<<REWRITE_GUIDANCE>>>
+	        REWRITE_GUIDANCE:
+	        <<<
 	        {{beat}}
-	        <<<END_REWRITE_GUIDANCE>>>
+	        >>>
 
-	        <<<SCENE_CONTEXT_BACKGROUND max_chars=2200>>>
+	        SCENE_CONTEXT_BACKGROUND (max_chars=2200):
+	        <<<
 	        {{context(max_chars=2200)}}
-	        <<<END_SCENE_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are a strict fiction line editor in expansion mode.
@@ -833,35 +803,31 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Shorten (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        shorten_excerpt
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: shorten_excerpt
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SELECTION>>>
+	        SELECTION:
+	        <<<
 	        {{selection}}
-	        <<<END_SELECTION>>>
+	        >>>
 
-	        <<<SELECTION_CONTEXT>>>
+	        SELECTION_CONTEXT:
+	        <<<
 	        {{selection_context}}
-	        <<<END_SELECTION_CONTEXT>>>
+	        >>>
 
-	        <<<REWRITE_GUIDANCE>>>
+	        REWRITE_GUIDANCE:
+	        <<<
 	        {{beat}}
-	        <<<END_REWRITE_GUIDANCE>>>
+	        >>>
 
-	        <<<SCENE_CONTEXT_BACKGROUND max_chars=2200>>>
+	        SCENE_CONTEXT_BACKGROUND (max_chars=2200):
+	        <<<
 	        {{context(max_chars=2200)}}
-	        <<<END_SCENE_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are a strict fiction line editor in compression mode.
@@ -885,31 +851,22 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .summary,
 	        title: "Summary (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        summarize_memory
-	        <<<END_REQUEST_TYPE>>>
-
-	        <<<SCOPE>>>
-	        {{summary_scope}}
-	        <<<END_SCOPE>>>
-
-	        <<<CHAPTER_TITLE>>>
-	        {{chapter_title}}
-	        <<<END_CHAPTER_TITLE>>>
-
-	        <<<SCENE_TITLE>>>
-	        {{scene_title}}
-	        <<<END_SCENE_TITLE>>>
+	        REQUEST: summarize_memory
+	        SCOPE: {{summary_scope}}
+	        CHAPTER: {{chapter_title}}
+	        SCENE: {{scene_title}}
 
 	        {{state}}
 
-	        <<<SOURCE_MATERIAL>>>
+	        SOURCE_MATERIAL:
+	        <<<
 	        {{source}}
-	        <<<END_SOURCE_MATERIAL>>>
+	        >>>
 
-	        <<<SUPPORTING_CONTEXT_BACKGROUND>>>
+	        SUPPORTING_CONTEXT_BACKGROUND:
+	        <<<
 	        {{context}}
-	        <<<END_SUPPORTING_CONTEXT_BACKGROUND>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are a fiction summarization assistant.
@@ -931,27 +888,25 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .workshop,
 	        title: "Story Workshop (Compact)",
 	        userTemplate: """
-	        <<<REQUEST_TYPE>>>
-	        variants_next_paragraph
-	        <<<END_REQUEST_TYPE>>>
+	        REQUEST: variants_next_paragraph
+	        CHAT_NAME: {{chat_name}}
 
-	        <<<CHAT_NAME>>>
-	        {{chat_name}}
-	        <<<END_CHAT_NAME>>>
-
-	        <<<CONTEXT_BACKGROUND>>>
+	        CONTEXT_BACKGROUND:
+	        <<<
 	        {{context}}
-	        <<<END_CONTEXT_BACKGROUND>>>
+	        >>>
 
 	        {{state}}
 
-	        <<<CURRENT_SCENE chars=1800>>>
+	        CURRENT_SCENE (chars=1800):
+	        <<<
 	        {{scene_tail(chars=1800)}}
-	        <<<END_CURRENT_SCENE>>>
+	        >>>
 
-	        <<<CONVERSATION turns=14>>>
+	        CONVERSATION (turns=14):
+	        <<<
 	        {{chat_history(turns=14)}}
-	        <<<END_CONVERSATION>>>
+	        >>>
 	        """,
 	        systemTemplate: """
 	        You are an experienced writing coach.
