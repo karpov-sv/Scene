@@ -35,6 +35,7 @@ struct ContentView: View {
     @State private var summaryScope: SummaryScope = .scene
     @State private var notesScope: NotesScope = .scene
     @State private var workspaceColumnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showingCheckpointRestoreSheet: Bool = false
 
     private var hasErrorBinding: Binding<Bool> {
         Binding(
@@ -48,8 +49,13 @@ struct ContentView: View {
             .focusedSceneValue(\.projectMenuActions, projectMenuActions)
             .focusedSceneValue(\.searchMenuActions, searchMenuActions)
             .focusedSceneValue(\.viewMenuActions, viewMenuActions)
+            .focusedSceneValue(\.checkpointMenuActions, checkpointMenuActions)
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: $showingCheckpointRestoreSheet) {
+                CheckpointRestoreSheet()
                     .environmentObject(store)
             }
             .alert("Error", isPresented: hasErrorBinding) {
@@ -343,6 +349,15 @@ struct ContentView: View {
         )
     }
 
+    private var checkpointMenuActions: CheckpointMenuActions {
+        CheckpointMenuActions(
+            createCheckpoint: createCheckpointFromMenu,
+            showRestoreDialog: showCheckpointRestoreDialogFromMenu,
+            canCreateCheckpoint: store.canManageProjectCheckpoints,
+            canRestoreCheckpoint: store.canManageProjectCheckpoints
+        )
+    }
+
     private func activateNextSearchResult() {
         if store.globalSearchResults.isEmpty {
             store.restoreLastSearchIfNeeded()
@@ -545,12 +560,171 @@ struct ContentView: View {
         }
     }
 
+    private func createCheckpointFromMenu() {
+        do {
+            _ = try store.createProjectCheckpointNow()
+        } catch {
+            store.lastError = "Checkpoint creation failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func showCheckpointRestoreDialogFromMenu() {
+        store.refreshProjectCheckpoints()
+        showingCheckpointRestoreSheet = true
+    }
+
     private func openImportedProjectInNewWindow(_ projectURL: URL) {
         let normalizedURL = projectURL.standardizedFileURL
         NSDocumentController.shared.openDocument(withContentsOf: normalizedURL, display: true) { _, _, error in
             if let error {
                 store.lastError = "Imported project was created, but opening a new window failed: \(error.localizedDescription)"
             }
+        }
+    }
+}
+
+private struct CheckpointRestoreSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedCheckpointID: String?
+    @State private var restoreOptions: AppStore.CheckpointRestoreOptions = .default
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Restore Checkpoint")
+                        .font(.title3.weight(.semibold))
+                    Text("Choose a timestamped checkpoint and select which parts to restore.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Refresh") {
+                    store.refreshProjectCheckpoints()
+                }
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if store.projectCheckpoints.isEmpty {
+                ContentUnavailableView(
+                    "No Checkpoints",
+                    systemImage: "clock.badge.xmark",
+                    description: Text("Create a checkpoint first, then restore from this dialog.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HSplitView {
+                    List(selection: $selectedCheckpointID) {
+                        ForEach(store.projectCheckpoints) { checkpoint in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(Self.timestampFormatter.string(from: checkpoint.createdAt))
+                                    .font(.body)
+                                Text(checkpoint.fileName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .tag(checkpoint.id)
+                        }
+                    }
+                    .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            GroupBox("Restore Scope") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Toggle("Text (scene/chapter titles and scene content)", isOn: $restoreOptions.includeText)
+                                    Toggle("Summaries", isOn: $restoreOptions.includeSummaries)
+                                    Toggle("Notes", isOn: $restoreOptions.includeNotes)
+                                    Toggle("Compendium entries", isOn: $restoreOptions.includeCompendium)
+                                    Toggle("Prompt templates", isOn: $restoreOptions.includeTemplates)
+                                    Toggle("Settings (generation + editor appearance)", isOn: $restoreOptions.includeSettings)
+                                    Toggle("Workshop conversations", isOn: $restoreOptions.includeWorkshop)
+                                    Toggle("Input history", isOn: $restoreOptions.includeInputHistory)
+                                    Toggle("Scene context + narrative state", isOn: $restoreOptions.includeSceneContext)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            GroupBox("Restore behaviour") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Toggle("Restore deleted entries", isOn: $restoreOptions.restoreDeletedEntries)
+                                    Toggle("Delete entries not in checkpoint", isOn: $restoreOptions.deleteEntriesNotInCheckpoint)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            Text("Without behaviour toggles, restore updates only existing matching entries. With behaviour toggles, it can re-add deleted entries and/or remove entries that are absent from the checkpoint for selected types.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                Spacer(minLength: 0)
+                Button("Restore") {
+                    restoreSelectedCheckpoint()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedCheckpointID == nil || restoreOptions.isNoOp)
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 860, minHeight: 560)
+        .onAppear {
+            store.refreshProjectCheckpoints()
+            if selectedCheckpointID == nil {
+                selectedCheckpointID = store.projectCheckpoints.first?.id
+            }
+            restoreOptions = .default
+        }
+        .onChange(of: store.projectCheckpoints) { _, newValue in
+            if newValue.isEmpty {
+                selectedCheckpointID = nil
+            } else if let selectedCheckpointID,
+                      !newValue.contains(where: { $0.id == selectedCheckpointID }) {
+                self.selectedCheckpointID = newValue.first?.id
+            } else if selectedCheckpointID == nil {
+                selectedCheckpointID = newValue.first?.id
+            }
+        }
+    }
+
+    private func restoreSelectedCheckpoint() {
+        guard let selectedCheckpointID else { return }
+        do {
+            try store.restoreProjectCheckpoint(
+                checkpointID: selectedCheckpointID,
+                options: restoreOptions
+            )
+            dismiss()
+        } catch {
+            store.lastError = "Checkpoint restore failed: \(error.localizedDescription)"
         }
     }
 }

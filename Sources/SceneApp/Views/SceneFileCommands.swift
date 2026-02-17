@@ -4,6 +4,7 @@ struct SceneFileCommands: Commands {
     @FocusedValue(\.projectMenuActions) private var actions
     @FocusedValue(\.searchMenuActions) private var searchActions
     @FocusedValue(\.viewMenuActions) private var viewActions
+    @FocusedValue(\.checkpointMenuActions) private var checkpointActions
 
     var body: some Commands {
         CommandGroup(after: .saveItem) {
@@ -131,6 +132,18 @@ struct SceneFileCommands: Commands {
             }
             .keyboardShortcut("7", modifiers: .command)
             .disabled(viewActions?.canUseViewActions != true)
+        }
+
+        CommandMenu("Checkpoints") {
+            Button("Create") {
+                checkpointActions?.createCheckpoint()
+            }
+            .disabled(checkpointActions?.canCreateCheckpoint != true)
+
+            Button("Restore...") {
+                checkpointActions?.showRestoreDialog()
+            }
+            .disabled(checkpointActions?.canRestoreCheckpoint != true)
         }
     }
 }

@@ -33,8 +33,18 @@ final class ProjectPersistence {
 
     private static let manifestFileName = "manifest.json"
     private static let schemaVersion = 1
+    private static let checkpointEnvelopeVersion = "1.0"
+    private static let checkpointEnvelopeType = "scene-project-checkpoint"
+    static let checkpointsDirectoryName = "checkpoints"
+    private static let checkpointFilenamePrefix = "checkpoint-"
     private static let lastOpenedProjectPathKey = "SceneApp.lastOpenedProjectPath"
     private static let lastOpenedProjectPathsKey = "SceneApp.lastOpenedProjectPaths"
+
+    struct ProjectCheckpoint: Identifiable, Equatable {
+        var id: String { fileName }
+        let fileName: String
+        let createdAt: Date
+    }
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -56,6 +66,13 @@ final class ProjectPersistence {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+    }
+
+    private struct ProjectCheckpointEnvelope: Codable {
+        var version: String
+        var type: String
+        var createdAt: Date
+        var project: StoryProject
     }
 
     func normalizeProjectURL(_ proposedURL: URL) -> URL {
@@ -210,6 +227,101 @@ final class ProjectPersistence {
     func clearLastOpenedProjectURL() {
         userDefaults.removeObject(forKey: Self.lastOpenedProjectPathKey)
         userDefaults.removeObject(forKey: Self.lastOpenedProjectPathsKey)
+    }
+
+    // MARK: - Checkpoints
+
+    @discardableResult
+    func createCheckpoint(for project: StoryProject, at proposedURL: URL) throws -> ProjectCheckpoint {
+        let projectURL = try resolveExistingProjectURL(proposedURL)
+        let checkpointsURL = projectURL.appendingPathComponent(Self.checkpointsDirectoryName, isDirectory: true)
+        try ensureDirectoryExists(checkpointsURL)
+
+        let createdAt = Date()
+        var fileName = Self.checkpointFilenamePrefix + checkpointFileTimestamp(from: createdAt) + ".json"
+        var destinationURL = checkpointsURL.appendingPathComponent(fileName, isDirectory: false)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            let suffix = String(UUID().uuidString.prefix(8))
+            fileName = Self.checkpointFilenamePrefix + checkpointFileTimestamp(from: createdAt) + "-\(suffix).json"
+            destinationURL = checkpointsURL.appendingPathComponent(fileName, isDirectory: false)
+        }
+
+        let envelope = ProjectCheckpointEnvelope(
+            version: Self.checkpointEnvelopeVersion,
+            type: Self.checkpointEnvelopeType,
+            createdAt: createdAt,
+            project: project
+        )
+
+        let data = try encoder.encode(envelope)
+        try data.write(to: destinationURL, options: .atomic)
+
+        return ProjectCheckpoint(fileName: fileName, createdAt: createdAt)
+    }
+
+    func listCheckpoints(at proposedURL: URL) throws -> [ProjectCheckpoint] {
+        let projectURL = try resolveExistingProjectURL(proposedURL)
+        let checkpointsURL = projectURL.appendingPathComponent(Self.checkpointsDirectoryName, isDirectory: true)
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: checkpointsURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return []
+        }
+
+        let fileURLs = try fileManager.contentsOfDirectory(
+            at: checkpointsURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var checkpoints: [ProjectCheckpoint] = []
+        for fileURL in fileURLs where fileURL.pathExtension.lowercased() == "json" {
+            guard (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
+                continue
+            }
+
+            guard let data = try? Data(contentsOf: fileURL),
+                  let envelope = try? decoder.decode(ProjectCheckpointEnvelope.self, from: data),
+                  envelope.type == Self.checkpointEnvelopeType else {
+                continue
+            }
+
+            checkpoints.append(
+                ProjectCheckpoint(
+                    fileName: fileURL.lastPathComponent,
+                    createdAt: envelope.createdAt
+                )
+            )
+        }
+
+        checkpoints.sort { $0.createdAt > $1.createdAt }
+        return checkpoints
+    }
+
+    func loadCheckpoint(at proposedURL: URL, fileName: String) throws -> StoryProject {
+        let projectURL = try resolveExistingProjectURL(proposedURL)
+        let checkpointsURL = projectURL.appendingPathComponent(Self.checkpointsDirectoryName, isDirectory: true)
+
+        let sanitizedName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitizedName.isEmpty,
+              !sanitizedName.contains("/"),
+              !sanitizedName.contains(":") else {
+            throw ProjectPersistenceError.invalidProjectLocation
+        }
+
+        let checkpointURL = checkpointsURL.appendingPathComponent(sanitizedName, isDirectory: false)
+        guard fileManager.fileExists(atPath: checkpointURL.path) else {
+            throw ProjectPersistenceError.missingReference(sanitizedName)
+        }
+
+        let data = try Data(contentsOf: checkpointURL)
+        let envelope = try decoder.decode(ProjectCheckpointEnvelope.self, from: data)
+        guard envelope.type == Self.checkpointEnvelopeType else {
+            throw ProjectPersistenceError.invalidProjectLocation
+        }
+
+        return envelope.project
     }
 
     func loadProject(from fileWrapper: FileWrapper) throws -> StoryProject {
@@ -715,5 +827,13 @@ final class ProjectPersistence {
             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
         )
         try rtfData.write(to: url, options: .atomic)
+    }
+
+    private func checkpointFileTimestamp(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: date)
     }
 }

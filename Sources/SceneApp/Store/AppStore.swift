@@ -146,6 +146,40 @@ final class AppStore: ObservableObject {
         let warnings: [String]
     }
 
+    struct ProjectCheckpointSummary: Identifiable, Equatable {
+        let id: String
+        let fileName: String
+        let createdAt: Date
+    }
+
+    struct CheckpointRestoreOptions: Equatable {
+        var includeText: Bool = true
+        var includeSummaries: Bool = true
+        var includeNotes: Bool = true
+        var includeCompendium: Bool = true
+        var includeTemplates: Bool = true
+        var includeSettings: Bool = true
+        var includeWorkshop: Bool = true
+        var includeInputHistory: Bool = true
+        var includeSceneContext: Bool = true
+        var restoreDeletedEntries: Bool = false
+        var deleteEntriesNotInCheckpoint: Bool = false
+
+        static let `default` = CheckpointRestoreOptions()
+
+        var isNoOp: Bool {
+            !includeText
+                && !includeSummaries
+                && !includeNotes
+                && !includeCompendium
+                && !includeTemplates
+                && !includeSettings
+                && !includeWorkshop
+                && !includeInputHistory
+                && !includeSceneContext
+        }
+    }
+
     struct BuiltInPromptRefreshResult {
         let updatedCount: Int
         let addedCount: Int
@@ -369,6 +403,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var lastGlobalSearchQuery: String = ""
     @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
+    @Published private(set) var projectCheckpoints: [ProjectCheckpointSummary] = []
 
     @Published private(set) var sceneEditorFocusRequestID: UUID = UUID()
     @Published private(set) var beatInputFocusRequestID: UUID = UUID()
@@ -454,6 +489,8 @@ final class AppStore: ObservableObject {
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         }
+
+        refreshProjectCheckpoints()
     }
 
     deinit {
@@ -476,6 +513,10 @@ final class AppStore: ObservableObject {
 
         let trimmedTitle = project.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedTitle.isEmpty ? "Untitled Project" : trimmedTitle
+    }
+
+    var canManageProjectCheckpoints: Bool {
+        isProjectOpen && currentProjectURL != nil
     }
 
     var chapters: [Chapter] {
@@ -1076,6 +1117,61 @@ final class AppStore: ObservableObject {
         applyLoadedProject(duplicatedProject, from: duplicatedURL, rememberAsLastOpened: true)
     }
 
+    @discardableResult
+    func createProjectCheckpointNow() throws -> ProjectCheckpointSummary {
+        guard isProjectOpen, let currentProjectURL else {
+            throw ProjectPersistenceError.projectNotFound
+        }
+
+        let checkpoint = try persistence.createCheckpoint(for: project, at: currentProjectURL)
+        synchronizeDocumentModificationDateIfNeeded()
+        refreshProjectCheckpoints()
+        return ProjectCheckpointSummary(
+            id: checkpoint.id,
+            fileName: checkpoint.fileName,
+            createdAt: checkpoint.createdAt
+        )
+    }
+
+    func restoreProjectCheckpoint(
+        checkpointID: String,
+        options: CheckpointRestoreOptions
+    ) throws {
+        guard isProjectOpen, let currentProjectURL else {
+            throw ProjectPersistenceError.projectNotFound
+        }
+
+        guard !options.isNoOp else { return }
+
+        let checkpointProject = try persistence.loadCheckpoint(
+            at: currentProjectURL,
+            fileName: checkpointID
+        )
+
+        applyCheckpointRestore(checkpointProject, options: options)
+    }
+
+    func refreshProjectCheckpoints() {
+        guard isProjectOpen, let currentProjectURL else {
+            projectCheckpoints = []
+            return
+        }
+
+        do {
+            let checkpoints = try persistence.listCheckpoints(at: currentProjectURL)
+            projectCheckpoints = checkpoints.map {
+                ProjectCheckpointSummary(
+                    id: $0.id,
+                    fileName: $0.fileName,
+                    createdAt: $0.createdAt
+                )
+            }
+        } catch {
+            projectCheckpoints = []
+            lastError = "Failed to load checkpoints: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Document Sync
 
     func bindToDocumentChanges(_ handler: @escaping (StoryProject) -> Void) {
@@ -1091,6 +1187,7 @@ final class AppStore: ObservableObject {
     func updateProjectURL(_ projectURL: URL?) {
         let normalizedURL = projectURL?.standardizedFileURL
         currentProjectURL = normalizedURL
+        refreshProjectCheckpoints()
 
         if isDocumentBacked, let normalizedURL {
             persistence.saveLastOpenedProjectURL(normalizedURL)
@@ -1122,6 +1219,8 @@ final class AppStore: ObservableObject {
             isDiscoveringModels = false
             modelDiscoveryStatus = ""
         }
+
+        refreshProjectCheckpoints()
     }
 
     // MARK: - Selection
@@ -4071,6 +4170,323 @@ final class AppStore: ObservableObject {
         return output
     }
 
+    private func applyCheckpointRestore(
+        _ checkpointProject: StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        var merged = project
+
+        if options.includeText || options.includeSummaries || options.includeNotes {
+            mergeChapterAndSceneContent(
+                from: checkpointProject,
+                into: &merged,
+                options: options
+            )
+        }
+
+        if options.includeNotes {
+            merged.notes = checkpointProject.notes
+        }
+
+        if options.includeCompendium {
+            merged.compendium = mergeIdentifiedCollection(
+                current: merged.compendium,
+                source: checkpointProject.compendium,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+        }
+
+        if options.includeTemplates {
+            merged.prompts = mergeIdentifiedCollection(
+                current: merged.prompts,
+                source: checkpointProject.prompts,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            let availablePromptIDs = Set(merged.prompts.map(\.id))
+            merged.selectedProsePromptID = resolvedSelectionID(
+                current: merged.selectedProsePromptID,
+                checkpoint: checkpointProject.selectedProsePromptID,
+                validIDs: availablePromptIDs
+            )
+            merged.selectedRewritePromptID = resolvedSelectionID(
+                current: merged.selectedRewritePromptID,
+                checkpoint: checkpointProject.selectedRewritePromptID,
+                validIDs: availablePromptIDs
+            )
+            merged.selectedSummaryPromptID = resolvedSelectionID(
+                current: merged.selectedSummaryPromptID,
+                checkpoint: checkpointProject.selectedSummaryPromptID,
+                validIDs: availablePromptIDs
+            )
+            merged.selectedWorkshopPromptID = resolvedSelectionID(
+                current: merged.selectedWorkshopPromptID,
+                checkpoint: checkpointProject.selectedWorkshopPromptID,
+                validIDs: availablePromptIDs
+            )
+        }
+
+        if options.includeSettings {
+            merged.settings = checkpointProject.settings
+            merged.editorAppearance = checkpointProject.editorAppearance
+            merged.autosaveEnabled = checkpointProject.autosaveEnabled
+        }
+
+        if options.includeWorkshop {
+            merged.workshopSessions = mergeIdentifiedCollection(
+                current: merged.workshopSessions,
+                source: checkpointProject.workshopSessions,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            let availableSessionIDs = Set(merged.workshopSessions.map(\.id))
+            merged.selectedWorkshopSessionID = resolvedSelectionID(
+                current: merged.selectedWorkshopSessionID,
+                checkpoint: checkpointProject.selectedWorkshopSessionID,
+                validIDs: availableSessionIDs
+            )
+            selectedWorkshopSessionID = merged.selectedWorkshopSessionID
+        }
+
+        if options.includeInputHistory {
+            merged.workshopInputHistoryBySession = mergeDictionaryEntries(
+                current: merged.workshopInputHistoryBySession,
+                source: checkpointProject.workshopInputHistoryBySession,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            merged.beatInputHistoryByScene = mergeDictionaryEntries(
+                current: merged.beatInputHistoryByScene,
+                source: checkpointProject.beatInputHistoryByScene,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+        }
+
+        if options.includeSceneContext {
+            merged.sceneContextCompendiumSelection = mergeDictionaryEntries(
+                current: merged.sceneContextCompendiumSelection,
+                source: checkpointProject.sceneContextCompendiumSelection,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            merged.sceneContextSceneSummarySelection = mergeDictionaryEntries(
+                current: merged.sceneContextSceneSummarySelection,
+                source: checkpointProject.sceneContextSceneSummarySelection,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            merged.sceneContextChapterSummarySelection = mergeDictionaryEntries(
+                current: merged.sceneContextChapterSummarySelection,
+                source: checkpointProject.sceneContextChapterSummarySelection,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            merged.sceneNarrativeStates = mergeDictionaryEntries(
+                current: merged.sceneNarrativeStates,
+                source: checkpointProject.sceneNarrativeStates,
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+        }
+
+        merged.updatedAt = .now
+        project = merged
+
+        ensureProjectBaseline()
+        ensureValidSelections()
+        refreshGlobalSearchResults()
+        sceneRichTextRefreshID = UUID()
+        saveProject(forceWrite: true)
+    }
+
+    private func mergeChapterAndSceneContent(
+        from source: StoryProject,
+        into destination: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        let shouldApplyStructureRestore = options.includeText
+            && (options.restoreDeletedEntries || options.deleteEntriesNotInCheckpoint)
+
+        let currentChapterByID = Dictionary(uniqueKeysWithValues: destination.chapters.map { ($0.id, $0) })
+        let sourceChapterByID = Dictionary(uniqueKeysWithValues: source.chapters.map { ($0.id, $0) })
+        let chapterIDs = shouldApplyStructureRestore
+            ? mergedIDOrder(
+                currentIDs: destination.chapters.map(\.id),
+                sourceIDs: source.chapters.map(\.id),
+                restoreDeletedEntries: options.restoreDeletedEntries,
+                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+            )
+            : destination.chapters.map(\.id)
+
+        var mergedChapters: [Chapter] = []
+        mergedChapters.reserveCapacity(chapterIDs.count)
+
+        for chapterID in chapterIDs {
+            let sourceChapter = sourceChapterByID[chapterID]
+            var chapter: Chapter
+            if let currentChapter = currentChapterByID[chapterID] {
+                chapter = currentChapter
+            } else if let sourceChapter {
+                chapter = sourceChapter
+            } else {
+                continue
+            }
+
+            if let sourceChapter {
+                if options.includeText {
+                    chapter.title = sourceChapter.title
+                }
+                if options.includeSummaries {
+                    chapter.summary = sourceChapter.summary
+                }
+                if options.includeNotes {
+                    chapter.notes = sourceChapter.notes
+                }
+
+                let currentSceneByID = Dictionary(uniqueKeysWithValues: chapter.scenes.map { ($0.id, $0) })
+                let sourceSceneByID = Dictionary(uniqueKeysWithValues: sourceChapter.scenes.map { ($0.id, $0) })
+                let sceneIDs = shouldApplyStructureRestore
+                    ? mergedIDOrder(
+                        currentIDs: chapter.scenes.map(\.id),
+                        sourceIDs: sourceChapter.scenes.map(\.id),
+                        restoreDeletedEntries: options.restoreDeletedEntries,
+                        deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+                    )
+                    : chapter.scenes.map(\.id)
+
+                var mergedScenes: [Scene] = []
+                mergedScenes.reserveCapacity(sceneIDs.count)
+
+                for sceneID in sceneIDs {
+                    let sourceScene = sourceSceneByID[sceneID]
+                    var scene: Scene
+                    if let currentScene = currentSceneByID[sceneID] {
+                        scene = currentScene
+                    } else if let sourceScene {
+                        scene = sourceScene
+                    } else {
+                        continue
+                    }
+
+                    if let sourceScene {
+                        if options.includeText {
+                            scene.title = sourceScene.title
+                            scene.content = sourceScene.content
+                            scene.contentRTFData = sourceScene.contentRTFData
+                        }
+                        if options.includeSummaries {
+                            scene.summary = sourceScene.summary
+                        }
+                        if options.includeNotes {
+                            scene.notes = sourceScene.notes
+                        }
+                    }
+
+                    mergedScenes.append(scene)
+                }
+
+                chapter.scenes = mergedScenes
+            }
+
+            mergedChapters.append(chapter)
+        }
+
+        destination.chapters = mergedChapters
+    }
+
+    private func mergedIDOrder<ID: Hashable>(
+        currentIDs: [ID],
+        sourceIDs: [ID],
+        restoreDeletedEntries: Bool,
+        deleteEntriesNotInCheckpoint: Bool
+    ) -> [ID] {
+        if restoreDeletedEntries && deleteEntriesNotInCheckpoint {
+            return sourceIDs
+        }
+
+        var result = currentIDs
+        let sourceIDSet = Set(sourceIDs)
+
+        if deleteEntriesNotInCheckpoint {
+            result.removeAll { !sourceIDSet.contains($0) }
+        }
+
+        if restoreDeletedEntries {
+            var existing = Set(result)
+            for sourceID in sourceIDs where !existing.contains(sourceID) {
+                result.append(sourceID)
+                existing.insert(sourceID)
+            }
+        }
+
+        return result
+    }
+
+    private func mergeIdentifiedCollection<T: Identifiable>(
+        current: [T],
+        source: [T],
+        restoreDeletedEntries: Bool,
+        deleteEntriesNotInCheckpoint: Bool
+    ) -> [T] where T.ID: Hashable {
+        let currentByID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        let sourceByID = Dictionary(uniqueKeysWithValues: source.map { ($0.id, $0) })
+        let orderedIDs = mergedIDOrder(
+            currentIDs: current.map(\.id),
+            sourceIDs: source.map(\.id),
+            restoreDeletedEntries: restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: deleteEntriesNotInCheckpoint
+        )
+
+        return orderedIDs.compactMap { id in
+            sourceByID[id] ?? currentByID[id]
+        }
+    }
+
+    private func mergeDictionaryEntries<Key: Hashable, Value>(
+        current: [Key: Value],
+        source: [Key: Value],
+        restoreDeletedEntries: Bool,
+        deleteEntriesNotInCheckpoint: Bool
+    ) -> [Key: Value] {
+        if restoreDeletedEntries && deleteEntriesNotInCheckpoint {
+            return source
+        }
+
+        var merged = current
+        for (key, value) in source where merged[key] != nil {
+            merged[key] = value
+        }
+
+        if restoreDeletedEntries {
+            for (key, value) in source where merged[key] == nil {
+                merged[key] = value
+            }
+        }
+
+        if deleteEntriesNotInCheckpoint {
+            let sourceKeys = Set(source.keys)
+            merged = merged.filter { sourceKeys.contains($0.key) }
+        }
+
+        return merged
+    }
+
+    private func resolvedSelectionID<ID: Hashable>(
+        current: ID?,
+        checkpoint: ID?,
+        validIDs: Set<ID>
+    ) -> ID? {
+        if let checkpoint, validIDs.contains(checkpoint) {
+            return checkpoint
+        }
+        if let current, validIDs.contains(current) {
+            return current
+        }
+        return nil
+    }
+
     // MARK: - Helpers
 
     private func applyLoadedProject(
@@ -4118,6 +4534,8 @@ final class AppStore: ObservableObject {
             NSDocumentController.shared.noteNewRecentDocumentURL(currentProjectURL)
         }
 
+        refreshProjectCheckpoints()
+
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         }
@@ -4149,6 +4567,7 @@ final class AppStore: ObservableObject {
         availableRemoteModels = []
         isDiscoveringModels = false
         modelDiscoveryStatus = ""
+        projectCheckpoints = []
         resetGlobalSearchState()
 
         if clearLastOpenedReference {
@@ -7023,6 +7442,22 @@ final class AppStore: ObservableObject {
                 }
                 self.completeDocumentSaveCycle()
             }
+        }
+    }
+
+    private func synchronizeDocumentModificationDateIfNeeded() {
+        guard isDocumentBacked, let currentProjectURL else { return }
+        let standardizedURL = currentProjectURL.standardizedFileURL
+
+        guard let document = NSDocumentController.shared.documents.first(where: {
+            $0.fileURL?.standardizedFileURL == standardizedURL
+        }) else {
+            return
+        }
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: standardizedURL.path)
+        if let modificationDate = attributes?[.modificationDate] as? Date {
+            document.fileModificationDate = modificationDate
         }
     }
 
