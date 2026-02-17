@@ -320,6 +320,7 @@ struct WorkshopChatView: View {
 
     private var messagesList: some View {
         let messages = store.selectedWorkshopSession?.messages ?? []
+        let sessionScrollIdentity = store.selectedWorkshopSessionID?.uuidString ?? "none"
 
         return ScrollViewReader { proxy in
             ScrollView {
@@ -374,25 +375,16 @@ struct WorkshopChatView: View {
                         .id(messagesBottomAnchorID)
                 }
             }
+            .id(sessionScrollIdentity)
             .background(Color(nsColor: .textBackgroundColor))
             .onAppear {
                 shouldStickToBottom = true
-                DispatchQueue.main.async {
-                    scrollMessagesToBottom(using: proxy, animated: false)
-                }
-            }
-            .onChange(of: store.selectedWorkshopSessionID) { _, _ in
-                shouldStickToBottom = true
-                DispatchQueue.main.async {
-                    scrollMessagesToBottom(using: proxy, animated: false)
-                }
+                scheduleScrollToBottom(using: proxy)
             }
             .onChange(of: messagesAutoScrollToken(for: messages)) { _, _ in
                 let shouldKeepBottom = shouldStickToBottom
                 guard shouldKeepBottom else { return }
-                DispatchQueue.main.async {
-                    scrollMessagesToBottom(using: proxy, animated: false)
-                }
+                scheduleScrollToBottom(using: proxy)
             }
         }
     }
@@ -494,12 +486,21 @@ struct WorkshopChatView: View {
 
     private func scrollMessagesToBottom(using proxy: ScrollViewProxy, animated: Bool) {
         let action = {
-            proxy.scrollTo(messagesBottomAnchorID, anchor: .bottom)
+            proxy.scrollTo(messagesBottomAnchorID)
         }
         if animated {
             withAnimation(.easeOut(duration: 0.18), action)
         } else {
             action()
+        }
+    }
+
+    private func scheduleScrollToBottom(using proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            scrollMessagesToBottom(using: proxy, animated: false)
+            DispatchQueue.main.async {
+                scrollMessagesToBottom(using: proxy, animated: false)
+            }
         }
     }
 
@@ -525,9 +526,9 @@ struct WorkshopChatView: View {
                 .padding(.leading, 8)
 
                 Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
-                    .help("Include the current scene excerpt in workshop prompts. Disabling also blanks `scene_tail(...)` variables.")
+                    .help("Include the current scene excerpt in workshop prompts. Disabling also blanks scene_tail(...) variables.")
                 Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
-                    .help("Include selected scene context entries (compendium and linked summaries) in `{{context}}` variables.")
+                    .help("Include selected scene context entries (compendium and linked summaries) in {{context}} variables.")
 
                 Spacer(minLength: 0)
             }
@@ -798,7 +799,7 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
 
         private func publishStickiness(for scrollView: NSScrollView) {
             let clipView = scrollView.contentView
-            let originY = clipView.bounds.origin.y
+            let originY = clampedOriginY(for: scrollView)
 
             if let lastOriginY, originY < lastOriginY - 0.5 {
                 isDetachedFromBottom = true
@@ -814,6 +815,24 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
             }
 
             onStickinessChanged(!isDetachedFromBottom)
+        }
+
+        private func clampedOriginY(for scrollView: NSScrollView) -> CGFloat {
+            let clipView = scrollView.contentView
+            let currentOriginY = clipView.bounds.origin.y
+            let contentHeight = scrollView.documentView?.bounds.height ?? clipView.bounds.height
+            let visibleHeight = clipView.bounds.height
+            let maxOriginY = max(contentHeight - visibleHeight, 0)
+            let clampedOriginY = min(max(currentOriginY, 0), maxOriginY)
+
+            if abs(clampedOriginY - currentOriginY) > 0.5 {
+                var origin = clipView.bounds.origin
+                origin.y = clampedOriginY
+                clipView.scroll(to: origin)
+                scrollView.reflectScrolledClipView(clipView)
+            }
+
+            return clampedOriginY
         }
     }
 

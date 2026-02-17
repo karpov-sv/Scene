@@ -22,6 +22,7 @@ struct ContentView: View {
         case compendium
         case summary
         case notes
+        case conversations
     }
 
     @EnvironmentObject private var store: AppStore
@@ -29,13 +30,10 @@ struct ContentView: View {
     private var storedWorkspaceTabRawValue: String = WorkspaceTab.writing.rawValue
     @AppStorage("SceneApp.ui.writingSidePanel")
     private var storedWritingSidePanelRawValue: String = WritingSidePanel.compendium.rawValue
-    @AppStorage("SceneApp.ui.workshopConversationsVisible")
-    private var storedWorkshopConversationsVisible: Bool = true
     @State private var selectedTab: WorkspaceTab = .writing
     @State private var writingSidePanel: WritingSidePanel = .compendium
     @State private var summaryScope: SummaryScope = .scene
     @State private var notesScope: NotesScope = .scene
-    @State private var isConversationsVisible: Bool = true
 
     private var hasErrorBinding: Binding<Bool> {
         Binding(
@@ -67,9 +65,6 @@ struct ContentView: View {
             }
             .onChange(of: writingSidePanel) { _, newValue in
                 storedWritingSidePanelRawValue = newValue.rawValue
-            }
-            .onChange(of: isConversationsVisible) { _, newValue in
-                storedWorkshopConversationsVisible = newValue
             }
     }
 
@@ -114,6 +109,9 @@ struct ContentView: View {
                     selectedTab = .writing
                     writingSidePanel = .notes
                 },
+                onSelectScene: {
+                    selectedTab = .writing
+                },
                 onActivateSearchResult: activateSearchResult
             )
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
@@ -138,61 +136,62 @@ struct ContentView: View {
                 .frame(width: 260)
             }
 
-            if selectedTab == .writing {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        toggleCompendiumPanel()
-                    } label: {
-                        Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
-                    }
-                    .help(compendiumToggleHelpText)
-
-                    Button {
-                        toggleSummaryPanel()
-                    } label: {
-                        Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
-                    }
-                    .help(summaryToggleHelpText)
-
-                    Button {
-                        toggleNotesPanel()
-                    } label: {
-                        Image(systemName: writingSidePanel == .notes ? "list.clipboard.fill" : "list.clipboard")
-                    }
-                    .help(notesToggleHelpText)
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    toggleCompendiumPanel()
+                } label: {
+                    Image(systemName: writingSidePanel == .compendium ? "books.vertical.fill" : "books.vertical")
                 }
-            } else {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        isConversationsVisible.toggle()
-                    } label: {
-                        Image(systemName: "list.bullet")
-                    }
-                    .help(conversationsToggleHelpText)
+                .help(compendiumToggleHelpText)
+
+                Button {
+                    toggleSummaryPanel()
+                } label: {
+                    Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
                 }
+                .help(summaryToggleHelpText)
+
+                Button {
+                    toggleNotesPanel()
+                } label: {
+                    Image(systemName: writingSidePanel == .notes ? "list.clipboard.fill" : "list.clipboard")
+                }
+                .help(notesToggleHelpText)
+
+                Button {
+                    toggleConversationsPanel()
+                } label: {
+                    Image(systemName: "list.bullet")
+                }
+                .help(conversationsToggleHelpText)
             }
         }
     }
 
     @ViewBuilder
     private var workspacePanel: some View {
-        if selectedTab == .writing {
-            if writingSidePanel == .none {
-                EditorView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                HSplitView {
-                    EditorView()
-                        .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-
-                    writingSidePanelContent
-                }
+        if writingSidePanel == .none {
+            workspaceMainPanel
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HSplitView {
+                workspaceMainPanel
+                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+
+                writingSidePanelContent
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceMainPanel: some View {
+        if selectedTab == .writing {
+            EditorView()
         } else {
             WorkshopChatView(
                 layout: .embeddedTrailingSessions,
-                showsConversationsSidebar: isConversationsVisible
+                showsConversationsSidebar: false
             )
         }
     }
@@ -209,6 +208,11 @@ struct ContentView: View {
         case .notes:
             NotesPanelView(scope: $notesScope)
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
+        case .conversations:
+            WorkshopConversationsSidebarView { _ in
+                selectedTab = .workshop
+            }
+            .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
         case .none:
             EmptyView()
         }
@@ -279,7 +283,7 @@ struct ContentView: View {
     }
 
     private var conversationsToggleHelpText: String {
-        isConversationsVisible ? "Hide Conversations" : "Show Conversations"
+        writingSidePanel == .conversations ? "Hide Conversations" : "Show Conversations"
     }
 
     private var projectMenuActions: ProjectMenuActions {
@@ -397,7 +401,7 @@ struct ContentView: View {
         case .chatMessage:
             guard let sessionID = result.workshopSessionID else { return }
             selectedTab = .workshop
-            isConversationsVisible = true
+            writingSidePanel = .conversations
             store.selectWorkshopSession(sessionID)
         }
     }
@@ -414,13 +418,16 @@ struct ContentView: View {
         writingSidePanel = writingSidePanel == .notes ? .none : .notes
     }
 
+    private func toggleConversationsPanel() {
+        writingSidePanel = writingSidePanel == .conversations ? .none : .conversations
+    }
+
     private func restoreSidebarStateFromStorage() {
         let restoredTab = WorkspaceTab(rawValue: storedWorkspaceTabRawValue) ?? .writing
         let restoredWritingSidePanel = WritingSidePanel(rawValue: storedWritingSidePanelRawValue) ?? .compendium
 
         selectedTab = restoredTab
         writingSidePanel = restoredWritingSidePanel
-        isConversationsVisible = storedWorkshopConversationsVisible
 
         if storedWorkspaceTabRawValue != restoredTab.rawValue {
             storedWorkspaceTabRawValue = restoredTab.rawValue

@@ -17,6 +17,7 @@ struct BinderSidebarView: View {
     let onOpenSceneNotes: ((UUID, UUID) -> Void)?
     let onOpenChapterSummary: ((UUID) -> Void)?
     let onOpenChapterNotes: ((UUID) -> Void)?
+    let onSelectScene: (() -> Void)?
     let onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)?
 
     init(
@@ -25,6 +26,7 @@ struct BinderSidebarView: View {
         onOpenSceneNotes: ((UUID, UUID) -> Void)? = nil,
         onOpenChapterSummary: ((UUID) -> Void)? = nil,
         onOpenChapterNotes: ((UUID) -> Void)? = nil,
+        onSelectScene: (() -> Void)? = nil,
         onActivateSearchResult: ((AppStore.GlobalSearchResult) -> Void)? = nil
     ) {
         self.onOpenProjectNotes = onOpenProjectNotes
@@ -32,6 +34,7 @@ struct BinderSidebarView: View {
         self.onOpenSceneNotes = onOpenSceneNotes
         self.onOpenChapterSummary = onOpenChapterSummary
         self.onOpenChapterNotes = onOpenChapterNotes
+        self.onSelectScene = onSelectScene
         self.onActivateSearchResult = onActivateSearchResult
     }
 
@@ -46,6 +49,7 @@ struct BinderSidebarView: View {
                     return
                 }
                 store.selectScene(sceneID, chapterID: chapter.id)
+                onSelectScene?()
             }
         )
     }
