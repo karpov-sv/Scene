@@ -64,6 +64,20 @@ struct WorkshopChatView: View {
         )
     }
 
+    private var sceneContextToggleBinding: Binding<Bool> {
+        Binding(
+            get: { store.workshopUseSceneContext },
+            set: { store.setWorkshopUseSceneContext($0) }
+        )
+    }
+
+    private var compendiumContextToggleBinding: Binding<Bool> {
+        Binding(
+            get: { store.workshopUseCompendiumContext },
+            set: { store.setWorkshopUseCompendiumContext($0) }
+        )
+    }
+
     private var selectedSessionNameBinding: Binding<String> {
         Binding(
             get: { store.selectedWorkshopSession?.name ?? "" },
@@ -322,7 +336,7 @@ struct WorkshopChatView: View {
 
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     WorkshopMessagesScrollObserverView(tolerance: autoScrollBottomTolerance) { shouldStick in
                         shouldStickToBottom = shouldStick
                     }
@@ -523,9 +537,9 @@ struct WorkshopChatView: View {
                 .frame(maxWidth: 300)
                 .padding(.leading, 8)
 
-                Toggle("Scene Context", isOn: $store.workshopUseSceneContext)
+                Toggle("Scene Context", isOn: sceneContextToggleBinding)
                     .help("Include the current scene excerpt in workshop prompts. Disabling also blanks scene_tail(...) variables.")
-                Toggle("Compendium Context", isOn: $store.workshopUseCompendiumContext)
+                Toggle("Compendium Context", isOn: compendiumContextToggleBinding)
                     .help("Include selected scene context entries (compendium and linked summaries) in {{context}} variables. Explicit @/# mentions are included either way.")
 
                 Spacer(minLength: 0)

@@ -463,8 +463,45 @@ final class ProjectPersistence {
     private struct WorkshopSessionRecord: Codable {
         var id: UUID
         var name: String
+        var useSceneContext: Bool
+        var useCompendiumContext: Bool
         var updatedAt: Date
         var messagesPath: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case useSceneContext
+            case useCompendiumContext
+            case updatedAt
+            case messagesPath
+        }
+
+        init(
+            id: UUID,
+            name: String,
+            useSceneContext: Bool,
+            useCompendiumContext: Bool,
+            updatedAt: Date,
+            messagesPath: String
+        ) {
+            self.id = id
+            self.name = name
+            self.useSceneContext = useSceneContext
+            self.useCompendiumContext = useCompendiumContext
+            self.updatedAt = updatedAt
+            self.messagesPath = messagesPath
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            name = try container.decode(String.self, forKey: .name)
+            useSceneContext = try container.decodeIfPresent(Bool.self, forKey: .useSceneContext) ?? true
+            useCompendiumContext = try container.decodeIfPresent(Bool.self, forKey: .useCompendiumContext) ?? true
+            updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+            messagesPath = try container.decode(String.self, forKey: .messagesPath)
+        }
     }
 
     private enum Layout {
@@ -596,6 +633,8 @@ final class ProjectPersistence {
                 id: record.id,
                 name: record.name,
                 messages: messages,
+                useSceneContext: record.useSceneContext,
+                useCompendiumContext: record.useCompendiumContext,
                 updatedAt: record.updatedAt
             )
         }
@@ -720,6 +759,8 @@ final class ProjectPersistence {
             return WorkshopSessionRecord(
                 id: session.id,
                 name: session.name,
+                useSceneContext: session.useSceneContext,
+                useCompendiumContext: session.useCompendiumContext,
                 updatedAt: session.updatedAt,
                 messagesPath: messagesPath
             )

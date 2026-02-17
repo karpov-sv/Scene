@@ -1458,7 +1458,20 @@ final class AppStore: ObservableObject {
         guard workshopSessionIndex(for: sessionID) != nil else { return }
         selectedWorkshopSessionID = sessionID
         project.selectedWorkshopSessionID = sessionID
+        syncWorkshopContextTogglesFromSelectedSession()
         saveProject(debounced: true)
+    }
+
+    func setWorkshopUseSceneContext(_ enabled: Bool) {
+        guard workshopUseSceneContext != enabled else { return }
+        workshopUseSceneContext = enabled
+        persistWorkshopContextTogglesForSelectedSession()
+    }
+
+    func setWorkshopUseCompendiumContext(_ enabled: Bool) {
+        guard workshopUseCompendiumContext != enabled else { return }
+        workshopUseCompendiumContext = enabled
+        persistWorkshopContextTogglesForSelectedSession()
     }
 
     // MARK: - Project and Settings
@@ -3020,10 +3033,13 @@ final class AppStore: ObservableObject {
 
     func createWorkshopSession() {
         let nextIndex = project.workshopSessions.count + 1
-        let session = Self.makeInitialWorkshopSession(name: "Chat \(nextIndex)")
+        var session = Self.makeInitialWorkshopSession(name: "Chat \(nextIndex)")
+        session.useSceneContext = workshopUseSceneContext
+        session.useCompendiumContext = workshopUseCompendiumContext
         project.workshopSessions.append(session)
         selectedWorkshopSessionID = session.id
         project.selectedWorkshopSessionID = session.id
+        syncWorkshopContextTogglesFromSelectedSession()
         saveProject()
     }
 
@@ -4795,6 +4811,7 @@ final class AppStore: ObservableObject {
         modelDiscoveryStatus = ""
         projectCheckpoints = []
         resetGlobalSearchState()
+        syncWorkshopContextTogglesFromSelectedSession()
 
         if clearLastOpenedReference {
             persistence.clearLastOpenedProjectURL()
@@ -5890,6 +5907,41 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func syncWorkshopContextTogglesFromSelectedSession() {
+        guard isProjectOpen, let session = selectedWorkshopSession else {
+            workshopUseSceneContext = true
+            workshopUseCompendiumContext = true
+            return
+        }
+
+        workshopUseSceneContext = session.useSceneContext
+        workshopUseCompendiumContext = session.useCompendiumContext
+    }
+
+    private func persistWorkshopContextTogglesForSelectedSession() {
+        guard isProjectOpen,
+              let sessionID = selectedWorkshopSessionID,
+              let index = workshopSessionIndex(for: sessionID) else {
+            return
+        }
+
+        var didMutateSession = false
+
+        if project.workshopSessions[index].useSceneContext != workshopUseSceneContext {
+            project.workshopSessions[index].useSceneContext = workshopUseSceneContext
+            didMutateSession = true
+        }
+
+        if project.workshopSessions[index].useCompendiumContext != workshopUseCompendiumContext {
+            project.workshopSessions[index].useCompendiumContext = workshopUseCompendiumContext
+            didMutateSession = true
+        }
+
+        guard didMutateSession else { return }
+        project.workshopSessions[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
     private func appendWorkshopMessage(_ message: WorkshopMessage, to sessionID: UUID) {
         guard let index = workshopSessionIndex(for: sessionID) else { return }
         project.workshopSessions[index].messages.append(message)
@@ -6943,11 +6995,11 @@ final class AppStore: ObservableObject {
             context.compendiumEntries = project.compendium.filter { entry in
                 let titleKey = MentionParsing.normalize(entry.title)
                 if !titleKey.isEmpty,
-                   mentionTokenSet(tokens.tags, matches: titleKey) {
+                   mentionTagTokenSet(tokens.tags, matches: titleKey) {
                     return true
                 }
                 return entry.tags.contains { tag in
-                    mentionTokenSet(tokens.tags, matches: MentionParsing.normalize(tag))
+                    mentionTagTokenSet(tokens.tags, matches: MentionParsing.normalize(tag))
                 }
             }
         }
@@ -6965,7 +7017,7 @@ final class AppStore: ObservableObject {
                         ? "Untitled Scene"
                         : scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
                     let sceneKey = MentionParsing.normalize(sceneTitle)
-                    guard mentionTokenSet(tokens.scenes, matches: sceneKey) else { continue }
+                    guard mentionTagTokenSet(tokens.scenes, matches: sceneKey) else { continue }
 
                     var content = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     if content.isEmpty {
@@ -6986,14 +7038,9 @@ final class AppStore: ObservableObject {
         return context
     }
 
-    private func mentionTokenSet(_ tokens: Set<String>, matches key: String) -> Bool {
+    private func mentionTagTokenSet(_ tokens: Set<String>, matches key: String) -> Bool {
         guard !key.isEmpty else { return false }
-        if tokens.contains(key) {
-            return true
-        }
-        return tokens.contains { token in
-            token.count >= 3 && key.contains(token)
-        }
+        return tokens.contains(key)
     }
 
     private func mergeCompendiumEntries(
@@ -7718,6 +7765,8 @@ final class AppStore: ObservableObject {
         if project.selectedWorkshopSessionID != self.selectedWorkshopSessionID {
             project.selectedWorkshopSessionID = self.selectedWorkshopSessionID
         }
+
+        syncWorkshopContextTogglesFromSelectedSession()
     }
 
     private func saveProject(debounced: Bool = false, forceWrite: Bool = false) {

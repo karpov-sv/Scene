@@ -1015,13 +1015,43 @@ struct WorkshopSession: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
     var messages: [WorkshopMessage]
+    var useSceneContext: Bool
+    var useCompendiumContext: Bool
     var updatedAt: Date
 
-    init(id: UUID = UUID(), name: String, messages: [WorkshopMessage] = [], updatedAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        messages: [WorkshopMessage] = [],
+        useSceneContext: Bool = true,
+        useCompendiumContext: Bool = true,
+        updatedAt: Date = .now
+    ) {
         self.id = id
         self.name = name
         self.messages = messages
+        self.useSceneContext = useSceneContext
+        self.useCompendiumContext = useCompendiumContext
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case messages
+        case useSceneContext
+        case useCompendiumContext
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        messages = try container.decodeIfPresent([WorkshopMessage].self, forKey: .messages) ?? []
+        useSceneContext = try container.decodeIfPresent(Bool.self, forKey: .useSceneContext) ?? true
+        useCompendiumContext = try container.decodeIfPresent(Bool.self, forKey: .useCompendiumContext) ?? true
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 }
 
