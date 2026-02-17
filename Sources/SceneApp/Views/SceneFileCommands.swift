@@ -144,6 +144,11 @@ struct SceneFileCommands: Commands {
                 checkpointActions?.showRestoreDialog()
             }
             .disabled(checkpointActions?.canRestoreCheckpoint != true)
+
+            Button("Scene History") {
+                checkpointActions?.showSceneHistory()
+            }
+            .disabled(checkpointActions?.canShowSceneHistory != true)
         }
     }
 }

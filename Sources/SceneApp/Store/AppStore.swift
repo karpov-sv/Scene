@@ -18,6 +18,8 @@ final class AppStore: ObservableObject {
         case projectNotOpen
         case invalidPayloadType(expected: String, actual: String)
         case invalidEPUB(String)
+        case checkpointSceneNotFoundInCheckpoint
+        case checkpointSceneNotFoundInProject
 
         var errorDescription: String? {
             switch self {
@@ -27,6 +29,10 @@ final class AppStore: ObservableObject {
                 return "Invalid import file type '\(actual)'. Expected '\(expected)'."
             case let .invalidEPUB(message):
                 return "Invalid EPUB: \(message)"
+            case .checkpointSceneNotFoundInCheckpoint:
+                return "Selected scene does not exist in that checkpoint."
+            case .checkpointSceneNotFoundInProject:
+                return "Selected scene does not exist in the current project."
             }
         }
     }
@@ -150,6 +156,14 @@ final class AppStore: ObservableObject {
         let id: String
         let fileName: String
         let createdAt: Date
+    }
+
+    struct SceneCheckpointSnapshot: Identifiable, Equatable {
+        let id: String
+        let checkpointFileName: String
+        let checkpointCreatedAt: Date
+        let sceneContent: String
+        let sceneContentRTFData: Data?
     }
 
     struct CheckpointRestoreOptions: Equatable {
@@ -408,6 +422,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var sceneEditorFocusRequestID: UUID = UUID()
     @Published private(set) var beatInputFocusRequestID: UUID = UUID()
     @Published private(set) var workshopInputFocusRequestID: UUID = UUID()
+    @Published private(set) var sceneHistorySheetRequestID: UUID = UUID()
+    @Published private(set) var requestedSceneHistorySceneID: UUID?
 
     @Published var showingSettings: Bool = false
 
@@ -822,6 +838,16 @@ final class AppStore: ObservableObject {
         workshopInputFocusRequestID = UUID()
     }
 
+    func requestSceneHistory(for sceneID: UUID? = nil) {
+        guard let targetSceneID = sceneID ?? selectedSceneID else { return }
+        requestedSceneHistorySceneID = targetSceneID
+        sceneHistorySheetRequestID = UUID()
+    }
+
+    func consumeSceneHistoryRequest() {
+        requestedSceneHistorySceneID = nil
+    }
+
     func requestGlobalSearchFocus(scope: GlobalSearchScope, maxResults: Int = 300) {
         isGlobalSearchVisible = true
         updateGlobalSearchScope(scope, maxResults: maxResults)
@@ -1149,6 +1175,68 @@ final class AppStore: ObservableObject {
         )
 
         applyCheckpointRestore(checkpointProject, options: options)
+    }
+
+    func sceneCheckpointSnapshots(for sceneID: UUID) -> [SceneCheckpointSnapshot] {
+        guard isProjectOpen, let currentProjectURL else {
+            return []
+        }
+
+        var snapshots: [SceneCheckpointSnapshot] = []
+        for checkpoint in projectCheckpoints {
+            guard let checkpointProject = try? persistence.loadCheckpoint(
+                at: currentProjectURL,
+                fileName: checkpoint.fileName
+            ) else {
+                continue
+            }
+
+            guard let location = sceneLocation(for: sceneID, in: checkpointProject) else {
+                continue
+            }
+
+            let scene = checkpointProject.chapters[location.chapterIndex].scenes[location.sceneIndex]
+            snapshots.append(
+                SceneCheckpointSnapshot(
+                    id: checkpoint.id,
+                    checkpointFileName: checkpoint.fileName,
+                    checkpointCreatedAt: checkpoint.createdAt,
+                    sceneContent: scene.content,
+                    sceneContentRTFData: scene.contentRTFData
+                )
+            )
+        }
+
+        return snapshots
+    }
+
+    func restoreSceneTextFromCheckpoint(
+        checkpointFileName: String,
+        sceneID: UUID
+    ) throws {
+        guard isProjectOpen, let currentProjectURL else {
+            throw ProjectPersistenceError.projectNotFound
+        }
+
+        let checkpointProject = try persistence.loadCheckpoint(
+            at: currentProjectURL,
+            fileName: checkpointFileName
+        )
+
+        guard let sourceLocation = sceneLocation(for: sceneID, in: checkpointProject) else {
+            throw DataExchangeError.checkpointSceneNotFoundInCheckpoint
+        }
+        guard let destinationLocation = sceneLocation(for: sceneID) else {
+            throw DataExchangeError.checkpointSceneNotFoundInProject
+        }
+
+        let sourceScene = checkpointProject.chapters[sourceLocation.chapterIndex].scenes[sourceLocation.sceneIndex]
+        project.chapters[destinationLocation.chapterIndex].scenes[destinationLocation.sceneIndex].content = sourceScene.content
+        project.chapters[destinationLocation.chapterIndex].scenes[destinationLocation.sceneIndex].contentRTFData = sourceScene.contentRTFData
+        project.chapters[destinationLocation.chapterIndex].scenes[destinationLocation.sceneIndex].updatedAt = .now
+        project.chapters[destinationLocation.chapterIndex].updatedAt = .now
+        sceneRichTextRefreshID = UUID()
+        saveProject(forceWrite: true)
     }
 
     func refreshProjectCheckpoints() {
@@ -7250,6 +7338,10 @@ final class AppStore: ObservableObject {
     }
 
     private func sceneLocation(for sceneID: UUID) -> SceneLocation? {
+        sceneLocation(for: sceneID, in: project)
+    }
+
+    private func sceneLocation(for sceneID: UUID, in project: StoryProject) -> SceneLocation? {
         for chapterIndex in project.chapters.indices {
             if let sceneIndex = project.chapters[chapterIndex].scenes.firstIndex(where: { $0.id == sceneID }) {
                 return SceneLocation(chapterIndex: chapterIndex, sceneIndex: sceneIndex)

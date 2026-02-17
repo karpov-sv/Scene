@@ -353,8 +353,10 @@ struct ContentView: View {
         CheckpointMenuActions(
             createCheckpoint: createCheckpointFromMenu,
             showRestoreDialog: showCheckpointRestoreDialogFromMenu,
+            showSceneHistory: showSceneHistoryFromMenu,
             canCreateCheckpoint: store.canManageProjectCheckpoints,
-            canRestoreCheckpoint: store.canManageProjectCheckpoints
+            canRestoreCheckpoint: store.canManageProjectCheckpoints,
+            canShowSceneHistory: store.isProjectOpen && store.selectedScene != nil
         )
     }
 
@@ -571,6 +573,12 @@ struct ContentView: View {
     private func showCheckpointRestoreDialogFromMenu() {
         store.refreshProjectCheckpoints()
         showingCheckpointRestoreSheet = true
+    }
+
+    private func showSceneHistoryFromMenu() {
+        guard store.selectedScene != nil else { return }
+        selectedTab = .writing
+        store.requestSceneHistory()
     }
 
     private func openImportedProjectInNewWindow(_ projectURL: URL) {

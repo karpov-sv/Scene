@@ -53,6 +53,10 @@ private struct SceneEditorCommand: Equatable {
     let action: Action
 }
 
+private struct SceneHistorySheetRequest: Identifiable {
+    let id: UUID
+}
+
 private struct SceneEditorFormatting: Equatable {
     var fontFamily: String
     var fontSize: Double
@@ -144,6 +148,7 @@ private extension SceneEditorFormatting {
 struct EditorView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingSceneContextSheet: Bool = false
+    @State private var sceneHistorySheetRequest: SceneHistorySheetRequest?
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var sceneEditorCommand: SceneEditorCommand?
     @State private var editorSelection: SceneEditorSelection = .empty
@@ -323,6 +328,10 @@ struct EditorView: View {
             SceneContextSheet()
                 .environmentObject(store)
         }
+        .sheet(item: $sceneHistorySheetRequest) { request in
+            SceneHistorySheet(sceneID: request.id)
+                .environmentObject(store)
+        }
         .sheet(isPresented: proseGenerationReviewPresented) {
             ProseGenerationReviewSheet()
                 .environmentObject(store)
@@ -335,8 +344,12 @@ struct EditorView: View {
             isEditingSceneTitle = false
             applyPendingSceneSearchSelectionIfNeeded()
         }
+        .onChange(of: store.sceneHistorySheetRequestID) { _, _ in
+            presentSceneHistoryIfRequested()
+        }
         .onAppear {
             applyPendingSceneSearchSelectionIfNeeded()
+            presentSceneHistoryIfRequested()
         }
     }
 
@@ -350,26 +363,40 @@ struct EditorView: View {
 
     private var sceneHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isEditingSceneTitle {
-                TextField("Scene title", text: sceneTitleBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title3.weight(.semibold))
-                    .focused($isSceneTitleFocused)
-                    .onSubmit { isEditingSceneTitle = false }
-                    .onExitCommand { isEditingSceneTitle = false }
-                    .onChange(of: isSceneTitleFocused) { _, focused in
-                        if !focused { isEditingSceneTitle = false }
-                    }
-            } else {
-                Text(store.selectedScene?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                     ? store.selectedScene!.title : "Untitled Scene")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        isEditingSceneTitle = true
-                        DispatchQueue.main.async { isSceneTitleFocused = true }
-                    }
+            HStack(alignment: .center, spacing: 8) {
+                if isEditingSceneTitle {
+                    TextField("Scene title", text: sceneTitleBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .focused($isSceneTitleFocused)
+                        .onSubmit { isEditingSceneTitle = false }
+                        .onExitCommand { isEditingSceneTitle = false }
+                        .onChange(of: isSceneTitleFocused) { _, focused in
+                            if !focused { isEditingSceneTitle = false }
+                        }
+                } else {
+                    Text(store.selectedScene?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                         ? store.selectedScene!.title : "Untitled Scene")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            isEditingSceneTitle = true
+                            DispatchQueue.main.async { isSceneTitleFocused = true }
+                        }
+                }
+
+                Button {
+                    store.requestSceneHistory()
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .padding(4)
+                .help("Scene History")
+                .disabled(store.selectedScene == nil)
             }
 
             // Formatting toolbar
@@ -974,6 +1001,12 @@ struct EditorView: View {
         )
         sceneEditorCommand = SceneEditorCommand(action: .selectRange(targetRange: targetRange))
         store.consumeSceneSearchSelectionRequest(pending.requestID)
+    }
+
+    private func presentSceneHistoryIfRequested() {
+        guard let sceneID = store.requestedSceneHistorySceneID else { return }
+        sceneHistorySheetRequest = SceneHistorySheetRequest(id: sceneID)
+        store.consumeSceneHistoryRequest()
     }
 
     private func rewriteSelectedText() {
@@ -2426,6 +2459,418 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 attributes: [.font: NSFont.preferredFont(forTextStyle: .body)]
             )
         }
+    }
+}
+
+private struct SceneHistorySheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    let sceneID: UUID
+
+    @State private var snapshots: [AppStore.SceneCheckpointSnapshot] = []
+    @State private var selectedSnapshotIndex: Int = 0
+    @State private var restoreStatus: String?
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    private enum DiffLineKind {
+        case unchanged
+        case removed
+        case added
+    }
+
+    private struct DiffLine {
+        let kind: DiffLineKind
+        let text: String
+    }
+
+    private var currentScene: Scene? {
+        for chapter in store.chapters {
+            if let scene = chapter.scenes.first(where: { $0.id == sceneID }) {
+                return scene
+            }
+        }
+        return nil
+    }
+
+    private var sceneTitle: String {
+        guard let currentScene else { return "Unknown Scene" }
+        let trimmed = currentScene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled Scene" : trimmed
+    }
+
+    private var selectedSnapshot: AppStore.SceneCheckpointSnapshot? {
+        guard snapshots.indices.contains(selectedSnapshotIndex) else {
+            return nil
+        }
+        return snapshots[selectedSnapshotIndex]
+    }
+
+    private var canSelectOlderSnapshot: Bool {
+        selectedSnapshotIndex + 1 < snapshots.count
+    }
+
+    private var canSelectNewerSnapshot: Bool {
+        selectedSnapshotIndex > 0
+    }
+
+    private var currentSceneContent: String {
+        currentScene?.content ?? ""
+    }
+
+    private var diffLines: [DiffLine] {
+        guard let selectedSnapshot else {
+            return []
+        }
+        return Self.makeLineDiff(
+            historicalText: selectedSnapshot.sceneContent,
+            currentText: currentSceneContent
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Scene History")
+                        .font(.title3.weight(.semibold))
+                    Text("Checkpoint history for \(sceneTitle)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                Button("Refresh") {
+                    reloadSnapshots(refreshCheckpoints: true)
+                }
+
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if currentScene == nil {
+                ContentUnavailableView(
+                    "Scene Not Found",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("This scene no longer exists in the current project.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if snapshots.isEmpty {
+                ContentUnavailableView(
+                    "No History Yet",
+                    systemImage: "clock.badge.xmark",
+                    description: Text("Create checkpoints to browse scene history.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                let lines = diffLines
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Button {
+                            selectedSnapshotIndex += 1
+                            restoreStatus = nil
+                        } label: {
+                            Label("Older", systemImage: "chevron.left")
+                        }
+                        .disabled(!canSelectOlderSnapshot)
+
+                        Button {
+                            selectedSnapshotIndex -= 1
+                            restoreStatus = nil
+                        } label: {
+                            Label("Newer", systemImage: "chevron.right")
+                        }
+                        .disabled(!canSelectNewerSnapshot)
+
+                        Spacer(minLength: 0)
+
+                        if let selectedSnapshot {
+                            Text(
+                                "Checkpoint \(selectedSnapshotIndex + 1) of \(snapshots.count) · "
+                                    + Self.timestampFormatter.string(from: selectedSnapshot.checkpointCreatedAt)
+                            )
+                            .font(.subheadline.weight(.medium))
+                        }
+                    }
+
+                    if let selectedSnapshot {
+                        Text(selectedSnapshot.checkpointFileName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Text("Difference vs current scene")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Text(Self.differenceSummary(from: lines))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SceneHistoryDiffTextView(attributedText: Self.makeAttributedDiffText(from: lines))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                Divider()
+
+                HStack {
+                    Text(restoreStatus ?? "Restore applies only to the selected scene text.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button("Restore Scene Text") {
+                        restoreSelectedSnapshotText()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedSnapshot == nil)
+                }
+                .padding(16)
+            }
+        }
+        .frame(minWidth: 920, minHeight: 620)
+        .onAppear {
+            reloadSnapshots(refreshCheckpoints: true)
+        }
+        .onChange(of: store.projectCheckpoints) { _, _ in
+            reloadSnapshots(refreshCheckpoints: false)
+        }
+    }
+
+    private func reloadSnapshots(refreshCheckpoints: Bool) {
+        let previousCheckpointFileName = selectedSnapshot?.checkpointFileName
+        if refreshCheckpoints {
+            store.refreshProjectCheckpoints()
+        }
+
+        snapshots = store.sceneCheckpointSnapshots(for: sceneID)
+        if snapshots.isEmpty {
+            selectedSnapshotIndex = 0
+            restoreStatus = nil
+            return
+        }
+
+        if let previousCheckpointFileName,
+           let preservedIndex = snapshots.firstIndex(where: { $0.checkpointFileName == previousCheckpointFileName }) {
+            selectedSnapshotIndex = preservedIndex
+            return
+        }
+
+        selectedSnapshotIndex = min(selectedSnapshotIndex, snapshots.count - 1)
+    }
+
+    private func restoreSelectedSnapshotText() {
+        guard let selectedSnapshot else { return }
+
+        do {
+            try store.restoreSceneTextFromCheckpoint(
+                checkpointFileName: selectedSnapshot.checkpointFileName,
+                sceneID: sceneID
+            )
+            restoreStatus = "Restored scene text from \(Self.timestampFormatter.string(from: selectedSnapshot.checkpointCreatedAt))."
+        } catch {
+            store.lastError = "Scene restore failed: \(error.localizedDescription)"
+        }
+    }
+
+    private static func splitLines(_ text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        return text.split(
+            omittingEmptySubsequences: false,
+            whereSeparator: \.isNewline
+        ).map(String.init)
+    }
+
+    private static func makeLineDiff(
+        historicalText: String,
+        currentText: String
+    ) -> [DiffLine] {
+        let historicalLines = splitLines(historicalText)
+        let currentLines = splitLines(currentText)
+
+        if historicalLines == currentLines {
+            if historicalLines.isEmpty {
+                return [DiffLine(kind: .unchanged, text: "(No content)")]
+            }
+            return historicalLines.map { DiffLine(kind: .unchanged, text: $0) }
+        }
+
+        let historicalCount = historicalLines.count
+        let currentCount = currentLines.count
+        let maxDetailedMatrixCells = 4_000_000
+        let canBuildDetailedMatrix = historicalCount == 0
+            || currentCount == 0
+            || (historicalCount <= (maxDetailedMatrixCells / max(1, currentCount)))
+
+        if !canBuildDetailedMatrix {
+            var coarse: [DiffLine] = [
+                DiffLine(
+                    kind: .unchanged,
+                    text: "(Diff too large for detailed comparison; showing full historical and current text.)"
+                )
+            ]
+            coarse.append(contentsOf: historicalLines.map { DiffLine(kind: .removed, text: $0) })
+            coarse.append(contentsOf: currentLines.map { DiffLine(kind: .added, text: $0) })
+            return coarse
+        }
+
+        let matrixWidth = currentCount + 1
+        var lcsMatrix = Array(repeating: 0, count: (historicalCount + 1) * matrixWidth)
+        @inline(__always)
+        func matrixIndex(_ i: Int, _ j: Int) -> Int {
+            (i * matrixWidth) + j
+        }
+
+        for i in (0..<historicalCount).reversed() {
+            for j in (0..<currentCount).reversed() {
+                if historicalLines[i] == currentLines[j] {
+                    lcsMatrix[matrixIndex(i, j)] = lcsMatrix[matrixIndex(i + 1, j + 1)] + 1
+                } else {
+                    lcsMatrix[matrixIndex(i, j)] = max(
+                        lcsMatrix[matrixIndex(i + 1, j)],
+                        lcsMatrix[matrixIndex(i, j + 1)]
+                    )
+                }
+            }
+        }
+
+        var diff: [DiffLine] = []
+        var i = 0
+        var j = 0
+        while i < historicalCount && j < currentCount {
+            if historicalLines[i] == currentLines[j] {
+                diff.append(DiffLine(kind: .unchanged, text: historicalLines[i]))
+                i += 1
+                j += 1
+            } else if lcsMatrix[matrixIndex(i + 1, j)] >= lcsMatrix[matrixIndex(i, j + 1)] {
+                diff.append(DiffLine(kind: .removed, text: historicalLines[i]))
+                i += 1
+            } else {
+                diff.append(DiffLine(kind: .added, text: currentLines[j]))
+                j += 1
+            }
+        }
+
+        while i < historicalCount {
+            diff.append(DiffLine(kind: .removed, text: historicalLines[i]))
+            i += 1
+        }
+
+        while j < currentCount {
+            diff.append(DiffLine(kind: .added, text: currentLines[j]))
+            j += 1
+        }
+
+        return diff
+    }
+
+    private static func differenceSummary(from lines: [DiffLine]) -> String {
+        let additions = lines.filter { $0.kind == .added }.count
+        let removals = lines.filter { $0.kind == .removed }.count
+        if additions == 0 && removals == 0 {
+            return "No differences"
+        }
+        return "\(additions) additions, \(removals) removals"
+    }
+
+    private static func makeAttributedDiffText(from lines: [DiffLine]) -> NSAttributedString {
+        let contentLines = lines.isEmpty ? [DiffLine(kind: .unchanged, text: "(No differences)")] : lines
+        let rendered = NSMutableAttributedString()
+        let monospacedFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+
+        for (index, line) in contentLines.enumerated() {
+            let prefix: String
+            let textColor: NSColor
+            let backgroundColor: NSColor?
+
+            switch line.kind {
+            case .unchanged:
+                prefix = "  "
+                textColor = NSColor.labelColor
+                backgroundColor = nil
+            case .removed:
+                prefix = "- "
+                textColor = NSColor.systemRed
+                backgroundColor = NSColor.systemRed.withAlphaComponent(0.10)
+            case .added:
+                prefix = "+ "
+                textColor = NSColor.systemGreen
+                backgroundColor = NSColor.systemGreen.withAlphaComponent(0.10)
+            }
+
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: monospacedFont,
+                .foregroundColor: textColor
+            ]
+            if let backgroundColor {
+                attributes[.backgroundColor] = backgroundColor
+            }
+
+            let lineText = prefix + line.text + (index + 1 < contentLines.count ? "\n" : "")
+            rendered.append(NSAttributedString(string: lineText, attributes: attributes))
+        }
+
+        return rendered
+    }
+}
+
+private struct SceneHistoryDiffTextView: NSViewRepresentable {
+    let attributedText: NSAttributedString
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = NSColor.textBackgroundColor
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.drawsBackground = true
+        textView.backgroundColor = NSColor.textBackgroundColor
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+
+        if let textContainer = textView.textContainer {
+            textContainer.widthTracksTextView = true
+            textContainer.heightTracksTextView = false
+            textContainer.lineBreakMode = .byWordWrapping
+            textContainer.lineFragmentPadding = 0
+        }
+
+        textView.textStorage?.setAttributedString(attributedText)
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        textView.textStorage?.setAttributedString(attributedText)
     }
 }
 

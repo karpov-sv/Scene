@@ -3,8 +3,10 @@ import SwiftUI
 struct CheckpointMenuActions {
     let createCheckpoint: () -> Void
     let showRestoreDialog: () -> Void
+    let showSceneHistory: () -> Void
     let canCreateCheckpoint: Bool
     let canRestoreCheckpoint: Bool
+    let canShowSceneHistory: Bool
 }
 
 private struct CheckpointMenuActionsKey: FocusedValueKey {
