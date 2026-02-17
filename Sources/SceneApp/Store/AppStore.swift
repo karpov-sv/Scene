@@ -523,16 +523,26 @@ final class AppStore: ObservableObject {
         case .tag:
             var frequencies: [String: (label: String, count: Int)] = [:]
             for entry in project.compendium {
+                var labelsByKey: [String: String] = [:]
                 for tag in entry.tags {
                     let cleaned = tag.trimmingCharacters(in: .whitespacesAndNewlines)
                     let key = MentionParsing.normalize(cleaned)
                     guard !key.isEmpty else { continue }
+                    labelsByKey[key] = labelsByKey[key] ?? cleaned
+                }
 
+                let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let titleKey = MentionParsing.normalize(title)
+                if !titleKey.isEmpty {
+                    labelsByKey[titleKey] = labelsByKey[titleKey] ?? title
+                }
+
+                for (key, label) in labelsByKey {
                     if var existing = frequencies[key] {
                         existing.count += 1
                         frequencies[key] = existing
                     } else {
-                        frequencies[key] = (label: cleaned, count: 1)
+                        frequencies[key] = (label: label, count: 1)
                     }
                 }
             }
@@ -5999,7 +6009,12 @@ final class AppStore: ObservableObject {
 
         if !tokens.tags.isEmpty {
             context.compendiumEntries = project.compendium.filter { entry in
-                entry.tags.contains { tag in
+                let titleKey = MentionParsing.normalize(entry.title)
+                if !titleKey.isEmpty,
+                   mentionTokenSet(tokens.tags, matches: titleKey) {
+                    return true
+                }
+                return entry.tags.contains { tag in
                     mentionTokenSet(tokens.tags, matches: MentionParsing.normalize(tag))
                 }
             }
