@@ -89,6 +89,41 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var projectAuthorBinding: Binding<String> {
+        Binding(
+            get: { store.project.metadata.author ?? "" },
+            set: { store.updateProjectAuthor($0) }
+        )
+    }
+
+    private var projectLanguageBinding: Binding<String> {
+        Binding(
+            get: { store.project.metadata.language ?? "" },
+            set: { store.updateProjectLanguage($0) }
+        )
+    }
+
+    private var projectPublisherBinding: Binding<String> {
+        Binding(
+            get: { store.project.metadata.publisher ?? "" },
+            set: { store.updateProjectPublisher($0) }
+        )
+    }
+
+    private var projectRightsBinding: Binding<String> {
+        Binding(
+            get: { store.project.metadata.rights ?? "" },
+            set: { store.updateProjectRights($0) }
+        )
+    }
+
+    private var projectDescriptionBinding: Binding<String> {
+        Binding(
+            get: { store.project.metadata.description ?? "" },
+            set: { store.updateProjectDescription($0) }
+        )
+    }
+
     private var providerBinding: Binding<AIProvider> {
         Binding(
             get: { store.project.settings.provider },
@@ -761,6 +796,58 @@ struct SettingsSheetView: View {
                                 .accessibilityLabel("Autosave project changes")
                                 .help("Automatically save project changes to disk")
                         }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Metadata") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Author")
+                                .frame(width: 96, alignment: .leading)
+                            TextField("Author name", text: projectAuthorBinding)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Language")
+                                .frame(width: 96, alignment: .leading)
+                            TextField("Language code (for EPUB, e.g. en)", text: projectLanguageBinding)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Publisher")
+                                .frame(width: 96, alignment: .leading)
+                            TextField("Publisher", text: projectPublisherBinding)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Rights")
+                                .frame(width: 96, alignment: .leading)
+                            TextField("Copyright / rights statement", text: projectRightsBinding)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Description")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            TextEditor(text: projectDescriptionBinding)
+                                .font(.body)
+                                .scrollContentBackground(.hidden)
+                                .padding(8)
+                                .background(Color(nsColor: .textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .frame(minHeight: 110, idealHeight: 130)
+                        }
+
+                        Text("Saved with the project and included in JSON/EPUB export-import when available.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 4)
                 }

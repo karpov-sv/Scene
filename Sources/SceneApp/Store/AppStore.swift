@@ -82,6 +82,7 @@ final class AppStore: ObservableObject {
 
     private struct EPUBPackageDescriptor {
         var title: String
+        var metadata: ProjectMetadata
         var opfURL: URL
         var packageBaseURL: URL
         var manifestByID: [String: EPUBManifestItem]
@@ -1500,6 +1501,41 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateProjectAuthor(_ author: String) {
+        updateProjectMetadataField(\.author, value: author)
+    }
+
+    func updateProjectLanguage(_ language: String) {
+        updateProjectMetadataField(\.language, value: language)
+    }
+
+    func updateProjectPublisher(_ publisher: String) {
+        updateProjectMetadataField(\.publisher, value: publisher)
+    }
+
+    func updateProjectRights(_ rights: String) {
+        updateProjectMetadataField(\.rights, value: rights)
+    }
+
+    func updateProjectDescription(_ description: String) {
+        updateProjectMetadataField(\.description, value: description)
+    }
+
+    private func updateProjectMetadataField(
+        _ keyPath: WritableKeyPath<ProjectMetadata, String?>,
+        value: String
+    ) {
+        let normalized = normalizedProjectMetadataValue(value)
+        guard project.metadata[keyPath: keyPath] != normalized else { return }
+        project.metadata[keyPath: keyPath] = normalized
+        saveProject(debounced: true)
+    }
+
+    private func normalizedProjectMetadataValue(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     func updateAutosaveEnabled(_ enabled: Bool) {
         guard project.autosaveEnabled != enabled else { return }
         project.autosaveEnabled = enabled
@@ -2077,6 +2113,7 @@ final class AppStore: ObservableObject {
         importedProject.title = descriptor.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Imported EPUB"
             : descriptor.title
+        importedProject.metadata = descriptor.metadata
         importedProject.chapters = chapters
         importedProject.sceneContextCompendiumSelection = [:]
         importedProject.sceneContextSceneSummarySelection = [:]
@@ -4272,6 +4309,11 @@ final class AppStore: ObservableObject {
             )
         }
 
+        if options.includeText {
+            merged.title = checkpointProject.title
+            merged.metadata = checkpointProject.metadata
+        }
+
         if options.includeNotes {
             merged.notes = checkpointProject.notes
         }
@@ -5119,17 +5161,19 @@ final class AppStore: ObservableObject {
     }
 
     private func makeEPUBNavigationXHTML(chapters: [(id: String, href: String, title: String)]) -> String {
+        let projectTitle = normalizedTitle(project.title, fallback: currentProjectName)
+
         var lines: [String] = []
         lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
         lines.append("<!DOCTYPE html>")
         lines.append("<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"en\" lang=\"en\">")
         lines.append("<head>")
         lines.append("  <meta charset=\"utf-8\"/>")
-        lines.append("  <title>\(escapeHTML(currentProjectName))</title>")
+        lines.append("  <title>\(escapeHTML(projectTitle))</title>")
         lines.append("</head>")
         lines.append("<body>")
         lines.append("  <nav epub:type=\"toc\" id=\"toc\">")
-        lines.append("    <h1>\(escapeHTML(currentProjectName))</h1>")
+        lines.append("    <h1>\(escapeHTML(projectTitle))</h1>")
         lines.append("    <ol>")
         for chapter in chapters {
             lines.append("      <li><a href=\"\(escapeHTML(chapter.href))\">\(escapeHTML(chapter.title))</a></li>")
@@ -5146,14 +5190,30 @@ final class AppStore: ObservableObject {
         modifiedFormatter.formatOptions = [.withInternetDateTime]
         let modified = modifiedFormatter.string(from: .now)
         let bookIdentifier = "urn:uuid:\(project.id.uuidString.lowercased())"
+        let projectTitle = normalizedTitle(project.title, fallback: currentProjectName)
+        let language = normalizedEPUBMetadataValue(project.metadata.language) ?? "en"
 
         var lines: [String] = []
         lines.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-        lines.append("<package xmlns=\"http://www.idpf.org/2007/opf\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" version=\"3.0\" unique-identifier=\"book-id\" xml:lang=\"en\">")
+        lines.append("<package xmlns=\"http://www.idpf.org/2007/opf\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" version=\"3.0\" unique-identifier=\"book-id\" xml:lang=\"\(escapeHTML(language))\">")
         lines.append("  <metadata>")
         lines.append("    <dc:identifier id=\"book-id\">\(escapeHTML(bookIdentifier))</dc:identifier>")
-        lines.append("    <dc:title>\(escapeHTML(currentProjectName))</dc:title>")
-        lines.append("    <dc:language>en</dc:language>")
+        lines.append("    <dc:title>\(escapeHTML(projectTitle))</dc:title>")
+        lines.append("    <dc:language>\(escapeHTML(language))</dc:language>")
+
+        if let author = normalizedEPUBMetadataValue(project.metadata.author) {
+            lines.append("    <dc:creator>\(escapeHTML(author))</dc:creator>")
+        }
+        if let publisher = normalizedEPUBMetadataValue(project.metadata.publisher) {
+            lines.append("    <dc:publisher>\(escapeHTML(publisher))</dc:publisher>")
+        }
+        if let rights = normalizedEPUBMetadataValue(project.metadata.rights) {
+            lines.append("    <dc:rights>\(escapeHTML(rights))</dc:rights>")
+        }
+        if let description = normalizedEPUBMetadataValue(project.metadata.description) {
+            lines.append("    <dc:description>\(escapeHTML(description))</dc:description>")
+        }
+
         lines.append("    <meta property=\"dcterms:modified\">\(modified)</meta>")
         lines.append("  </metadata>")
         lines.append("  <manifest>")
@@ -5219,11 +5279,53 @@ final class AppStore: ObservableObject {
         }
 
         let title = normalizedTitle(
-            firstCapturedValue(
-                in: opfText,
-                pattern: "<dc:title\\b[^>]*>(.*?)</dc:title>"
+            normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:title\\b[^>]*>(.*?)</dc:title>"
+                )
             ),
             fallback: "Imported EPUB"
+        )
+
+        let languageFromPackageTag: String?
+        if let packageTag = allTagMatches(in: opfText, tagName: "package").first {
+            languageFromPackageTag = parseXMLAttributes(fromTag: packageTag)["xml:lang"]
+        } else {
+            languageFromPackageTag = nil
+        }
+
+        let metadata = ProjectMetadata(
+            author: normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:creator\\b[^>]*>(.*?)</dc:creator>"
+                )
+            ),
+            language: normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:language\\b[^>]*>(.*?)</dc:language>"
+                ) ?? languageFromPackageTag
+            ),
+            publisher: normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:publisher\\b[^>]*>(.*?)</dc:publisher>"
+                )
+            ),
+            rights: normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:rights\\b[^>]*>(.*?)</dc:rights>"
+                )
+            ),
+            description: normalizedEPUBMetadataValue(
+                firstCapturedValue(
+                    in: opfText,
+                    pattern: "<dc:description\\b[^>]*>(.*?)</dc:description>"
+                )
+            )
         )
 
         var manifestByID: [String: EPUBManifestItem] = [:]
@@ -5255,6 +5357,7 @@ final class AppStore: ObservableObject {
 
         return EPUBPackageDescriptor(
             title: title,
+            metadata: metadata,
             opfURL: opfURL,
             packageBaseURL: opfURL.deletingLastPathComponent(),
             manifestByID: manifestByID,
@@ -5596,6 +5699,13 @@ final class AppStore: ObservableObject {
             matches.append(fileURL)
         }
         return matches
+    }
+
+    private func normalizedEPUBMetadataValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let stripped = plainTextFromHTMLFragment(value)
+        let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func normalizedTitle(_ title: String?, fallback: String) -> String {

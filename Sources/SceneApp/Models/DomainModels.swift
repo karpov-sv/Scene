@@ -1235,9 +1235,46 @@ struct EditorAppearanceSettings: Codable, Equatable {
     )
 }
 
+struct ProjectMetadata: Codable, Equatable {
+    var author: String?
+    var language: String?
+    var publisher: String?
+    var rights: String?
+    var description: String?
+
+    init(
+        author: String? = nil,
+        language: String? = nil,
+        publisher: String? = nil,
+        rights: String? = nil,
+        description: String? = nil
+    ) {
+        self.author = author
+        self.language = language
+        self.publisher = publisher
+        self.rights = rights
+        self.description = description
+    }
+
+    var isEmpty: Bool {
+        [
+            author,
+            language,
+            publisher,
+            rights,
+            description
+        ].allSatisfy { value in
+            value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+        }
+    }
+
+    static let empty = ProjectMetadata()
+}
+
 struct StoryProject: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
+    var metadata: ProjectMetadata
     var notes: String
     var autosaveEnabled: Bool
     var chapters: [Chapter]
@@ -1263,6 +1300,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     init(
         id: UUID,
         title: String,
+        metadata: ProjectMetadata = .empty,
         notes: String,
         autosaveEnabled: Bool,
         chapters: [Chapter],
@@ -1287,6 +1325,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.title = title
+        self.metadata = metadata
         self.notes = notes
         self.autosaveEnabled = autosaveEnabled
         self.chapters = chapters
@@ -1313,6 +1352,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case title
+        case metadata
         case notes
         case autosaveEnabled
         case chapters
@@ -1341,6 +1381,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
 
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
+        metadata = try container.decodeIfPresent(ProjectMetadata.self, forKey: .metadata) ?? .empty
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         autosaveEnabled = try container.decodeIfPresent(Bool.self, forKey: .autosaveEnabled) ?? true
         chapters = try container.decode([Chapter].self, forKey: .chapters)
@@ -1399,6 +1440,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         return StoryProject(
             id: UUID(),
             title: "Untitled Project",
+            metadata: .empty,
             notes: "",
             autosaveEnabled: true,
             chapters: [firstChapter],

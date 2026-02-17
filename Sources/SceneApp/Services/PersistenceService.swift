@@ -344,6 +344,7 @@ final class ProjectPersistence {
         var schemaVersion: Int
         var id: UUID
         var title: String
+        var metadata: ProjectMetadata?
         var notes: String?
         var autosaveEnabled: Bool?
         var updatedAt: Date
@@ -602,6 +603,7 @@ final class ProjectPersistence {
         return StoryProject(
             id: manifest.id,
             title: manifest.title,
+            metadata: manifest.metadata ?? .empty,
             notes: manifest.notes ?? "",
             autosaveEnabled: manifest.autosaveEnabled ?? true,
             chapters: chapters,
@@ -738,6 +740,7 @@ final class ProjectPersistence {
             schemaVersion: Self.schemaVersion,
             id: project.id,
             title: project.title,
+            metadata: project.metadata.isEmpty ? nil : project.metadata,
             notes: project.notes,
             autosaveEnabled: project.autosaveEnabled,
             updatedAt: project.updatedAt,

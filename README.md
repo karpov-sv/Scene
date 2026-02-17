@@ -20,8 +20,10 @@
 - Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
 - Persistent prompt history for workshop input (per conversation) and beat input (per scene), with trimming/deduplication and a 30-entry cap.
 - `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-7`).
+- Project checkpoints with selective restore scope/behavior and scene-level history browsing (diff + text-only restore).
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
-- Project-local settings for AI provider, prompt templates, and autosave.
+- Project-local settings for AI provider, prompt templates, text generation behavior, and autosave.
+- Standard project metadata fields (author/language/publisher/rights/description) in Project Settings.
 - Data exchange for prompts, compendium, and projects, plus plain text, HTML, and EPUB project export/import.
 - Native document workflow with `.sceneproj` project bundles.
 
@@ -144,7 +146,8 @@ Script options:
   - `compendium/*.md` (entry text)
   - `workshop/*.json` (chat messages)
 - The app restores the last opened project on restart, including the last selected scene for that project.
-- Project Settings -> General includes `Autosave project changes` (enabled by default).
+- Project Settings -> General includes `Autosave project changes` (enabled by default) and project metadata fields.
+- Project Settings -> Text Generation includes multi-model selection, inline generation toggle, and rewrite behavior toggles.
 - Supported providers: `OpenAI (ChatGPT)`, `Anthropic (Claude)`, `OpenRouter`, `LM Studio (Local)`, and `OpenAI-Compatible (Custom)`.
 - Configure provider settings in Project Settings:
   - endpoint URL (auto-populated with provider default)
@@ -162,6 +165,7 @@ Script options:
 - `File -> Export -> Project Plain Text...` exports as one `.txt` file in chapter/scene order.
 - `File -> Export -> Project HTML...` exports as one `.html` file with semantic headings and paragraphs.
 - `File -> Export -> Project EPUB...` exports as `.epub` and embeds Scene project payload for round-trip Scene import.
+- Project metadata (author/language/publisher/rights/description) is persisted in project JSON and mapped to EPUB OPF metadata fields on export/import.
 - `File -> Project Settings...` opens Project Settings from the menu.
 - Project Settings -> General -> Data Exchange also provides:
   - prompt template export/import
@@ -189,6 +193,11 @@ Script options:
 ## Recent Changes
 
 - Added persistent per-conversation workshop input history and per-scene beat input history (trimmed, deduplicated, capped to 30).
+- Added timestamped project checkpoints with selective restore scope and restore behavior toggles.
+- Added per-scene history viewer (with diff against current scene) and scene-text-only restore from checkpoint.
+- Added `Checkpoints -> Scene History` menu command and editor-header scene history action.
+- Added dedicated `Project Settings -> Text Generation` tab and moved rewrite/multi-model controls there.
+- Added project metadata editing in `Project Settings -> General` and EPUB metadata mapping on export/import.
 - Added `View` menu commands and keybindings:
   - `Cmd-1` toggle binder
   - `Cmd-2` switch to writing (focuses main editor)
