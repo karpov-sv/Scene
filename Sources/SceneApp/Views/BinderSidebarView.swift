@@ -334,6 +334,65 @@ struct BinderSidebarView: View {
 
             Spacer(minLength: 0)
 
+            Menu {
+                let modelOptions = store.generationModelOptions
+                let currentModel = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+                let currentModelKey = normalizedModelMenuKey(currentModel)
+
+                if modelOptions.isEmpty {
+                    Button("No known models") {}
+                        .disabled(true)
+                } else {
+                    ForEach(modelOptions, id: \.self) { model in
+                        let isCurrent = normalizedModelMenuKey(model) == currentModelKey
+                        Button {
+                            store.updateModel(model)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(model)
+                                if isCurrent {
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !currentModel.isEmpty,
+                   !modelOptions.contains(where: {
+                       normalizedModelMenuKey($0) == currentModelKey
+                   }) {
+                    Divider()
+                    Button {} label: {
+                        HStack(spacing: 8) {
+                            Text(currentModel)
+                            Text("(current)")
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                    .disabled(true)
+                }
+
+                if store.project.settings.provider.supportsModelDiscovery {
+                    Divider()
+                    Button {
+                        Task {
+                            await store.refreshAvailableModels(force: true, showErrors: true)
+                        }
+                    } label: {
+                        Label("Refresh Models", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(store.isDiscoveringModels)
+                }
+            } label: {
+                Image(systemName: "cpu")
+            }
+            .buttonStyle(.borderless)
+            .help("Quick Model Selection")
+
             Button {
                 store.showingSettings = true
             } label: {
@@ -347,6 +406,12 @@ struct BinderSidebarView: View {
     }
 
     // MARK: - Chapter Row
+
+    private func normalizedModelMenuKey(_ model: String) -> String {
+        model
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
 
     private func chapterRow(_ chapter: Chapter) -> some View {
         HStack(spacing: 8) {

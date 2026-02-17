@@ -1293,9 +1293,12 @@ final class AppStore: ObservableObject {
 
     func updateModel(_ model: String) {
         project.settings.model = model
-        if normalizedModelSelection(project.settings.generationModelSelection).isEmpty {
-            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSelection = normalizedModelSelection(project.settings.generationModelSelection)
+        if normalizedSelection.isEmpty {
             project.settings.generationModelSelection = trimmed.isEmpty ? [] : [trimmed]
+        } else if normalizedSelection.count == 1, !trimmed.isEmpty, normalizedSelection[0] != trimmed {
+            project.settings.generationModelSelection = [trimmed]
         }
         saveProject(debounced: true)
     }
