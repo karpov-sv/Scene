@@ -2433,6 +2433,7 @@ private struct SceneContextSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var searchQuery: String = ""
+    @State private var isNarrativeStateExpanded: Bool = false
     private static let narrativeUnspecified = "Unspecified"
     private static let narrativePOVValues = [
         "First Person",
@@ -2634,8 +2635,8 @@ private struct SceneContextSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -2647,13 +2648,13 @@ private struct SceneContextSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(16)
+            .padding(8)
 
             Divider()
 
             narrativeStateSection
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
             Divider()
 
@@ -2720,86 +2721,112 @@ private struct SceneContextSheet: View {
     }
 
     private var narrativeStateSection: some View {
-        GroupBox("Narrative State") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 8) {
-                    Text("Scene-local metadata for `{{state}}` and `{{state_*}}` template variables. Empty values are omitted from `<STATE>`.")
-                        .font(.caption)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isNarrativeStateExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isNarrativeStateExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
+                    Text("Narrative State")
+                    if hasNarrativeStateValues {
+                        Text("configured")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer(minLength: 0)
-                    Button("Clear State") {
-                        store.clearSelectedSceneNarrativeState()
-                    }
-                    .disabled(!hasNarrativeStateValues)
                 }
-
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("POV")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Picker("POV", selection: narrativePOVBinding) {
-                            ForEach(narrativePOVOptions, id: \.self) { option in
-                                Text(option).tag(option)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Tense")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Picker("Tense", selection: narrativeTenseBinding) {
-                            ForEach(narrativeTenseOptions, id: \.self) { option in
-                                Text(option).tag(option)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Location")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. North Platform", text: narrativeLocationBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Time")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. Dawn, week 2", text: narrativeTimeBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Goal")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. Convince the guard", text: narrativeGoalBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Emotion")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. Suspicious but hopeful", text: narrativeEmotionBinding)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+
+            if isNarrativeStateExpanded {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("Scene-local metadata for `{{state}}` and `{{state_*}}` template variables. Empty values are omitted from `<STATE>`.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                            Button("Clear State") {
+                                store.clearSelectedSceneNarrativeState()
+                            }
+                            .disabled(!hasNarrativeStateValues)
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("POV")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Picker("POV", selection: narrativePOVBinding) {
+                                    ForEach(narrativePOVOptions, id: \.self) { option in
+                                        Text(option).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .labelsHidden()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Tense")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Picker("Tense", selection: narrativeTenseBinding) {
+                                    ForEach(narrativeTenseOptions, id: \.self) { option in
+                                        Text(option).tag(option)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .labelsHidden()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Location")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                TextField("e.g. North Platform", text: narrativeLocationBinding)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Time")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                TextField("e.g. Dawn, week 2", text: narrativeTimeBinding)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Goal")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                TextField("e.g. Convince the guard", text: narrativeGoalBinding)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Emotion")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                TextField("e.g. Suspicious but hopeful", text: narrativeEmotionBinding)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -2847,7 +2874,7 @@ private struct SceneContextSheet: View {
                 .disabled(selectedCompendiumCount == 0)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -2917,7 +2944,7 @@ private struct SceneContextSheet: View {
                 .disabled(selectedSceneCount == 0)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
 
             Divider()
 
@@ -3073,7 +3100,7 @@ private struct ProseGenerationReviewSheet: View {
                                 candidateCard(candidate)
                             }
                         }
-                        .padding(16)
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -3127,8 +3154,8 @@ private struct ProseGenerationReviewSheet: View {
             }
             .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
