@@ -422,6 +422,8 @@ final class AppStore: ObservableObject {
     @Published var workshopUseSceneContext: Bool = true
     @Published var workshopUseCompendiumContext: Bool = true
     @Published private(set) var workshopLiveUsage: TokenUsage?
+    private var workshopStreamingLastPublishDate: Date = .distantPast
+    private let workshopStreamingPublishInterval: TimeInterval = 0.05
 
     @Published var beatInput: String = ""
     @Published var isGenerating: Bool = false
@@ -3096,8 +3098,12 @@ final class AppStore: ObservableObject {
 
         let workshopPartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
+            workshopStreamingLastPublishDate = .distantPast
             workshopPartialHandler = { [weak self] partial in
                 guard let self, let messageID = streamingAssistantMessageID else { return }
+                let now = Date()
+                guard now.timeIntervalSince(self.workshopStreamingLastPublishDate) >= self.workshopStreamingPublishInterval else { return }
+                self.workshopStreamingLastPublishDate = now
                 self.updateWorkshopMessageContent(sessionID: sessionID, messageID: messageID, content: partial)
                 self.workshopLiveUsage = self.normalizedTokenUsage(
                     from: nil,

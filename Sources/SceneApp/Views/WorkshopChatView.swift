@@ -97,9 +97,7 @@ struct WorkshopChatView: View {
 
     var body: some View {
         rootLayout
-            .sheet(item: $payloadPreview, onDismiss: {
-                shouldStickToBottom = true
-            }) { payloadPreview in
+            .sheet(item: $payloadPreview) { payloadPreview in
                 WorkshopPayloadPreviewSheet(preview: payloadPreview)
             }
     }
@@ -340,7 +338,10 @@ struct WorkshopChatView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            WorkshopMessageText(message: message)
+                            WorkshopMessageText(
+                                message: message,
+                                isStreaming: store.workshopIsGenerating && index == messages.count - 1 && message.role == .assistant
+                            )
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
                             if index == messages.count - 1 {
@@ -498,9 +499,6 @@ struct WorkshopChatView: View {
     private func scheduleScrollToBottom(using proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             scrollMessagesToBottom(using: proxy, animated: false)
-            DispatchQueue.main.async {
-                scrollMessagesToBottom(using: proxy, animated: false)
-            }
         }
     }
 
@@ -748,6 +746,8 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
         private weak var observedScrollView: NSScrollView?
         private var lastOriginY: CGFloat?
         private var isDetachedFromBottom: Bool = false
+        private var lastPublishedStickiness: Bool = true
+        private var isAdjustingClamp: Bool = false
 
         init(tolerance: CGFloat, onStickinessChanged: @escaping (Bool) -> Void) {
             self.tolerance = tolerance
@@ -772,6 +772,7 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
             observedScrollView = scrollView
             lastOriginY = nil
             isDetachedFromBottom = false
+            lastPublishedStickiness = true
 
             let clipView = scrollView.contentView
             clipView.postsBoundsChangedNotifications = true
@@ -794,6 +795,7 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
 
         @objc
         private func handleBoundsDidChange(_ notification: Notification) {
+            guard !isAdjustingClamp else { return }
             guard let scrollView = observedScrollView else { return }
             publishStickiness(for: scrollView)
         }
@@ -815,7 +817,11 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
                 isDetachedFromBottom = false
             }
 
-            onStickinessChanged(!isDetachedFromBottom)
+            let shouldStick = !isDetachedFromBottom
+            if shouldStick != lastPublishedStickiness {
+                lastPublishedStickiness = shouldStick
+                onStickinessChanged(shouldStick)
+            }
         }
 
         private func clampedOriginY(for scrollView: NSScrollView) -> CGFloat {
@@ -827,6 +833,8 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
             let clampedOriginY = min(max(currentOriginY, 0), maxOriginY)
 
             if abs(clampedOriginY - currentOriginY) > 0.5 {
+                isAdjustingClamp = true
+                defer { isAdjustingClamp = false }
                 var origin = clipView.bounds.origin
                 origin.y = clampedOriginY
                 clipView.scroll(to: origin)
@@ -860,10 +868,11 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
 
 private struct WorkshopMessageText: View {
     let message: WorkshopMessage
+    var isStreaming: Bool = false
 
     var body: some View {
         Group {
-            if message.role == .assistant, let rendered = renderedAssistantMarkdown(message.content) {
+            if !isStreaming, message.role == .assistant, let rendered = renderedAssistantMarkdown(message.content) {
                 Text(rendered)
             } else {
                 Text(message.content)
