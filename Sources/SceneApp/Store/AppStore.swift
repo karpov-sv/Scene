@@ -1360,15 +1360,9 @@ final class AppStore: ObservableObject {
 
     func toggleCompendiumEntryForCurrentSceneContext(_ entryID: UUID) {
         guard selectedSceneID != nil else { return }
-
-        var current = selectedSceneContextCompendiumIDs
-        if let index = current.firstIndex(of: entryID) {
-            current.remove(at: index)
-        } else {
-            current.append(entryID)
-        }
-
-        setCompendiumContextIDsForCurrentScene(current)
+        setCompendiumContextIDsForCurrentScene(
+            toggledContextSelectionID(entryID, in: selectedSceneContextCompendiumIDs)
+        )
     }
 
     func clearCurrentSceneContextCompendiumSelection() {
@@ -1390,6 +1384,13 @@ final class AppStore: ObservableObject {
         selectedSceneContextSceneSummaryIDs.contains(sceneID)
     }
 
+    func toggleSceneSummaryForCurrentSceneContext(_ sceneID: UUID) {
+        guard selectedSceneID != nil else { return }
+        setSceneSummaryContextIDsForCurrentScene(
+            toggledContextSelectionID(sceneID, in: selectedSceneContextSceneSummaryIDs)
+        )
+    }
+
     func setSceneSummaryContextIDsForCurrentScene(_ sceneIDs: [UUID]) {
         guard let selectedSceneID else { return }
         setSceneSummaryContextIDs(sceneIDs, for: selectedSceneID)
@@ -1397,6 +1398,13 @@ final class AppStore: ObservableObject {
 
     func isChapterSummarySelectedForCurrentSceneContext(_ chapterID: UUID) -> Bool {
         selectedSceneContextChapterSummaryIDs.contains(chapterID)
+    }
+
+    func toggleChapterSummaryForCurrentSceneContext(_ chapterID: UUID) {
+        guard selectedSceneID != nil else { return }
+        setChapterSummaryContextIDsForCurrentScene(
+            toggledContextSelectionID(chapterID, in: selectedSceneContextChapterSummaryIDs)
+        )
     }
 
     func setChapterSummaryContextIDsForCurrentScene(_ chapterIDs: [UUID]) {
@@ -4275,29 +4283,35 @@ final class AppStore: ObservableObject {
     }
 
     private func rememberBeatInputHistory(_ value: String, for sceneID: UUID?) {
-        guard let sceneID else { return }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return }
-
-        let key = sceneID.uuidString
-        var history = project.beatInputHistoryByScene[key] ?? []
-        history.removeAll { $0 == normalized }
-        history.insert(normalized, at: 0)
-
-        project.beatInputHistoryByScene[key] = normalizedHistoryEntries(history)
+        rememberInputHistoryEntry(
+            value,
+            ownerID: sceneID,
+            storage: \.beatInputHistoryByScene
+        )
     }
 
     private func rememberWorkshopInputHistory(_ value: String, for sessionID: UUID?) {
-        guard let sessionID else { return }
+        rememberInputHistoryEntry(
+            value,
+            ownerID: sessionID,
+            storage: \.workshopInputHistoryBySession
+        )
+    }
+
+    private func rememberInputHistoryEntry(
+        _ value: String,
+        ownerID: UUID?,
+        storage: WritableKeyPath<StoryProject, [String: [String]]>
+    ) {
+        guard let ownerID else { return }
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
 
-        let key = sessionID.uuidString
-        var history = project.workshopInputHistoryBySession[key] ?? []
+        let key = ownerID.uuidString
+        var history = project[keyPath: storage][key] ?? []
         history.removeAll { $0 == normalized }
         history.insert(normalized, at: 0)
-
-        project.workshopInputHistoryBySession[key] = normalizedHistoryEntries(history)
+        project[keyPath: storage][key] = normalizedHistoryEntries(history)
     }
 
     private func normalizedHistoryEntries(_ values: [String]) -> [String] {
@@ -4324,125 +4338,14 @@ final class AppStore: ObservableObject {
     ) {
         var merged = project
 
-        if options.includeText || options.includeSummaries || options.includeNotes {
-            mergeChapterAndSceneContent(
-                from: checkpointProject,
-                into: &merged,
-                options: options
-            )
-        }
-
-        if options.includeText {
-            merged.title = checkpointProject.title
-            merged.metadata = checkpointProject.metadata
-        }
-
-        if options.includeNotes {
-            merged.notes = checkpointProject.notes
-        }
-
-        if options.includeCompendium {
-            merged.compendium = mergeIdentifiedCollection(
-                current: merged.compendium,
-                source: checkpointProject.compendium,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-        }
-
-        if options.includeTemplates {
-            merged.prompts = mergeIdentifiedCollection(
-                current: merged.prompts,
-                source: checkpointProject.prompts,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            let availablePromptIDs = Set(merged.prompts.map(\.id))
-            merged.selectedProsePromptID = resolvedSelectionID(
-                current: merged.selectedProsePromptID,
-                checkpoint: checkpointProject.selectedProsePromptID,
-                validIDs: availablePromptIDs
-            )
-            merged.selectedRewritePromptID = resolvedSelectionID(
-                current: merged.selectedRewritePromptID,
-                checkpoint: checkpointProject.selectedRewritePromptID,
-                validIDs: availablePromptIDs
-            )
-            merged.selectedSummaryPromptID = resolvedSelectionID(
-                current: merged.selectedSummaryPromptID,
-                checkpoint: checkpointProject.selectedSummaryPromptID,
-                validIDs: availablePromptIDs
-            )
-            merged.selectedWorkshopPromptID = resolvedSelectionID(
-                current: merged.selectedWorkshopPromptID,
-                checkpoint: checkpointProject.selectedWorkshopPromptID,
-                validIDs: availablePromptIDs
-            )
-        }
-
-        if options.includeSettings {
-            merged.settings = checkpointProject.settings
-            merged.editorAppearance = checkpointProject.editorAppearance
-            merged.autosaveEnabled = checkpointProject.autosaveEnabled
-        }
-
-        if options.includeWorkshop {
-            merged.workshopSessions = mergeIdentifiedCollection(
-                current: merged.workshopSessions,
-                source: checkpointProject.workshopSessions,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            let availableSessionIDs = Set(merged.workshopSessions.map(\.id))
-            merged.selectedWorkshopSessionID = resolvedSelectionID(
-                current: merged.selectedWorkshopSessionID,
-                checkpoint: checkpointProject.selectedWorkshopSessionID,
-                validIDs: availableSessionIDs
-            )
-            selectedWorkshopSessionID = merged.selectedWorkshopSessionID
-        }
-
-        if options.includeInputHistory {
-            merged.workshopInputHistoryBySession = mergeDictionaryEntries(
-                current: merged.workshopInputHistoryBySession,
-                source: checkpointProject.workshopInputHistoryBySession,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            merged.beatInputHistoryByScene = mergeDictionaryEntries(
-                current: merged.beatInputHistoryByScene,
-                source: checkpointProject.beatInputHistoryByScene,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-        }
-
-        if options.includeSceneContext {
-            merged.sceneContextCompendiumSelection = mergeDictionaryEntries(
-                current: merged.sceneContextCompendiumSelection,
-                source: checkpointProject.sceneContextCompendiumSelection,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            merged.sceneContextSceneSummarySelection = mergeDictionaryEntries(
-                current: merged.sceneContextSceneSummarySelection,
-                source: checkpointProject.sceneContextSceneSummarySelection,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            merged.sceneContextChapterSummarySelection = mergeDictionaryEntries(
-                current: merged.sceneContextChapterSummarySelection,
-                source: checkpointProject.sceneContextChapterSummarySelection,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-            merged.sceneNarrativeStates = mergeDictionaryEntries(
-                current: merged.sceneNarrativeStates,
-                source: checkpointProject.sceneNarrativeStates,
-                restoreDeletedEntries: options.restoreDeletedEntries,
-                deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
-            )
-        }
+        applyCheckpointContentRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointProjectMetadataRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointCompendiumRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointTemplateRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointSettingsRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointWorkshopRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointInputHistoryRestore(from: checkpointProject, into: &merged, options: options)
+        applyCheckpointSceneContextRestore(from: checkpointProject, into: &merged, options: options)
 
         merged.updatedAt = .now
         project = merged
@@ -4452,6 +4355,166 @@ final class AppStore: ObservableObject {
         refreshGlobalSearchResults()
         sceneRichTextRefreshID = UUID()
         saveProject(forceWrite: true)
+    }
+
+    private func applyCheckpointContentRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeText || options.includeSummaries || options.includeNotes else { return }
+        mergeChapterAndSceneContent(
+            from: checkpointProject,
+            into: &merged,
+            options: options
+        )
+    }
+
+    private func applyCheckpointProjectMetadataRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        if options.includeText {
+            merged.title = checkpointProject.title
+            merged.metadata = checkpointProject.metadata
+        }
+        if options.includeNotes {
+            merged.notes = checkpointProject.notes
+        }
+    }
+
+    private func applyCheckpointCompendiumRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeCompendium else { return }
+        merged.compendium = mergeIdentifiedCollection(
+            current: merged.compendium,
+            source: checkpointProject.compendium,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+    }
+
+    private func applyCheckpointTemplateRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeTemplates else { return }
+        merged.prompts = mergeIdentifiedCollection(
+            current: merged.prompts,
+            source: checkpointProject.prompts,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        let availablePromptIDs = Set(merged.prompts.map(\.id))
+        merged.selectedProsePromptID = resolvedSelectionID(
+            current: merged.selectedProsePromptID,
+            checkpoint: checkpointProject.selectedProsePromptID,
+            validIDs: availablePromptIDs
+        )
+        merged.selectedRewritePromptID = resolvedSelectionID(
+            current: merged.selectedRewritePromptID,
+            checkpoint: checkpointProject.selectedRewritePromptID,
+            validIDs: availablePromptIDs
+        )
+        merged.selectedSummaryPromptID = resolvedSelectionID(
+            current: merged.selectedSummaryPromptID,
+            checkpoint: checkpointProject.selectedSummaryPromptID,
+            validIDs: availablePromptIDs
+        )
+        merged.selectedWorkshopPromptID = resolvedSelectionID(
+            current: merged.selectedWorkshopPromptID,
+            checkpoint: checkpointProject.selectedWorkshopPromptID,
+            validIDs: availablePromptIDs
+        )
+    }
+
+    private func applyCheckpointSettingsRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeSettings else { return }
+        merged.settings = checkpointProject.settings
+        merged.editorAppearance = checkpointProject.editorAppearance
+        merged.autosaveEnabled = checkpointProject.autosaveEnabled
+    }
+
+    private func applyCheckpointWorkshopRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeWorkshop else { return }
+        merged.workshopSessions = mergeIdentifiedCollection(
+            current: merged.workshopSessions,
+            source: checkpointProject.workshopSessions,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        let availableSessionIDs = Set(merged.workshopSessions.map(\.id))
+        merged.selectedWorkshopSessionID = resolvedSelectionID(
+            current: merged.selectedWorkshopSessionID,
+            checkpoint: checkpointProject.selectedWorkshopSessionID,
+            validIDs: availableSessionIDs
+        )
+        selectedWorkshopSessionID = merged.selectedWorkshopSessionID
+    }
+
+    private func applyCheckpointInputHistoryRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeInputHistory else { return }
+        merged.workshopInputHistoryBySession = mergeDictionaryEntries(
+            current: merged.workshopInputHistoryBySession,
+            source: checkpointProject.workshopInputHistoryBySession,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.beatInputHistoryByScene = mergeDictionaryEntries(
+            current: merged.beatInputHistoryByScene,
+            source: checkpointProject.beatInputHistoryByScene,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+    }
+
+    private func applyCheckpointSceneContextRestore(
+        from checkpointProject: StoryProject,
+        into merged: inout StoryProject,
+        options: CheckpointRestoreOptions
+    ) {
+        guard options.includeSceneContext else { return }
+        merged.sceneContextCompendiumSelection = mergeDictionaryEntries(
+            current: merged.sceneContextCompendiumSelection,
+            source: checkpointProject.sceneContextCompendiumSelection,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.sceneContextSceneSummarySelection = mergeDictionaryEntries(
+            current: merged.sceneContextSceneSummarySelection,
+            source: checkpointProject.sceneContextSceneSummarySelection,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.sceneContextChapterSummarySelection = mergeDictionaryEntries(
+            current: merged.sceneContextChapterSummarySelection,
+            source: checkpointProject.sceneContextChapterSummarySelection,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.sceneNarrativeStates = mergeDictionaryEntries(
+            current: merged.sceneNarrativeStates,
+            source: checkpointProject.sceneNarrativeStates,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
     }
 
     private func mergeChapterAndSceneContent(
@@ -5535,6 +5598,24 @@ final class AppStore: ObservableObject {
         var scenes: [EPUBSceneBuilder] = []
         var pendingParagraphs: [String] = []
 
+        func appendParagraph(_ paragraph: String) {
+            if scenes.isEmpty {
+                pendingParagraphs.append(paragraph)
+            } else {
+                scenes[scenes.count - 1].paragraphs.append(paragraph)
+            }
+        }
+
+        func flushPendingParagraphsIntoScenes() {
+            guard !pendingParagraphs.isEmpty else { return }
+            if scenes.isEmpty {
+                scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
+            } else {
+                scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
+            }
+            pendingParagraphs = []
+        }
+
         for match in matches {
             guard let typeRange = Range(match.range(at: 1), in: source),
                   let valueRange = Range(match.range(at: 2), in: source) else {
@@ -5549,40 +5630,21 @@ final class AppStore: ObservableObject {
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 let headingLevel = Int(elementType.dropFirst()) ?? 1
                 if shouldTreatEPUBHeadingAsSceneTitle(textValue, headingLevel: headingLevel) {
-                    if !pendingParagraphs.isEmpty {
-                        if scenes.isEmpty {
-                            scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
-                        } else {
-                            scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
-                        }
-                        pendingParagraphs = []
-                    }
+                    flushPendingParagraphsIntoScenes()
                     scenes.append(EPUBSceneBuilder(title: textValue, paragraphs: []))
-                } else if scenes.isEmpty {
-                    pendingParagraphs.append(textValue)
                 } else {
-                    scenes[scenes.count - 1].paragraphs.append(textValue)
+                    appendParagraph(textValue)
                 }
 
             case "p", "li", "blockquote":
-                if scenes.isEmpty {
-                    pendingParagraphs.append(textValue)
-                } else {
-                    scenes[scenes.count - 1].paragraphs.append(textValue)
-                }
+                appendParagraph(textValue)
 
             default:
                 break
             }
         }
 
-        if !pendingParagraphs.isEmpty {
-            if scenes.isEmpty {
-                scenes.append(EPUBSceneBuilder(title: "Scene 1", paragraphs: pendingParagraphs))
-            } else {
-                scenes[scenes.count - 1].paragraphs.append(contentsOf: pendingParagraphs)
-            }
-        }
+        flushPendingParagraphsIntoScenes()
 
         if scenes.isEmpty {
             let bodyText = extractEPUBBodyText(from: source)
@@ -7056,61 +7118,87 @@ final class AppStore: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func setCompendiumContextIDs(_ entryIDs: [UUID], for sceneID: UUID) {
-        let validEntryIDs = Set(project.compendium.map(\.id))
+    private func toggledContextSelectionID(_ id: UUID, in currentIDs: [UUID]) -> [UUID] {
+        var updated = currentIDs
+        if let index = updated.firstIndex(of: id) {
+            updated.remove(at: index)
+        } else {
+            updated.append(id)
+        }
+        return updated
+    }
+
+    private func normalizedContextSelectionIDs(_ ids: [UUID], validIDs: Set<UUID>) -> [UUID] {
         var deduplicated: [UUID] = []
         var seen = Set<UUID>()
-        for entryID in entryIDs where validEntryIDs.contains(entryID) {
-            if seen.insert(entryID).inserted {
-                deduplicated.append(entryID)
+
+        for id in ids where validIDs.contains(id) {
+            if seen.insert(id).inserted {
+                deduplicated.append(id)
             }
         }
 
+        return deduplicated
+    }
+
+    private func setSceneContextSelection(
+        _ ids: [UUID],
+        for sceneID: UUID,
+        validIDs: Set<UUID>,
+        storage: WritableKeyPath<StoryProject, [String: [UUID]]>
+    ) {
+        let normalized = normalizedContextSelectionIDs(ids, validIDs: validIDs)
         let key = sceneID.uuidString
-        if deduplicated.isEmpty {
-            project.sceneContextCompendiumSelection.removeValue(forKey: key)
+        if normalized.isEmpty {
+            project[keyPath: storage].removeValue(forKey: key)
         } else {
-            project.sceneContextCompendiumSelection[key] = deduplicated
+            project[keyPath: storage][key] = normalized
         }
         saveProject(debounced: true)
+    }
+
+    private func sanitizedSceneContextSelection(
+        _ selection: [String: [UUID]],
+        validSceneKeys: Set<String>,
+        validIDs: Set<UUID>
+    ) -> [String: [UUID]] {
+        var sanitized: [String: [UUID]] = [:]
+
+        for (sceneKey, ids) in selection where validSceneKeys.contains(sceneKey) {
+            let normalized = normalizedContextSelectionIDs(ids, validIDs: validIDs)
+            if !normalized.isEmpty {
+                sanitized[sceneKey] = normalized
+            }
+        }
+
+        return sanitized
+    }
+
+    private func setCompendiumContextIDs(_ entryIDs: [UUID], for sceneID: UUID) {
+        setSceneContextSelection(
+            entryIDs,
+            for: sceneID,
+            validIDs: Set(project.compendium.map(\.id)),
+            storage: \.sceneContextCompendiumSelection
+        )
     }
 
     private func setSceneSummaryContextIDs(_ sceneIDs: [UUID], for sceneID: UUID) {
-        let validSceneIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
-        var deduplicated: [UUID] = []
-        var seen = Set<UUID>()
-        for candidateID in sceneIDs where validSceneIDs.contains(candidateID) {
-            if seen.insert(candidateID).inserted {
-                deduplicated.append(candidateID)
-            }
-        }
-
-        let key = sceneID.uuidString
-        if deduplicated.isEmpty {
-            project.sceneContextSceneSummarySelection.removeValue(forKey: key)
-        } else {
-            project.sceneContextSceneSummarySelection[key] = deduplicated
-        }
-        saveProject(debounced: true)
+        setSceneContextSelection(
+            sceneIDs,
+            for: sceneID,
+            validIDs: Set(project.chapters.flatMap(\.scenes).map(\.id)),
+            storage: \.sceneContextSceneSummarySelection
+        )
     }
 
     private func setChapterSummaryContextIDs(_ chapterIDs: [UUID], for sceneID: UUID) {
-        let validChapterIDs = Set(project.chapters.map(\.id))
-        var deduplicated: [UUID] = []
-        var seen = Set<UUID>()
-        for candidateID in chapterIDs where validChapterIDs.contains(candidateID) {
-            if seen.insert(candidateID).inserted {
-                deduplicated.append(candidateID)
-            }
-        }
-
-        let key = sceneID.uuidString
-        if deduplicated.isEmpty {
-            project.sceneContextChapterSummarySelection.removeValue(forKey: key)
-        } else {
-            project.sceneContextChapterSummarySelection[key] = deduplicated
-        }
-        saveProject(debounced: true)
+        setSceneContextSelection(
+            chapterIDs,
+            for: sceneID,
+            validIDs: Set(project.chapters.map(\.id)),
+            storage: \.sceneContextChapterSummarySelection
+        )
     }
 
     private func compendiumEntries(forIDs entryIDs: [UUID]) -> [CompendiumEntry] {
@@ -7200,59 +7288,26 @@ final class AppStore: ObservableObject {
     }
 
     private func sanitizeSceneContextSelections() {
-        let validSceneIDs = Set(
+        let validSceneKeys = Set(
             project.chapters
                 .flatMap(\.scenes)
                 .map(\.id.uuidString)
         )
-        let validEntryIDs = Set(project.compendium.map(\.id))
-        let validSceneSummaryIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
-        let validChapterSummaryIDs = Set(project.chapters.map(\.id))
-
-        var sanitized: [String: [UUID]] = [:]
-        for (sceneKey, ids) in project.sceneContextCompendiumSelection where validSceneIDs.contains(sceneKey) {
-            var unique: [UUID] = []
-            var seen = Set<UUID>()
-            for id in ids where validEntryIDs.contains(id) {
-                if seen.insert(id).inserted {
-                    unique.append(id)
-                }
-            }
-            if !unique.isEmpty {
-                sanitized[sceneKey] = unique
-            }
-        }
-        project.sceneContextCompendiumSelection = sanitized
-
-        var sanitizedSceneSummaries: [String: [UUID]] = [:]
-        for (sceneKey, ids) in project.sceneContextSceneSummarySelection where validSceneIDs.contains(sceneKey) {
-            var unique: [UUID] = []
-            var seen = Set<UUID>()
-            for id in ids where validSceneSummaryIDs.contains(id) {
-                if seen.insert(id).inserted {
-                    unique.append(id)
-                }
-            }
-            if !unique.isEmpty {
-                sanitizedSceneSummaries[sceneKey] = unique
-            }
-        }
-        project.sceneContextSceneSummarySelection = sanitizedSceneSummaries
-
-        var sanitizedChapterSummaries: [String: [UUID]] = [:]
-        for (sceneKey, ids) in project.sceneContextChapterSummarySelection where validSceneIDs.contains(sceneKey) {
-            var unique: [UUID] = []
-            var seen = Set<UUID>()
-            for id in ids where validChapterSummaryIDs.contains(id) {
-                if seen.insert(id).inserted {
-                    unique.append(id)
-                }
-            }
-            if !unique.isEmpty {
-                sanitizedChapterSummaries[sceneKey] = unique
-            }
-        }
-        project.sceneContextChapterSummarySelection = sanitizedChapterSummaries
+        project.sceneContextCompendiumSelection = sanitizedSceneContextSelection(
+            project.sceneContextCompendiumSelection,
+            validSceneKeys: validSceneKeys,
+            validIDs: Set(project.compendium.map(\.id))
+        )
+        project.sceneContextSceneSummarySelection = sanitizedSceneContextSelection(
+            project.sceneContextSceneSummarySelection,
+            validSceneKeys: validSceneKeys,
+            validIDs: Set(project.chapters.flatMap(\.scenes).map(\.id))
+        )
+        project.sceneContextChapterSummarySelection = sanitizedSceneContextSelection(
+            project.sceneContextChapterSummarySelection,
+            validSceneKeys: validSceneKeys,
+            validIDs: Set(project.chapters.map(\.id))
+        )
     }
 
     private func sanitizeSceneNarrativeStates() {

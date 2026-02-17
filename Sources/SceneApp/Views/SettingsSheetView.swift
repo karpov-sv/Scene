@@ -50,6 +50,20 @@ struct SettingsSheetView: View {
         case verticalMargin
     }
 
+    private enum MetadataField {
+        case author
+        case language
+        case publisher
+        case rights
+        case description
+    }
+
+    private enum PromptField {
+        case title
+        case userTemplate
+        case systemTemplate
+    }
+
     private struct PromptVariableItem: Identifiable {
         let token: String
         let meaning: String
@@ -82,6 +96,65 @@ struct SettingsSheetView: View {
     @State private var vPaddingDraft: String = ""
     @FocusState private var focusedEditorSpacingField: EditorSpacingField?
 
+    private func metadataBinding(_ field: MetadataField) -> Binding<String> {
+        Binding(
+            get: {
+                switch field {
+                case .author:
+                    return store.project.metadata.author ?? ""
+                case .language:
+                    return store.project.metadata.language ?? ""
+                case .publisher:
+                    return store.project.metadata.publisher ?? ""
+                case .rights:
+                    return store.project.metadata.rights ?? ""
+                case .description:
+                    return store.project.metadata.description ?? ""
+                }
+            },
+            set: { value in
+                switch field {
+                case .author:
+                    store.updateProjectAuthor(value)
+                case .language:
+                    store.updateProjectLanguage(value)
+                case .publisher:
+                    store.updateProjectPublisher(value)
+                case .rights:
+                    store.updateProjectRights(value)
+                case .description:
+                    store.updateProjectDescription(value)
+                }
+            }
+        )
+    }
+
+    private func promptBinding(_ promptID: UUID, field: PromptField) -> Binding<String> {
+        Binding(
+            get: {
+                guard let prompt = store.project.prompts.first(where: { $0.id == promptID }) else { return "" }
+                switch field {
+                case .title:
+                    return prompt.title
+                case .userTemplate:
+                    return prompt.userTemplate
+                case .systemTemplate:
+                    return prompt.systemTemplate
+                }
+            },
+            set: { value in
+                switch field {
+                case .title:
+                    store.updatePromptTitle(promptID, value: value)
+                case .userTemplate:
+                    store.updatePromptUserTemplate(promptID, value: value)
+                case .systemTemplate:
+                    store.updatePromptSystemTemplate(promptID, value: value)
+                }
+            }
+        )
+    }
+
     private var projectTitleBinding: Binding<String> {
         Binding(
             get: { store.project.title },
@@ -90,38 +163,23 @@ struct SettingsSheetView: View {
     }
 
     private var projectAuthorBinding: Binding<String> {
-        Binding(
-            get: { store.project.metadata.author ?? "" },
-            set: { store.updateProjectAuthor($0) }
-        )
+        metadataBinding(.author)
     }
 
     private var projectLanguageBinding: Binding<String> {
-        Binding(
-            get: { store.project.metadata.language ?? "" },
-            set: { store.updateProjectLanguage($0) }
-        )
+        metadataBinding(.language)
     }
 
     private var projectPublisherBinding: Binding<String> {
-        Binding(
-            get: { store.project.metadata.publisher ?? "" },
-            set: { store.updateProjectPublisher($0) }
-        )
+        metadataBinding(.publisher)
     }
 
     private var projectRightsBinding: Binding<String> {
-        Binding(
-            get: { store.project.metadata.rights ?? "" },
-            set: { store.updateProjectRights($0) }
-        )
+        metadataBinding(.rights)
     }
 
     private var projectDescriptionBinding: Binding<String> {
-        Binding(
-            get: { store.project.metadata.description ?? "" },
-            set: { store.updateProjectDescription($0) }
-        )
+        metadataBinding(.description)
     }
 
     private var providerBinding: Binding<AIProvider> {
@@ -1436,36 +1494,15 @@ struct SettingsSheetView: View {
     }
 
     private func promptTitleBinding(_ promptID: UUID) -> Binding<String> {
-        Binding(
-            get: {
-                store.project.prompts.first(where: { $0.id == promptID })?.title ?? ""
-            },
-            set: { value in
-                store.updatePromptTitle(promptID, value: value)
-            }
-        )
+        promptBinding(promptID, field: .title)
     }
 
     private func promptUserTemplateBinding(_ promptID: UUID) -> Binding<String> {
-        Binding(
-            get: {
-                store.project.prompts.first(where: { $0.id == promptID })?.userTemplate ?? ""
-            },
-            set: { value in
-                store.updatePromptUserTemplate(promptID, value: value)
-            }
-        )
+        promptBinding(promptID, field: .userTemplate)
     }
 
     private func promptSystemTemplateBinding(_ promptID: UUID) -> Binding<String> {
-        Binding(
-            get: {
-                store.project.prompts.first(where: { $0.id == promptID })?.systemTemplate ?? ""
-            },
-            set: { value in
-                store.updatePromptSystemTemplate(promptID, value: value)
-            }
-        )
+        promptBinding(promptID, field: .systemTemplate)
     }
 
     @ViewBuilder

@@ -3410,14 +3410,8 @@ private struct SceneContextSheet: View {
         Binding(
             get: { store.isCompendiumEntrySelectedForCurrentSceneContext(entryID) },
             set: { isSelected in
-                let current = store.selectedSceneContextCompendiumIDs
-                if isSelected {
-                    if !current.contains(entryID) {
-                        store.setCompendiumContextIDsForCurrentScene(current + [entryID])
-                    }
-                } else {
-                    store.setCompendiumContextIDsForCurrentScene(current.filter { $0 != entryID })
-                }
+                guard isSelected != store.isCompendiumEntrySelectedForCurrentSceneContext(entryID) else { return }
+                store.toggleCompendiumEntryForCurrentSceneContext(entryID)
             }
         )
     }
@@ -3426,14 +3420,8 @@ private struct SceneContextSheet: View {
         Binding(
             get: { store.isSceneSummarySelectedForCurrentSceneContext(sceneID) },
             set: { isSelected in
-                let current = store.selectedSceneContextSceneSummaryIDs
-                if isSelected {
-                    if !current.contains(sceneID) {
-                        store.setSceneSummaryContextIDsForCurrentScene(current + [sceneID])
-                    }
-                } else {
-                    store.setSceneSummaryContextIDsForCurrentScene(current.filter { $0 != sceneID })
-                }
+                guard isSelected != store.isSceneSummarySelectedForCurrentSceneContext(sceneID) else { return }
+                store.toggleSceneSummaryForCurrentSceneContext(sceneID)
             }
         )
     }
@@ -3442,14 +3430,8 @@ private struct SceneContextSheet: View {
         Binding(
             get: { store.isChapterSummarySelectedForCurrentSceneContext(chapterID) },
             set: { isSelected in
-                let current = store.selectedSceneContextChapterSummaryIDs
-                if isSelected {
-                    if !current.contains(chapterID) {
-                        store.setChapterSummaryContextIDsForCurrentScene(current + [chapterID])
-                    }
-                } else {
-                    store.setChapterSummaryContextIDsForCurrentScene(current.filter { $0 != chapterID })
-                }
+                guard isSelected != store.isChapterSummarySelectedForCurrentSceneContext(chapterID) else { return }
+                store.toggleChapterSummaryForCurrentSceneContext(chapterID)
             }
         )
     }
