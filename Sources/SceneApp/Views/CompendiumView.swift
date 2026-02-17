@@ -4,11 +4,21 @@ import AppKit
 struct CompendiumView: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedCategory: CompendiumCategory = .characters
+    @State private var isAlphabeticalSortAscending: Bool = true
     @State private var confirmDeleteEntry = false
     @State private var confirmClearCompendium = false
 
     private var filteredEntries: [CompendiumEntry] {
-        store.entries(in: selectedCategory)
+        let entries = store.entries(in: selectedCategory).sorted { lhs, rhs in
+            let lhsTitle = entryTitle(lhs)
+            let rhsTitle = entryTitle(rhs)
+            let comparison = lhsTitle.localizedCaseInsensitiveCompare(rhsTitle)
+            if comparison != .orderedSame {
+                return comparison == .orderedAscending
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+        return isAlphabeticalSortAscending ? entries : entries.reversed()
     }
 
     private var entryTitleBinding: Binding<String> {
@@ -103,6 +113,17 @@ struct CompendiumView: View {
                 .help("Delete Entry")
 
                 Spacer()
+
+                Button {
+                    isAlphabeticalSortAscending.toggle()
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .help(
+                    isAlphabeticalSortAscending
+                        ? "Sorted A-Z. Click to switch to Z-A."
+                        : "Sorted Z-A. Click to switch to A-Z."
+                )
 
                 Menu {
                     Button("Export Compendium…") {
