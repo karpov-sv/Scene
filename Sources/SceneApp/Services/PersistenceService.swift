@@ -246,6 +246,7 @@ final class ProjectPersistence {
         var sceneContextCompendiumSelection: [String: [UUID]]
         var sceneContextSceneSummarySelection: [String: [UUID]]?
         var sceneContextChapterSummarySelection: [String: [UUID]]?
+        var sceneNarrativeStates: [String: SceneNarrativeState]?
         var settings: GenerationSettings
         var editorAppearance: EditorAppearanceSettings?
         var chapters: [ChapterRecord]
@@ -506,6 +507,7 @@ final class ProjectPersistence {
             sceneContextCompendiumSelection: manifest.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
+            sceneNarrativeStates: manifest.sceneNarrativeStates ?? [:],
             settings: manifest.settings,
             editorAppearance: manifest.editorAppearance ?? .default,
             updatedAt: manifest.updatedAt
@@ -638,6 +640,7 @@ final class ProjectPersistence {
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,
+            sceneNarrativeStates: project.sceneNarrativeStates,
             settings: project.settings,
             editorAppearance: project.editorAppearance,
             chapters: chapterRecords,

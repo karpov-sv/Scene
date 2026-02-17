@@ -2433,6 +2433,17 @@ private struct SceneContextSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var searchQuery: String = ""
+    private static let narrativeUnspecified = "Unspecified"
+    private static let narrativePOVValues = [
+        "First Person",
+        "Third Person Limited",
+        "Third Person Omniscient"
+    ]
+    private static let narrativeTenseValues = [
+        "Past",
+        "Present",
+        "Future"
+    ]
 
     private var selectedCount: Int {
         store.selectedSceneContextTotalCount
@@ -2516,6 +2527,89 @@ private struct SceneContextSheet: View {
         allSceneContextIDs.count + allChapterContextIDs.count
     }
 
+    private var selectedNarrativeState: SceneNarrativeState {
+        store.selectedSceneNarrativeState
+    }
+
+    private var hasNarrativeStateValues: Bool {
+        [
+            selectedNarrativeState.pov,
+            selectedNarrativeState.tense,
+            selectedNarrativeState.location,
+            selectedNarrativeState.time,
+            selectedNarrativeState.goal,
+            selectedNarrativeState.emotion
+        ].contains(where: isNarrativeValueDefined)
+    }
+
+    private var narrativePOVOptions: [String] {
+        narrativePickerOptions(
+            baseOptions: Self.narrativePOVValues,
+            selectedValue: selectedNarrativeState.pov
+        )
+    }
+
+    private var narrativeTenseOptions: [String] {
+        narrativePickerOptions(
+            baseOptions: Self.narrativeTenseValues,
+            selectedValue: selectedNarrativeState.tense
+        )
+    }
+
+    private var narrativePOVBinding: Binding<String> {
+        Binding(
+            get: {
+                normalizedNarrativeValue(selectedNarrativeState.pov) ?? Self.narrativeUnspecified
+            },
+            set: { value in
+                store.updateSelectedSceneNarrativePOV(
+                    value == Self.narrativeUnspecified ? nil : value
+                )
+            }
+        )
+    }
+
+    private var narrativeTenseBinding: Binding<String> {
+        Binding(
+            get: {
+                normalizedNarrativeValue(selectedNarrativeState.tense) ?? Self.narrativeUnspecified
+            },
+            set: { value in
+                store.updateSelectedSceneNarrativeTense(
+                    value == Self.narrativeUnspecified ? nil : value
+                )
+            }
+        )
+    }
+
+    private var narrativeLocationBinding: Binding<String> {
+        Binding(
+            get: { selectedNarrativeState.location ?? "" },
+            set: { store.updateSelectedSceneNarrativeLocation($0) }
+        )
+    }
+
+    private var narrativeTimeBinding: Binding<String> {
+        Binding(
+            get: { selectedNarrativeState.time ?? "" },
+            set: { store.updateSelectedSceneNarrativeTime($0) }
+        )
+    }
+
+    private var narrativeGoalBinding: Binding<String> {
+        Binding(
+            get: { selectedNarrativeState.goal ?? "" },
+            set: { store.updateSelectedSceneNarrativeGoal($0) }
+        )
+    }
+
+    private var narrativeEmotionBinding: Binding<String> {
+        Binding(
+            get: { selectedNarrativeState.emotion ?? "" },
+            set: { store.updateSelectedSceneNarrativeEmotion($0) }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center) {
@@ -2554,6 +2648,12 @@ private struct SceneContextSheet: View {
                     .foregroundStyle(.secondary)
             }
             .padding(16)
+
+            Divider()
+
+            narrativeStateSection
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
 
             Divider()
 
@@ -2617,6 +2717,112 @@ private struct SceneContextSheet: View {
             option.chapterTitle.lowercased().contains(query)
                 || option.summary.lowercased().contains(query)
         }
+    }
+
+    private var narrativeStateSection: some View {
+        GroupBox("Narrative State") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("Scene-local metadata for `{{state}}` and `{{state_*}}` template variables. Empty values are omitted from `<STATE>`.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Clear State") {
+                        store.clearSelectedSceneNarrativeState()
+                    }
+                    .disabled(!hasNarrativeStateValues)
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("POV")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("POV", selection: narrativePOVBinding) {
+                            ForEach(narrativePOVOptions, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Tense")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("Tense", selection: narrativeTenseBinding) {
+                            ForEach(narrativeTenseOptions, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Location")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. North Platform", text: narrativeLocationBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Time")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. Dawn, week 2", text: narrativeTimeBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Goal")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. Convince the guard", text: narrativeGoalBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Emotion")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("e.g. Suspicious but hopeful", text: narrativeEmotionBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func narrativePickerOptions(baseOptions: [String], selectedValue: String?) -> [String] {
+        var options: [String] = [Self.narrativeUnspecified]
+        options.append(contentsOf: baseOptions)
+
+        if let selected = normalizedNarrativeValue(selectedValue),
+           !options.contains(selected) {
+            options.append(selected)
+        }
+
+        return options
+    }
+
+    private func isNarrativeValueDefined(_ value: String?) -> Bool {
+        normalizedNarrativeValue(value) != nil
+    }
+
+    private func normalizedNarrativeValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 
     private var compendiumColumn: some View {

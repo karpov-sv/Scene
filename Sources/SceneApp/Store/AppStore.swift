@@ -1038,6 +1038,10 @@ final class AppStore: ObservableObject {
             + selectedSceneContextChapterSummaryIDs.count
     }
 
+    var selectedSceneNarrativeState: SceneNarrativeState {
+        sceneNarrativeState(for: selectedSceneID)
+    }
+
     // MARK: - Project Lifecycle
 
     func createNewProject(at destinationURL: URL) throws {
@@ -1187,6 +1191,36 @@ final class AppStore: ObservableObject {
     func setChapterSummaryContextIDsForCurrentScene(_ chapterIDs: [UUID]) {
         guard let selectedSceneID else { return }
         setChapterSummaryContextIDs(chapterIDs, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneNarrativePOV(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.pov, value: value)
+    }
+
+    func updateSelectedSceneNarrativeTense(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.tense, value: value)
+    }
+
+    func updateSelectedSceneNarrativeLocation(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.location, value: value)
+    }
+
+    func updateSelectedSceneNarrativeTime(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.time, value: value)
+    }
+
+    func updateSelectedSceneNarrativeGoal(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.goal, value: value)
+    }
+
+    func updateSelectedSceneNarrativeEmotion(_ value: String?) {
+        updateSelectedSceneNarrativeStateValue(\.emotion, value: value)
+    }
+
+    func clearSelectedSceneNarrativeState() {
+        guard let selectedSceneID else { return }
+        project.sceneNarrativeStates.removeValue(forKey: selectedSceneID.uuidString)
+        saveProject(debounced: true)
     }
 
     func selectCompendiumEntry(_ entryID: UUID?) {
@@ -1860,6 +1894,7 @@ final class AppStore: ObservableObject {
         importedProject.sceneContextCompendiumSelection = [:]
         importedProject.sceneContextSceneSummarySelection = [:]
         importedProject.sceneContextChapterSummarySelection = [:]
+        importedProject.sceneNarrativeStates = [:]
         importedProject.workshopInputHistoryBySession = [:]
         importedProject.beatInputHistoryByScene = [:]
         importedProject.selectedSceneID = chapters.first?.scenes.first?.id
@@ -3042,6 +3077,7 @@ final class AppStore: ObservableObject {
                 fallbackTemplate: fallbackUserTemplate(for: prompt, category: .prose),
                 beat: beatPreview,
                 selection: "",
+                sceneID: scenePreview.sceneID,
                 sceneExcerpt: sceneExcerpt,
                 sceneFullText: scenePreview.sceneContent,
                 sceneTitle: scenePreview.sceneTitle,
@@ -3071,6 +3107,7 @@ final class AppStore: ObservableObject {
                 fallbackTemplate: fallbackUserTemplate(for: prompt, category: .rewrite),
                 beat: beatPreview,
                 selection: selectionPreview,
+                sceneID: scenePreview.sceneID,
                 sceneExcerpt: sceneExcerpt,
                 sceneFullText: scenePreview.sceneContent,
                 sceneTitle: scenePreview.sceneTitle,
@@ -3099,6 +3136,7 @@ final class AppStore: ObservableObject {
                     fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
+                    sceneID: scenePreview.sceneID,
                     sceneExcerpt: sceneExcerpt,
                     sceneFullText: scenePreview.sceneContent,
                     sceneTitle: scenePreview.sceneTitle,
@@ -3128,6 +3166,7 @@ final class AppStore: ObservableObject {
                     fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
+                    sceneID: nil,
                     sceneExcerpt: sceneSummaryContext,
                     sceneFullText: sceneSummaryContext,
                     sceneTitle: "Chapter Summary Input",
@@ -3150,6 +3189,7 @@ final class AppStore: ObservableObject {
                     fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
                     beat: "",
                     selection: "",
+                    sceneID: nil,
                     sceneExcerpt: "No source text available.",
                     sceneFullText: "No source text available.",
                     sceneTitle: "No Scene",
@@ -3216,6 +3256,7 @@ final class AppStore: ObservableObject {
                 fallbackTemplate: fallbackUserTemplate(for: prompt, category: .workshop),
                 beat: "",
                 selection: pendingInput,
+                sceneID: workshopUseSceneContext ? scenePreview.sceneID : nil,
                 sceneExcerpt: sceneContext,
                 sceneFullText: sceneFullText,
                 sceneTitle: scenePreview.sceneTitle,
@@ -3749,6 +3790,7 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackUserTemplate(for: activePrompt, category: .prose),
             beat: beat,
             selection: "",
+            sceneID: scene.id,
             sceneExcerpt: sceneContext,
             sceneFullText: scene.content,
             sceneTitle: displaySceneTitle(scene),
@@ -3803,6 +3845,7 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackUserTemplate(for: prompt, category: .rewrite),
             beat: rewriteBeat,
             selection: selectedText,
+            sceneID: scene.id,
             sceneExcerpt: sceneContext,
             sceneFullText: scene.content,
             sceneTitle: displaySceneTitle(scene),
@@ -3903,6 +3946,7 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
             beat: "",
             selection: "",
+            sceneID: scene.id,
             sceneExcerpt: sceneContext,
             sceneFullText: scene.content,
             sceneTitle: displaySceneTitle(scene),
@@ -3950,6 +3994,7 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackUserTemplate(for: prompt, category: .summary),
             beat: "",
             selection: "",
+            sceneID: nil,
             sceneExcerpt: sceneSummaryContext,
             sceneFullText: sceneSummaryContext,
             sceneTitle: "Chapter Summary Input",
@@ -5204,6 +5249,7 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackUserTemplate(for: prompt, category: .workshop),
             beat: "",
             selection: trimmedPending ?? "",
+            sceneID: workshopUseSceneContext ? selectedScene?.id : nil,
             sceneExcerpt: sceneContext,
             sceneFullText: sceneFullText,
             sceneTitle: sceneTitle,
@@ -5912,6 +5958,102 @@ final class AppStore: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private enum NarrativeStateBlockStyle {
+        case xml
+        case compact
+    }
+
+    private func narrativeStateBlockStyle(
+        template: String,
+        fallbackTemplate: String
+    ) -> NarrativeStateBlockStyle {
+        let resolvedTemplate = template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? fallbackTemplate
+            : template
+
+        // Compact templates use <<<TAG>>> / <<<END_TAG>>> delimiters.
+        if resolvedTemplate.contains("<<<") && resolvedTemplate.contains(">>>") {
+            return .compact
+        }
+
+        return .xml
+    }
+
+    private func narrativeStateVariables(
+        for sceneID: UUID?,
+        style: NarrativeStateBlockStyle
+    ) -> [String: String] {
+        guard let normalized = normalizedSceneNarrativeState(sceneNarrativeState(for: sceneID)) else {
+            return [
+                "state": "",
+                "state_pov": "",
+                "state_tense": "",
+                "state_location": "",
+                "state_time": "",
+                "state_goal": "",
+                "state_emotion": ""
+            ]
+        }
+
+        let stateBlock: String = {
+            switch style {
+            case .xml:
+                var lines: [String] = []
+                if let pov = normalized.pov {
+                    lines.append("  <POV>\(pov)</POV>")
+                }
+                if let tense = normalized.tense {
+                    lines.append("  <TENSE>\(tense)</TENSE>")
+                }
+                if let location = normalized.location {
+                    lines.append("  <LOCATION>\(location)</LOCATION>")
+                }
+                if let time = normalized.time {
+                    lines.append("  <TIME>\(time)</TIME>")
+                }
+                if let goal = normalized.goal {
+                    lines.append("  <GOAL>\(goal)</GOAL>")
+                }
+                if let emotion = normalized.emotion {
+                    lines.append("  <EMOTION>\(emotion)</EMOTION>")
+                }
+                return lines.isEmpty ? "" : "<STATE>\n\(lines.joined(separator: "\n"))\n</STATE>"
+
+            case .compact:
+                var lines: [String] = []
+                if let pov = normalized.pov {
+                    lines.append("<<<POV>>>\n\(pov)\n<<<END_POV>>>")
+                }
+                if let tense = normalized.tense {
+                    lines.append("<<<TENSE>>>\n\(tense)\n<<<END_TENSE>>>")
+                }
+                if let location = normalized.location {
+                    lines.append("<<<LOCATION>>>\n\(location)\n<<<END_LOCATION>>>")
+                }
+                if let time = normalized.time {
+                    lines.append("<<<TIME>>>\n\(time)\n<<<END_TIME>>>")
+                }
+                if let goal = normalized.goal {
+                    lines.append("<<<GOAL>>>\n\(goal)\n<<<END_GOAL>>>")
+                }
+                if let emotion = normalized.emotion {
+                    lines.append("<<<EMOTION>>>\n\(emotion)\n<<<END_EMOTION>>>")
+                }
+                return lines.isEmpty ? "" : "<<<STATE>>>\n\(lines.joined(separator: "\n\n"))\n<<<END_STATE>>>"
+            }
+        }()
+
+        return [
+            "state": stateBlock,
+            "state_pov": normalized.pov ?? "",
+            "state_tense": normalized.tense ?? "",
+            "state_location": normalized.location ?? "",
+            "state_time": normalized.time ?? "",
+            "state_goal": normalized.goal ?? "",
+            "state_emotion": normalized.emotion ?? ""
+        ]
+    }
+
     private func resolvePromptPreviewSceneContext() -> PromptPreviewSceneContext {
         if let selectedScene {
             return PromptPreviewSceneContext(
@@ -5949,6 +6091,7 @@ final class AppStore: ObservableObject {
         fallbackTemplate: String,
         beat: String,
         selection: String,
+        sceneID: UUID?,
         sceneExcerpt: String,
         sceneFullText: String,
         sceneTitle: String,
@@ -5960,8 +6103,11 @@ final class AppStore: ObservableObject {
         source: String,
         extraVariables: [String: String] = [:]
     ) -> PromptRenderer.Result {
-        // TODO: Add a structured STATE block (POV/tense/location/time/goal/emotion)
-        // as first-class template variables once scene metadata supports it.
+        let stateStyle = narrativeStateBlockStyle(
+            template: template,
+            fallbackTemplate: fallbackTemplate
+        )
+
         var variables: [String: String] = [
             "beat": beat,
             "selection": selection,
@@ -5978,6 +6124,10 @@ final class AppStore: ObservableObject {
             "source": source,
             "project_title": currentProjectName
         ]
+
+        for (key, value) in narrativeStateVariables(for: sceneID, style: stateStyle) {
+            variables[key] = value
+        }
 
         for (key, value) in extraVariables {
             variables[key] = value
@@ -6142,6 +6292,60 @@ final class AppStore: ObservableObject {
         return selected.filter { available.contains($0) }
     }
 
+    private func sceneNarrativeState(for sceneID: UUID?) -> SceneNarrativeState {
+        guard let sceneID else { return SceneNarrativeState() }
+        guard let rawState = project.sceneNarrativeStates[sceneID.uuidString] else {
+            return SceneNarrativeState()
+        }
+        return normalizedSceneNarrativeState(rawState) ?? SceneNarrativeState()
+    }
+
+    private func setSceneNarrativeState(_ state: SceneNarrativeState, for sceneID: UUID) {
+        let key = sceneID.uuidString
+        if let normalized = normalizedSceneNarrativeState(state) {
+            project.sceneNarrativeStates[key] = normalized
+        } else {
+            project.sceneNarrativeStates.removeValue(forKey: key)
+        }
+        saveProject(debounced: true)
+    }
+
+    private func updateSelectedSceneNarrativeStateValue(
+        _ keyPath: WritableKeyPath<SceneNarrativeState, String?>,
+        value: String?
+    ) {
+        guard let selectedSceneID else { return }
+        var state = sceneNarrativeState(for: selectedSceneID)
+        state[keyPath: keyPath] = value
+        setSceneNarrativeState(state, for: selectedSceneID)
+    }
+
+    private func normalizedSceneNarrativeState(_ state: SceneNarrativeState) -> SceneNarrativeState? {
+        let normalized = SceneNarrativeState(
+            pov: normalizedSceneNarrativeValue(state.pov),
+            tense: normalizedSceneNarrativeValue(state.tense),
+            location: normalizedSceneNarrativeValue(state.location),
+            time: normalizedSceneNarrativeValue(state.time),
+            goal: normalizedSceneNarrativeValue(state.goal),
+            emotion: normalizedSceneNarrativeValue(state.emotion)
+        )
+        if normalized.pov == nil,
+           normalized.tense == nil,
+           normalized.location == nil,
+           normalized.time == nil,
+           normalized.goal == nil,
+           normalized.emotion == nil {
+            return nil
+        }
+        return normalized
+    }
+
+    private func normalizedSceneNarrativeValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private func setCompendiumContextIDs(_ entryIDs: [UUID], for sceneID: UUID) {
         let validEntryIDs = Set(project.compendium.map(\.id))
         var deduplicated: [UUID] = []
@@ -6243,6 +6447,7 @@ final class AppStore: ObservableObject {
         project.sceneContextCompendiumSelection.removeValue(forKey: sceneID.uuidString)
         project.sceneContextSceneSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneContextChapterSummarySelection.removeValue(forKey: sceneID.uuidString)
+        project.sceneNarrativeStates.removeValue(forKey: sceneID.uuidString)
     }
 
     private func removeCompendiumEntryFromSceneContextSelections(_ entryID: UUID) {
@@ -6338,6 +6543,22 @@ final class AppStore: ObservableObject {
             }
         }
         project.sceneContextChapterSummarySelection = sanitizedChapterSummaries
+    }
+
+    private func sanitizeSceneNarrativeStates() {
+        let validSceneIDs = Set(
+            project.chapters
+                .flatMap(\.scenes)
+                .map(\.id.uuidString)
+        )
+
+        var sanitized: [String: SceneNarrativeState] = [:]
+        for (sceneKey, state) in project.sceneNarrativeStates where validSceneIDs.contains(sceneKey) {
+            if let normalized = normalizedSceneNarrativeState(state) {
+                sanitized[sceneKey] = normalized
+            }
+        }
+        project.sceneNarrativeStates = sanitized
     }
 
     private func sanitizeInputHistories() {
@@ -6637,6 +6858,7 @@ final class AppStore: ObservableObject {
     private func ensureValidSelections() {
         guard isProjectOpen else { return }
         sanitizeSceneContextSelections()
+        sanitizeSceneNarrativeStates()
         sanitizeInputHistories()
 
         if let selectedSceneID,

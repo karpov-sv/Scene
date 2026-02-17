@@ -196,6 +196,31 @@ struct Scene: Codable, Identifiable, Equatable {
     }
 }
 
+struct SceneNarrativeState: Codable, Equatable {
+    var pov: String?
+    var tense: String?
+    var location: String?
+    var time: String?
+    var goal: String?
+    var emotion: String?
+
+    init(
+        pov: String? = nil,
+        tense: String? = nil,
+        location: String? = nil,
+        time: String? = nil,
+        goal: String? = nil,
+        emotion: String? = nil
+    ) {
+        self.pov = pov
+        self.tense = tense
+        self.location = location
+        self.time = time
+        self.goal = goal
+        self.emotion = emotion
+    }
+}
+
 struct Chapter: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
@@ -312,6 +337,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <BEAT>{{beat}}</BEAT>
 	        <SCENE_TAIL chars="2400">{{scene_tail(chars=2400)}}</SCENE_TAIL>
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
@@ -340,6 +366,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
 	        <SCENE_TAIL chars="2000">{{scene_tail(chars=2000)}}</SCENE_TAIL>
@@ -369,6 +396,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
 	        <EXISTING_SCENE_TAIL chars="2600">{{scene_tail(chars=2600)}}</EXISTING_SCENE_TAIL>
@@ -398,6 +426,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <REQUEST_TYPE>rewrite_excerpt_preserve_meaning</REQUEST_TYPE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
 	        <REWRITE_GUIDANCE>{{beat}}</REWRITE_GUIDANCE>
@@ -428,6 +457,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <REQUEST_TYPE>style_rewrite_excerpt</REQUEST_TYPE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
 	        <REWRITE_GUIDANCE>{{beat}}</REWRITE_GUIDANCE>
@@ -459,6 +489,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <REQUEST_TYPE>shorten_excerpt</REQUEST_TYPE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
 	        <REWRITE_GUIDANCE>{{beat}}</REWRITE_GUIDANCE>
@@ -490,6 +521,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <SCOPE>{{summary_scope}}</SCOPE>
 	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
 	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        {{state}}
 	        <SOURCE_MATERIAL>{{source}}</SOURCE_MATERIAL>
 	        <SUPPORTING_CONTEXT_BACKGROUND>{{context}}</SUPPORTING_CONTEXT_BACKGROUND>
 	        """,
@@ -516,6 +548,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <REQUEST_TYPE>variants_next_paragraph</REQUEST_TYPE>
 	        <CHAT_NAME>{{chat_name}}</CHAT_NAME>
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
+	        {{state}}
 	        <CURRENT_SCENE chars="1800">{{scene_tail(chars=1800)}}</CURRENT_SCENE>
 	        <CONVERSATION turns="14">{{chat_history(turns=14)}}</CONVERSATION>
 	        """,
@@ -551,6 +584,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<SCENE_TITLE>>>
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
+
+	        {{state}}
 
 	        <<<BEAT>>>
 	        {{beat}}
@@ -599,6 +634,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<SCENE_TITLE>>>
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
+
+	        {{state}}
 
 	        <<<SCENE_SUMMARY>>>
 	        {{scene_summary}}
@@ -652,6 +689,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
 
+	        {{state}}
+
 	        <<<SCENE_SUMMARY>>>
 	        {{scene_summary}}
 	        <<<END_SCENE_SUMMARY>>>
@@ -700,6 +739,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<SCENE_TITLE>>>
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
+
+	        {{state}}
 
 	        <<<SELECTION>>>
 	        {{selection}}
@@ -751,6 +792,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
 
+	        {{state}}
+
 	        <<<SELECTION>>>
 	        {{selection}}
 	        <<<END_SELECTION>>>
@@ -801,6 +844,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<SCENE_TITLE>>>
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
+
+	        {{state}}
 
 	        <<<SELECTION>>>
 	        {{selection}}
@@ -856,6 +901,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{scene_title}}
 	        <<<END_SCENE_TITLE>>>
 
+	        {{state}}
+
 	        <<<SOURCE_MATERIAL>>>
 	        {{source}}
 	        <<<END_SOURCE_MATERIAL>>>
@@ -895,6 +942,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<CONTEXT_BACKGROUND>>>
 	        {{context}}
 	        <<<END_CONTEXT_BACKGROUND>>>
+
+	        {{state}}
 
 	        <<<CURRENT_SCENE chars=1800>>>
 	        {{scene_tail(chars=1800)}}
@@ -1251,6 +1300,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneContextCompendiumSelection: [String: [UUID]]
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
+    var sceneNarrativeStates: [String: SceneNarrativeState]
     var settings: GenerationSettings
     var editorAppearance: EditorAppearanceSettings
     var updatedAt: Date
@@ -1275,6 +1325,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextCompendiumSelection: [String: [UUID]],
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
+        sceneNarrativeStates: [String: SceneNarrativeState],
         settings: GenerationSettings,
         editorAppearance: EditorAppearanceSettings,
         updatedAt: Date
@@ -1298,6 +1349,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneContextCompendiumSelection = sceneContextCompendiumSelection
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
+        self.sceneNarrativeStates = sceneNarrativeStates
         self.settings = settings
         self.editorAppearance = editorAppearance
         self.updatedAt = updatedAt
@@ -1323,6 +1375,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneContextCompendiumSelection
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
+        case sceneNarrativeStates
         case settings
         case editorAppearance
         case updatedAt
@@ -1350,6 +1403,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextCompendiumSelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextCompendiumSelection) ?? [:]
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
+        sceneNarrativeStates = try container.decodeIfPresent([String: SceneNarrativeState].self, forKey: .sceneNarrativeStates) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
         editorAppearance = try container.decodeIfPresent(EditorAppearanceSettings.self, forKey: .editorAppearance) ?? .default
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
@@ -1407,6 +1461,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneContextCompendiumSelection: [:],
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
+            sceneNarrativeStates: [:],
             settings: .default,
             editorAppearance: .default,
             updatedAt: .now
