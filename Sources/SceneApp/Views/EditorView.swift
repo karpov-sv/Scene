@@ -594,6 +594,7 @@ struct EditorView: View {
             plainText: store.selectedScene?.content ?? "",
             richTextData: store.selectedScene?.contentRTFData,
             contentRefreshID: store.sceneRichTextRefreshID,
+            focusRequestID: store.sceneEditorFocusRequestID,
             command: sceneEditorCommand,
             shouldAutoScrollExternalUpdates: store.isGenerating,
             incrementalRewriteSessionActive: isRewritingSelection && store.incrementalRewrite,
@@ -1044,6 +1045,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let plainText: String
     let richTextData: Data?
     let contentRefreshID: UUID
+    let focusRequestID: UUID
     let command: SceneEditorCommand?
     let shouldAutoScrollExternalUpdates: Bool
     let incrementalRewriteSessionActive: Bool
@@ -1239,6 +1241,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             to: textView,
             scrollView: nsView
         )
+        context.coordinator.requestFocusIfNeeded(
+            requestID: focusRequestID,
+            textView: textView
+        )
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1270,6 +1276,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         private var rewriteUndoSessionActive: Bool = false
         private var lastGenerationStreamingState: Bool = false
         private var lastIncrementalRewriteState: Bool = false
+        var lastFocusRequestID: UUID = UUID()
+        private var pendingFocusRequestID: UUID?
         init(
             onSelectionChange: @escaping (SceneEditorSelection) -> Void,
             onFormattingChange: @escaping (SceneEditorFormatting) -> Void,
@@ -1428,6 +1436,38 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             defer { undoGroupingDepth -= 1 }
             guard let undoManager = textView.undoManager else { return }
             undoManager.endUndoGrouping()
+        }
+
+        func requestFocusIfNeeded(requestID: UUID, textView: NSTextView) {
+            if lastFocusRequestID == requestID, pendingFocusRequestID == nil {
+                return
+            }
+            pendingFocusRequestID = requestID
+            attemptFocus(on: textView)
+        }
+
+        private func attemptFocus(on textView: NSTextView, remainingAttempts: Int = 6) {
+            guard let pendingID = pendingFocusRequestID else { return }
+            guard remainingAttempts > 0 else { return }
+            guard let window = textView.window else {
+                DispatchQueue.main.async { [weak self, weak textView] in
+                    guard let self, let textView else { return }
+                    self.attemptFocus(on: textView, remainingAttempts: remainingAttempts - 1)
+                }
+                return
+            }
+
+            window.makeFirstResponder(textView)
+            if window.firstResponder as AnyObject? === textView {
+                lastFocusRequestID = pendingID
+                pendingFocusRequestID = nil
+                return
+            }
+
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.attemptFocus(on: textView, remainingAttempts: remainingAttempts - 1)
+            }
         }
 
         func textDidChange(_ notification: Notification) {

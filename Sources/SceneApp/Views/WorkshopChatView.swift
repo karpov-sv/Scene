@@ -542,7 +542,8 @@ struct WorkshopChatView: View {
                     isMentionMenuVisible: !workshopMentionSuggestions.isEmpty,
                     onMentionMove: moveWorkshopMentionSelection,
                     onMentionSelect: confirmWorkshopMentionSelection,
-                    onMentionDismiss: dismissWorkshopMentionSuggestions
+                    onMentionDismiss: dismissWorkshopMentionSuggestions,
+                    focusRequestID: store.workshopInputFocusRequestID
                 )
                 .frame(minHeight: actionColumnContentHeight, idealHeight: actionColumnContentHeight, maxHeight: .infinity)
                 .overlay(alignment: .topLeading) {
@@ -916,6 +917,7 @@ private struct WorkshopInputTextView: NSViewRepresentable {
     var onMentionMove: (Int) -> Void = { _ in }
     var onMentionSelect: () -> Bool = { false }
     var onMentionDismiss: () -> Void = {}
+    var focusRequestID: UUID = UUID()
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -981,6 +983,10 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         if changedTextProgrammatically {
             context.coordinator.publishMentionQuery(from: textView)
         }
+        context.coordinator.requestFocusIfNeeded(
+            requestID: focusRequestID,
+            textView: textView
+        )
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1011,6 +1017,8 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         private weak var trackedTextView: NSTextView?
         private var outsideClickMonitor: Any?
         var isMentionMenuVisible: Bool = false
+        var lastFocusRequestID: UUID = UUID()
+        private var pendingFocusRequestID: UUID?
 
         init(
             text: Binding<String>,
@@ -1080,6 +1088,38 @@ private struct WorkshopInputTextView: NSViewRepresentable {
         func handleDidResignFirstResponder() {
             if isMentionMenuVisible {
                 onMentionDismiss()
+            }
+        }
+
+        func requestFocusIfNeeded(requestID: UUID, textView: NSTextView) {
+            if lastFocusRequestID == requestID, pendingFocusRequestID == nil {
+                return
+            }
+            pendingFocusRequestID = requestID
+            attemptFocus(on: textView)
+        }
+
+        private func attemptFocus(on textView: NSTextView, remainingAttempts: Int = 6) {
+            guard let pendingID = pendingFocusRequestID else { return }
+            guard remainingAttempts > 0 else { return }
+            guard let window = textView.window else {
+                DispatchQueue.main.async { [weak self, weak textView] in
+                    guard let self, let textView else { return }
+                    self.attemptFocus(on: textView, remainingAttempts: remainingAttempts - 1)
+                }
+                return
+            }
+
+            window.makeFirstResponder(textView)
+            if window.firstResponder as AnyObject? === textView {
+                lastFocusRequestID = pendingID
+                pendingFocusRequestID = nil
+                return
+            }
+
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.attemptFocus(on: textView, remainingAttempts: remainingAttempts - 1)
             }
         }
 

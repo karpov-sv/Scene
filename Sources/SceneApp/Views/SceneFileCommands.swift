@@ -3,6 +3,7 @@ import SwiftUI
 struct SceneFileCommands: Commands {
     @FocusedValue(\.projectMenuActions) private var actions
     @FocusedValue(\.searchMenuActions) private var searchActions
+    @FocusedValue(\.viewMenuActions) private var viewActions
 
     var body: some Commands {
         CommandGroup(after: .saveItem) {
@@ -82,6 +83,54 @@ struct SceneFileCommands: Commands {
             }
             .keyboardShortcut("k", modifiers: .command)
             .disabled(searchActions?.canFocusBeatInput != true)
+        }
+
+        CommandGroup(after: .sidebar) {
+            Divider()
+
+            Button("Toggle Binder") {
+                viewActions?.toggleBinder()
+            }
+            .keyboardShortcut("1", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Switch to Writing") {
+                viewActions?.switchToWriting()
+            }
+            .keyboardShortcut("2", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Switch to Workshop") {
+                viewActions?.switchToWorkshop()
+            }
+            .keyboardShortcut("3", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Divider()
+
+            Button("Toggle Compendium") {
+                viewActions?.toggleCompendium()
+            }
+            .keyboardShortcut("4", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Toggle Summary") {
+                viewActions?.toggleSummary()
+            }
+            .keyboardShortcut("5", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Toggle Notes") {
+                viewActions?.toggleNotes()
+            }
+            .keyboardShortcut("6", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Toggle Conversations") {
+                viewActions?.toggleConversations()
+            }
+            .keyboardShortcut("7", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
         }
     }
 }

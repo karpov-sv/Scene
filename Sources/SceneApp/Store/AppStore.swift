@@ -370,7 +370,9 @@ final class AppStore: ObservableObject {
     @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
 
+    @Published private(set) var sceneEditorFocusRequestID: UUID = UUID()
     @Published private(set) var beatInputFocusRequestID: UUID = UUID()
+    @Published private(set) var workshopInputFocusRequestID: UUID = UUID()
 
     @Published var showingSettings: Bool = false
 
@@ -754,6 +756,14 @@ final class AppStore: ObservableObject {
 
     func requestBeatInputFocus() {
         beatInputFocusRequestID = UUID()
+    }
+
+    func requestSceneEditorFocus() {
+        sceneEditorFocusRequestID = UUID()
+    }
+
+    func requestWorkshopInputFocus() {
+        workshopInputFocusRequestID = UUID()
     }
 
     func requestGlobalSearchFocus(scope: GlobalSearchScope, maxResults: Int = 300) {

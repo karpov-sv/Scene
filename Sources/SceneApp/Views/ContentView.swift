@@ -34,6 +34,7 @@ struct ContentView: View {
     @State private var writingSidePanel: WritingSidePanel = .compendium
     @State private var summaryScope: SummaryScope = .scene
     @State private var notesScope: NotesScope = .scene
+    @State private var workspaceColumnVisibility: NavigationSplitViewVisibility = .all
 
     private var hasErrorBinding: Binding<Bool> {
         Binding(
@@ -46,6 +47,7 @@ struct ContentView: View {
         rootContent
             .focusedSceneValue(\.projectMenuActions, projectMenuActions)
             .focusedSceneValue(\.searchMenuActions, searchMenuActions)
+            .focusedSceneValue(\.viewMenuActions, viewMenuActions)
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
                     .environmentObject(store)
@@ -78,7 +80,7 @@ struct ContentView: View {
     }
 
     private var workspaceRoot: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $workspaceColumnVisibility) {
             BinderSidebarView(
                 onOpenProjectNotes: {
                     selectedTab = .writing
@@ -161,7 +163,7 @@ struct ContentView: View {
                 Button {
                     toggleConversationsPanel()
                 } label: {
-                    Image(systemName: "list.bullet")
+                    Image(systemName: writingSidePanel == .conversations ? "text.bubble.fill" : "text.bubble")
                 }
                 .help(conversationsToggleHelpText)
             }
@@ -322,6 +324,25 @@ struct ContentView: View {
         )
     }
 
+    private var viewMenuActions: ViewMenuActions {
+        ViewMenuActions(
+            toggleBinder: toggleBinderSidebar,
+            switchToWriting: {
+                selectedTab = .writing
+                store.requestSceneEditorFocus()
+            },
+            switchToWorkshop: {
+                selectedTab = .workshop
+                store.requestWorkshopInputFocus()
+            },
+            toggleCompendium: toggleCompendiumPanel,
+            toggleSummary: toggleSummaryPanel,
+            toggleNotes: toggleNotesPanel,
+            toggleConversations: toggleConversationsPanel,
+            canUseViewActions: store.isProjectOpen
+        )
+    }
+
     private func activateNextSearchResult() {
         if store.globalSearchResults.isEmpty {
             store.restoreLastSearchIfNeeded()
@@ -420,6 +441,11 @@ struct ContentView: View {
 
     private func toggleConversationsPanel() {
         writingSidePanel = writingSidePanel == .conversations ? .none : .conversations
+    }
+
+    private func toggleBinderSidebar() {
+        guard store.isProjectOpen else { return }
+        workspaceColumnVisibility = workspaceColumnVisibility == .detailOnly ? .all : .detailOnly
     }
 
     private func restoreSidebarStateFromStorage() {
