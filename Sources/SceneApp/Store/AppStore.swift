@@ -440,8 +440,13 @@ final class AppStore: ObservableObject {
 
         ensureProjectBaseline()
 
-        selectedChapterID = project.chapters.first?.id
-        selectedSceneID = project.chapters.first?.scenes.first?.id
+        selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
+        if let selectedSceneID,
+           let location = sceneLocation(for: selectedSceneID) {
+            selectedChapterID = project.chapters[location.chapterIndex].id
+        } else {
+            selectedChapterID = project.chapters.first?.id
+        }
         selectedCompendiumID = project.compendium.first?.id
         selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
         ensureValidSelections()
@@ -1085,6 +1090,13 @@ final class AppStore: ObservableObject {
 
         self.project = project
         ensureProjectBaseline()
+        selectedSceneID = self.project.selectedSceneID ?? self.project.chapters.first?.scenes.first?.id
+        if let selectedSceneID,
+           let location = sceneLocation(for: selectedSceneID) {
+            selectedChapterID = self.project.chapters[location.chapterIndex].id
+        } else {
+            selectedChapterID = self.project.chapters.first?.id
+        }
         ensureValidSelections()
         refreshGlobalSearchResults()
 
@@ -1103,16 +1115,18 @@ final class AppStore: ObservableObject {
     func selectChapter(_ chapterID: UUID) {
         guard isProjectOpen else { return }
         selectedChapterID = chapterID
-        if let chapter = project.chapters.first(where: { $0.id == chapterID }),
-           let firstScene = chapter.scenes.first {
-            selectedSceneID = firstScene.id
-        }
+        let firstSceneID = project.chapters.first(where: { $0.id == chapterID })?.scenes.first?.id
+        selectedSceneID = firstSceneID
+        project.selectedSceneID = selectedSceneID
+        saveProject(debounced: true)
     }
 
     func selectScene(_ sceneID: UUID, chapterID: UUID) {
         guard isProjectOpen else { return }
         selectedChapterID = chapterID
         selectedSceneID = sceneID
+        project.selectedSceneID = sceneID
+        saveProject(debounced: true)
     }
 
     func isCompendiumEntrySelectedForCurrentSceneContext(_ entryID: UUID) -> Bool {
@@ -1838,6 +1852,7 @@ final class AppStore: ObservableObject {
         importedProject.sceneContextChapterSummarySelection = [:]
         importedProject.workshopInputHistoryBySession = [:]
         importedProject.beatInputHistoryByScene = [:]
+        importedProject.selectedSceneID = chapters.first?.scenes.first?.id
         importedProject.updatedAt = .now
 
         return importedProject
@@ -1873,6 +1888,13 @@ final class AppStore: ObservableObject {
         resetGlobalSearchState()
 
         ensureProjectBaseline()
+        selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
+        if let selectedSceneID,
+           let location = sceneLocation(for: selectedSceneID) {
+            selectedChapterID = project.chapters[location.chapterIndex].id
+        } else {
+            selectedChapterID = project.chapters.first?.id
+        }
         ensureValidSelections()
 
         if project.settings.provider.supportsModelDiscovery {
@@ -1892,6 +1914,7 @@ final class AppStore: ObservableObject {
         project.chapters.append(chapter)
         selectedChapterID = chapter.id
         selectedSceneID = starterScene.id
+        project.selectedSceneID = starterScene.id
         saveProject()
     }
 
@@ -1968,6 +1991,7 @@ final class AppStore: ObservableObject {
 
         selectedChapterID = project.chapters[chapterIndex].id
         selectedSceneID = scene.id
+        project.selectedSceneID = scene.id
 
         saveProject()
     }
@@ -4022,8 +4046,13 @@ final class AppStore: ObservableObject {
 
         ensureProjectBaseline()
 
-        selectedChapterID = project.chapters.first?.id
-        selectedSceneID = project.chapters.first?.scenes.first?.id
+        selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
+        if let selectedSceneID,
+           let location = sceneLocation(for: selectedSceneID) {
+            selectedChapterID = project.chapters[location.chapterIndex].id
+        } else {
+            selectedChapterID = project.chapters.first?.id
+        }
         selectedCompendiumID = project.compendium.first?.id
         selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
 
@@ -6611,6 +6640,10 @@ final class AppStore: ObservableObject {
             selectedChapterID = project.chapters[location.chapterIndex].id
         } else if selectedChapterID == nil {
             selectedChapterID = project.chapters.first?.id
+        }
+
+        if project.selectedSceneID != self.selectedSceneID {
+            project.selectedSceneID = self.selectedSceneID
         }
 
         if let selectedCompendiumID,

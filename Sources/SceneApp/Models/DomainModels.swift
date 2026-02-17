@@ -1239,6 +1239,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var chapters: [Chapter]
     var compendium: [CompendiumEntry]
     var prompts: [PromptTemplate]
+    var selectedSceneID: UUID?
     var selectedProsePromptID: UUID?
     var selectedRewritePromptID: UUID?
     var selectedSummaryPromptID: UUID?
@@ -1262,6 +1263,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         chapters: [Chapter],
         compendium: [CompendiumEntry],
         prompts: [PromptTemplate],
+        selectedSceneID: UUID?,
         selectedProsePromptID: UUID?,
         selectedRewritePromptID: UUID?,
         selectedSummaryPromptID: UUID?,
@@ -1284,6 +1286,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.chapters = chapters
         self.compendium = compendium
         self.prompts = prompts
+        self.selectedSceneID = selectedSceneID
         self.selectedProsePromptID = selectedProsePromptID
         self.selectedRewritePromptID = selectedRewritePromptID
         self.selectedSummaryPromptID = selectedSummaryPromptID
@@ -1308,6 +1311,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case chapters
         case compendium
         case prompts
+        case selectedSceneID
         case selectedProsePromptID
         case selectedRewritePromptID
         case selectedSummaryPromptID
@@ -1334,6 +1338,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         chapters = try container.decode([Chapter].self, forKey: .chapters)
         compendium = try container.decode([CompendiumEntry].self, forKey: .compendium)
         prompts = try container.decode([PromptTemplate].self, forKey: .prompts)
+        selectedSceneID = try container.decodeIfPresent(UUID.self, forKey: .selectedSceneID)
         selectedProsePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedProsePromptID)
         selectedRewritePromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedRewritePromptID)
         selectedSummaryPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedSummaryPromptID)
@@ -1390,6 +1395,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             chapters: [firstChapter],
             compendium: compendium,
             prompts: PromptTemplate.builtInTemplates,
+            selectedSceneID: firstScene.id,
             selectedProsePromptID: PromptTemplate.defaultProseTemplate.id,
             selectedRewritePromptID: PromptTemplate.defaultRewriteTemplate.id,
             selectedSummaryPromptID: PromptTemplate.defaultSummaryTemplate.id,

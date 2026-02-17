@@ -235,6 +235,7 @@ final class ProjectPersistence {
         var notes: String?
         var autosaveEnabled: Bool?
         var updatedAt: Date
+        var selectedSceneID: UUID?
         var selectedProsePromptID: UUID?
         var selectedRewritePromptID: UUID?
         var selectedSummaryPromptID: UUID?
@@ -493,6 +494,7 @@ final class ProjectPersistence {
             chapters: chapters,
             compendium: compendium,
             prompts: prompts,
+            selectedSceneID: manifest.selectedSceneID,
             selectedProsePromptID: manifest.selectedProsePromptID,
             selectedRewritePromptID: manifest.selectedRewritePromptID,
             selectedSummaryPromptID: manifest.selectedSummaryPromptID,
@@ -625,6 +627,7 @@ final class ProjectPersistence {
             notes: project.notes,
             autosaveEnabled: project.autosaveEnabled,
             updatedAt: project.updatedAt,
+            selectedSceneID: project.selectedSceneID,
             selectedProsePromptID: project.selectedProsePromptID,
             selectedRewritePromptID: project.selectedRewritePromptID,
             selectedSummaryPromptID: project.selectedSummaryPromptID,
