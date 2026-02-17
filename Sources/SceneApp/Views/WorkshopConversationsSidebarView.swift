@@ -8,6 +8,7 @@ struct WorkshopConversationsSidebarView: View {
     @State private var editingSessionName: String = ""
     @FocusState private var isSessionRenameFocused: Bool
     @State private var confirmDeleteChat: Bool = false
+    @State private var pendingClearMessagesSessionID: UUID?
 
     init(onSelectSession: ((UUID) -> Void)? = nil) {
         self.onSelectSession = onSelectSession
@@ -64,7 +65,7 @@ struct WorkshopConversationsSidebarView: View {
                             }
 
                             Button {
-                                store.clearWorkshopSessionMessages(session.id)
+                                requestClearMessages(for: session.id)
                             } label: {
                                 Label("Clear Messages", systemImage: "trash.slash")
                             }
@@ -112,7 +113,7 @@ struct WorkshopConversationsSidebarView: View {
                 Menu {
                     Button {
                         if let id = store.selectedWorkshopSessionID {
-                            store.clearWorkshopSessionMessages(id)
+                            requestClearMessages(for: id)
                         }
                     } label: {
                         Label("Clear Messages", systemImage: "trash.slash")
@@ -138,6 +139,16 @@ struct WorkshopConversationsSidebarView: View {
         } message: {
             Text("Are you sure you want to delete \"\(store.selectedWorkshopSession?.name ?? "")\"?")
         }
+        .alert("Clear Messages", isPresented: clearMessagesAlertBinding) {
+            Button("Clear", role: .destructive) {
+                confirmClearMessages()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingClearMessagesSessionID = nil
+            }
+        } message: {
+            Text("Are you sure you want to clear all messages in \"\(pendingClearMessagesSessionTitle)\"?")
+        }
     }
 
     private func beginSessionRename(_ session: WorkshopSession) {
@@ -154,6 +165,36 @@ struct WorkshopConversationsSidebarView: View {
             store.renameWorkshopSession(sessionID, to: trimmed)
         }
         editingSessionID = nil
+    }
+
+    private var clearMessagesAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingClearMessagesSessionID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingClearMessagesSessionID = nil
+                }
+            }
+        )
+    }
+
+    private var pendingClearMessagesSessionTitle: String {
+        guard let sessionID = pendingClearMessagesSessionID,
+              let session = store.workshopSessions.first(where: { $0.id == sessionID }) else {
+            return "this chat"
+        }
+        return sessionTitle(session)
+    }
+
+    private func requestClearMessages(for sessionID: UUID) {
+        guard store.workshopSessions.contains(where: { $0.id == sessionID }) else { return }
+        pendingClearMessagesSessionID = sessionID
+    }
+
+    private func confirmClearMessages() {
+        guard let sessionID = pendingClearMessagesSessionID else { return }
+        pendingClearMessagesSessionID = nil
+        store.clearWorkshopSessionMessages(sessionID)
     }
 
     private func sessionTitle(_ session: WorkshopSession) -> String {

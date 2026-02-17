@@ -28,6 +28,7 @@ struct WorkshopChatView: View {
     @State private var editingSessionName: String = ""
     @FocusState private var isSessionRenameFocused: Bool
     @State private var confirmDeleteChat: Bool = false
+    @State private var pendingClearMessagesSessionID: UUID?
     private let actionButtonWidth: CGFloat = 126
     private let actionButtonHeight: CGFloat = 30
     private let actionButtonSpacing: CGFloat = 8
@@ -114,6 +115,16 @@ struct WorkshopChatView: View {
             .sheet(item: $payloadPreview) { payloadPreview in
                 WorkshopPayloadPreviewSheet(preview: payloadPreview)
             }
+            .alert("Clear Messages", isPresented: clearMessagesAlertBinding) {
+                Button("Clear", role: .destructive) {
+                    confirmClearMessages()
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingClearMessagesSessionID = nil
+                }
+            } message: {
+                Text("Are you sure you want to clear all messages in \"\(pendingClearMessagesSessionTitle)\"?")
+            }
     }
 
     @ViewBuilder
@@ -199,7 +210,7 @@ struct WorkshopChatView: View {
                             }
 
                             Button {
-                                store.clearWorkshopSessionMessages(session.id)
+                                requestClearMessages(for: session.id)
                             } label: {
                                 Label("Clear Messages", systemImage: "trash.slash")
                             }
@@ -244,7 +255,7 @@ struct WorkshopChatView: View {
                 Menu {
                     Button {
                         if let id = store.selectedWorkshopSessionID {
-                            store.clearWorkshopSessionMessages(id)
+                            requestClearMessages(for: id)
                         }
                     } label: {
                         Label("Clear Messages", systemImage: "trash.slash")
@@ -297,35 +308,49 @@ struct WorkshopChatView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if isEditingChatTitle {
-                TextField("Session name", text: selectedSessionNameBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title3.weight(.semibold))
-                    .focused($isChatTitleFocused)
-                    .onSubmit {
-                        isEditingChatTitle = false
-                    }
-                    .onExitCommand {
-                        isEditingChatTitle = false
-                    }
-                    .onChange(of: isChatTitleFocused) { _, focused in
-                        if !focused {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                if isEditingChatTitle {
+                    TextField("Session name", text: selectedSessionNameBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.title3.weight(.semibold))
+                        .focused($isChatTitleFocused)
+                        .onSubmit {
                             isEditingChatTitle = false
                         }
-                    }
-            } else {
-                Text(store.selectedWorkshopSession?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? store.selectedWorkshopSession!.name : "Untitled Chat")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        isEditingChatTitle = true
-                        DispatchQueue.main.async {
-                            isChatTitleFocused = true
+                        .onExitCommand {
+                            isEditingChatTitle = false
                         }
-                    }
+                        .onChange(of: isChatTitleFocused) { _, focused in
+                            if !focused {
+                                isEditingChatTitle = false
+                            }
+                        }
+                } else {
+                    Text(store.selectedWorkshopSession?.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? store.selectedWorkshopSession!.name : "Untitled Chat")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            isEditingChatTitle = true
+                            DispatchQueue.main.async {
+                                isChatTitleFocused = true
+                            }
+                        }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                if let id = store.selectedWorkshopSession?.id {
+                    requestClearMessages(for: id)
+                }
+            } label: {
+                Image(systemName: "trash.slash")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Clear Messages")
+            .help("Clear all messages in this chat.")
         }
         .padding(12)
     }
@@ -680,6 +705,35 @@ struct WorkshopChatView: View {
             store.renameWorkshopSession(sessionID, to: trimmed)
         }
         editingSessionID = nil
+    }
+
+    private var clearMessagesAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingClearMessagesSessionID != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingClearMessagesSessionID = nil
+                }
+            }
+        )
+    }
+
+    private var pendingClearMessagesSessionTitle: String {
+        guard let sessionID = pendingClearMessagesSessionID,
+              let session = store.workshopSessions.first(where: { $0.id == sessionID }) else {
+            return "this chat"
+        }
+        return sessionTitle(session)
+    }
+
+    private func requestClearMessages(for sessionID: UUID) {
+        pendingClearMessagesSessionID = sessionID
+    }
+
+    private func confirmClearMessages() {
+        guard let sessionID = pendingClearMessagesSessionID else { return }
+        pendingClearMessagesSessionID = nil
+        store.clearWorkshopSessionMessages(sessionID)
     }
 
     private func sessionTitle(_ session: WorkshopSession) -> String {
