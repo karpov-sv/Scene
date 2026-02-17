@@ -38,6 +38,7 @@ private extension CodableRGBA {
 struct SettingsSheetView: View {
     private enum SettingsTab: String, Hashable {
         case general
+        case textGeneration
         case editor
         case provider
         case prompts
@@ -113,6 +114,13 @@ struct SettingsSheetView: View {
         Binding(
             get: { store.project.settings.incrementalRewrite },
             set: { store.updateIncrementalRewrite($0) }
+        )
+    }
+
+    private var inlineGenerationBinding: Binding<Bool> {
+        Binding(
+            get: { store.useInlineGeneration },
+            set: { store.updateUseInlineGeneration($0) }
         )
     }
 
@@ -211,6 +219,17 @@ struct SettingsSheetView: View {
         return current.isEmpty ? [] : [current]
     }
 
+    private func generationModelToggleBinding(for model: String) -> Binding<Bool> {
+        Binding(
+            get: { store.isGenerationModelSelected(model) },
+            set: { isEnabled in
+                let isCurrentlySelected = store.isGenerationModelSelected(model)
+                guard isEnabled != isCurrentlySelected else { return }
+                store.toggleGenerationModelSelection(model)
+            }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -222,6 +241,12 @@ struct SettingsSheetView: View {
                         Label("General", systemImage: "gearshape")
                     }
                     .tag(SettingsTab.general)
+
+                textGenerationTab
+                    .tabItem {
+                        Label("Text Generation", systemImage: "sparkles")
+                    }
+                    .tag(SettingsTab.textGeneration)
 
                 editorTab
                     .tabItem {
@@ -741,32 +766,6 @@ struct SettingsSheetView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                GroupBox("Writing") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Text("Mark rewritten text as italics")
-                            Spacer(minLength: 0)
-                            Toggle("", isOn: markRewrittenTextAsItalicsBinding)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .accessibilityLabel("Mark rewritten text as italics")
-                                .help("Italicize AI-rewritten text to distinguish it from original")
-                        }
-
-                        HStack(spacing: 8) {
-                            Text("Incremental rewrite")
-                            Spacer(minLength: 0)
-                            Toggle("", isOn: incrementalRewriteBinding)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .accessibilityLabel("Incremental rewrite")
-                                .help("Update rewritten selection while streaming chunks arrive")
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
                 GroupBox("Storage") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Project file location")
@@ -846,6 +845,100 @@ struct SettingsSheetView: View {
                     .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+    }
+
+    private var textGenerationTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                GroupBox("Model Selection") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text("Generation models")
+                            Spacer(minLength: 0)
+
+                            Menu {
+                                if store.generationModelOptions.isEmpty {
+                                    Button("No models available") {}
+                                        .disabled(true)
+                                } else {
+                                    ForEach(store.generationModelOptions, id: \.self) { model in
+                                        Toggle(model, isOn: generationModelToggleBinding(for: model))
+                                    }
+                                }
+
+                                let currentModel = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !currentModel.isEmpty {
+                                    Divider()
+                                    Button("Use Only \(currentModel)") {
+                                        store.selectOnlyGenerationModel(currentModel)
+                                    }
+                                }
+                            } label: {
+                                Label(store.selectedGenerationModelsLabel, systemImage: "square.stack.3d.up")
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 260, alignment: .leading)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.regular)
+                        }
+
+                        Text("Multi-model generation runs one candidate per selected model and opens review so you can accept the best result.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("Inline generation")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: inlineGenerationBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Inline generation")
+                                .help("Generate directly into scene text using the first selected model instead of opening multi-model review.")
+                        }
+
+                        Text("When inline generation is on, generation appends/streams directly into the scene and skips the multi-model candidate review.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Rewrite") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("Mark rewritten text as italics")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: markRewrittenTextAsItalicsBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Mark rewritten text as italics")
+                                .help("Italicize AI-rewritten text to distinguish it from original")
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Incremental rewrite")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: incrementalRewriteBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Incremental rewrite")
+                                .help("Update rewritten selection while streaming chunks arrive")
+                        }
+
+                        Text("These options affect only Rewrite actions when text selection is active in the editor.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)

@@ -284,24 +284,6 @@ struct EditorView: View {
         return size > 0 ? size : 14
     }
 
-    private var inlineGenerationBinding: Binding<Bool> {
-        Binding(
-            get: { store.useInlineGeneration },
-            set: { store.updateUseInlineGeneration($0) }
-        )
-    }
-
-    private func generationModelToggleBinding(for model: String) -> Binding<Bool> {
-        Binding(
-            get: { store.isGenerationModelSelected(model) },
-            set: { isEnabled in
-                let isCurrentlySelected = store.isGenerationModelSelected(model)
-                guard isEnabled != isCurrentlySelected else { return }
-                store.toggleGenerationModelSelection(model)
-            }
-        )
-    }
-
     private var proseGenerationReviewPresented: Binding<Bool> {
         Binding(
             get: { store.proseGenerationReview != nil },
@@ -684,35 +666,6 @@ struct EditorView: View {
                 .labelsHidden()
                 .frame(maxWidth: 280)
                 .padding(.leading, 8)
-
-                Menu {
-                    if store.generationModelOptions.isEmpty {
-                        Button("No models available") {}
-                            .disabled(true)
-                    } else {
-                        ForEach(store.generationModelOptions, id: \.self) { model in
-                            Toggle(model, isOn: generationModelToggleBinding(for: model))
-                        }
-                    }
-
-                    let currentModel = store.project.settings.model.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !currentModel.isEmpty {
-                        Divider()
-                        Button("Use Only \(currentModel)") {
-                            store.selectOnlyGenerationModel(currentModel)
-                        }
-                    }
-
-                    Divider()
-                    Toggle("Inline generation", isOn: inlineGenerationBinding)
-                } label: {
-                    Label(store.selectedGenerationModelsLabel, systemImage: "square.stack.3d.up")
-                        .lineLimit(1)
-                        .frame(maxWidth: 220, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .padding(.trailing, 8)
 
                 Spacer(minLength: 0)
 
