@@ -1236,17 +1236,18 @@ struct SettingsSheetView: View {
                 } else {
                     List(selection: promptListSelectionBinding) {
                         ForEach(promptCategoriesInEditor, id: \.self) { category in
-                            Section(promptSectionTitle(for: category)) {
+                            Section {
                                 ForEach(store.prompts(in: category)) { prompt in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(promptTitle(prompt))
-                                            .lineLimit(1)
-                                        Text(promptUsageLabel(for: category))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+                                    Text(promptTitle(prompt))
+                                        .lineLimit(1)
+                                        .font(.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 1)
+                                        .padding(.leading, 12)
                                     .tag(Optional(prompt.id))
                                 }
+                            } header: {
+                                promptSectionHeader(for: category)
                             }
                         }
                     }
@@ -1452,6 +1453,22 @@ struct SettingsSheetView: View {
 
     private func promptSectionTitle(for category: PromptCategory) -> String {
         "\(promptCategoryName(for: category)) Templates"
+    }
+
+    @ViewBuilder
+    private func promptSectionHeader(for category: PromptCategory) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(promptSectionTitle(for: category))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .textCase(nil)
+            Text(promptUsageLabel(for: category))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 
     private func promptUsageLabel(for category: PromptCategory) -> String {
