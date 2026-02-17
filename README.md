@@ -16,8 +16,10 @@
 - Scene and chapter summary workflows with editable summaries and streaming updates.
 - Compendium with categories (characters, locations, lore, items, notes).
 - Scene-local context selection using compendium entries, scene summaries, and chapter summaries.
-- Mention-based context injection in beat/chat inputs via `@tags` and `#scenes` with autocomplete.
+- Mention-based context injection in beat/chat inputs via `@tags` (including compendium entry titles) and `#scenes` with autocomplete.
 - Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
+- Persistent prompt history for workshop input (per conversation) and beat input (per scene), with trimming/deduplication and a 30-entry cap.
+- `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-7`).
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
 - Project-local settings for AI provider, prompt templates, and autosave.
 - Data exchange for prompts, compendium, and projects, plus plain text, HTML, and EPUB project export/import.
@@ -55,6 +57,7 @@ Scene/
    │  └─ AppStore.swift
    └─ Views/
       ├─ SceneFileCommands.swift
+      ├─ ViewMenuActions.swift
       ├─ ProjectMenuActions.swift
       ├─ ContentView.swift
       ├─ BinderSidebarView.swift
@@ -140,7 +143,7 @@ Script options:
   - `scenes/*.rtf` (scene text with optional rich text formatting)
   - `compendium/*.md` (entry text)
   - `workshop/*.json` (chat messages)
-- The app restores the last opened project on restart.
+- The app restores the last opened project on restart, including the last selected scene for that project.
 - Project Settings -> General includes `Autosave project changes` (enabled by default).
 - Supported providers: `OpenAI (ChatGPT)`, `Anthropic (Claude)`, `OpenRouter`, `LM Studio (Local)`, and `OpenAI-Compatible (Custom)`.
 - Configure provider settings in Project Settings:
@@ -178,12 +181,25 @@ Script options:
   - scene summaries
   - chapter summaries
 - Context selection is used by prose generation, rewrite, summary generation, and workshop chat when context usage is enabled.
+- In workshop chat, explicit `@...`/`#...` mentions are still resolved even when `Compendium Context` is disabled.
 - Context selection no longer applies hard caps on:
   - number of selected entries
   - per-entry context text length
 
 ## Recent Changes
 
+- Added persistent per-conversation workshop input history and per-scene beat input history (trimmed, deduplicated, capped to 30).
+- Added `View` menu commands and keybindings:
+  - `Cmd-1` toggle binder
+  - `Cmd-2` switch to writing (focuses main editor)
+  - `Cmd-3` switch to workshop (focuses chat input)
+  - `Cmd-4` toggle compendium
+  - `Cmd-5` toggle summary
+  - `Cmd-6` toggle notes
+  - `Cmd-7` toggle conversations
+- Updated workshop context behavior so explicit `@`/`#` mentions are included even when `Compendium Context` is disabled.
+- Extended `@` mention matching to recognize compendium entry titles in addition to explicit entry tags.
+- Persisted and restored the currently selected scene across app restart/reopen.
 - Added `File` menu Import/Export submenus with native dialogs.
 - Enabled project JSON import even when no project content is currently open.
 - Added single-file project export formats for plain text and HTML.
