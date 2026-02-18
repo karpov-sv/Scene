@@ -129,6 +129,11 @@ struct SceneSummaryPanelView: View {
         store.selectedChapterRollingMemorySourceText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var chapterCurrentSceneSourceText: String {
+        store.selectedChapterRollingMemorySourceTextCurrentScene
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var chapterUpToSelectedSceneSourceText: String {
         store.selectedChapterRollingMemorySourceTextUpToSelectedScene
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -238,58 +243,14 @@ struct SceneSummaryPanelView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .sheet(isPresented: $isSceneRollingMemorySheetPresented) {
-            SceneRollingMemorySheet(
-                sceneTitle: sceneMemorySheetTitle,
-                updatedAt: store.selectedSceneRollingMemoryUpdatedAt,
-                draftSummary: $sceneRollingMemoryDraft,
-                canUpdateFromSummaryText: !sceneSummarySourceText.isEmpty,
-                canUpdateFromFullSceneText: !sceneFullSourceText.isEmpty,
-                isUpdating: isRefreshingSceneRollingMemory,
-                updateErrorMessage: sceneRollingMemoryRefreshError.isEmpty ? nil : sceneRollingMemoryRefreshError,
-                onSave: {
-                    store.updateSelectedSceneRollingMemory(sceneRollingMemoryDraft)
-                },
-                onClear: {
-                    sceneRollingMemoryDraft = ""
-                    store.updateSelectedSceneRollingMemory("")
-                },
-                onUpdateFromSummaryText: {
-                    refreshSceneRollingMemory(from: sceneSummarySourceText)
-                },
-                onUpdateFromFullSceneText: {
-                    refreshSceneRollingMemory(from: sceneFullSourceText)
-                }
-            )
-        }
-        .sheet(isPresented: $isChapterRollingMemorySheetPresented) {
-            ChapterRollingMemorySheet(
-                chapterTitle: chapterMemorySheetTitle,
-                updatedAt: store.selectedChapterRollingMemoryUpdatedAt,
-                draftSummary: $chapterRollingMemoryDraft,
-                canUpdateFromChapterSummary: !chapterSummarySourceText.isEmpty,
-                canUpdateFromFullChapterText: !chapterFullSourceText.isEmpty,
-                canUpdateFromUpToSelectedSceneText: !chapterUpToSelectedSceneSourceText.isEmpty,
-                isUpdating: isRefreshingChapterRollingMemory,
-                updateErrorMessage: chapterRollingMemoryRefreshError.isEmpty ? nil : chapterRollingMemoryRefreshError,
-                onSave: {
-                    store.updateSelectedChapterRollingMemory(chapterRollingMemoryDraft)
-                },
-                onClear: {
-                    chapterRollingMemoryDraft = ""
-                    store.updateSelectedChapterRollingMemory("")
-                },
-                onUpdateFromChapterSummary: {
-                    refreshChapterRollingMemory(from: chapterSummarySourceText)
-                },
-                onUpdateFromFullChapterText: {
-                    refreshChapterRollingMemory(from: chapterFullSourceText)
-                },
-                onUpdateFromUpToSelectedSceneText: {
-                    refreshChapterRollingMemory(from: chapterUpToSelectedSceneSourceText)
-                }
-            )
-        }
+        .sheet(
+            isPresented: $isSceneRollingMemorySheetPresented,
+            content: sceneRollingMemorySheetContent
+        )
+        .sheet(
+            isPresented: $isChapterRollingMemorySheetPresented,
+            content: chapterRollingMemorySheetContent
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: scope) { _, nextScope in
             if nextScope != .scene {
@@ -389,6 +350,66 @@ struct SceneSummaryPanelView: View {
 
     private func cancelSummarization() {
         summaryTask?.cancel()
+    }
+
+    @ViewBuilder
+    private func sceneRollingMemorySheetContent() -> some View {
+        SceneRollingMemorySheet(
+            sceneTitle: sceneMemorySheetTitle,
+            updatedAt: store.selectedSceneRollingMemoryUpdatedAt,
+            draftSummary: $sceneRollingMemoryDraft,
+            canUpdateFromSummaryText: !sceneSummarySourceText.isEmpty,
+            canUpdateFromFullSceneText: !sceneFullSourceText.isEmpty,
+            isUpdating: isRefreshingSceneRollingMemory,
+            updateErrorMessage: sceneRollingMemoryRefreshError.isEmpty ? nil : sceneRollingMemoryRefreshError,
+            onSave: {
+                store.updateSelectedSceneRollingMemory(sceneRollingMemoryDraft)
+            },
+            onClear: {
+                sceneRollingMemoryDraft = ""
+                store.updateSelectedSceneRollingMemory("")
+            },
+            onUpdateFromSummaryText: {
+                refreshSceneRollingMemory(from: sceneSummarySourceText)
+            },
+            onUpdateFromFullSceneText: {
+                refreshSceneRollingMemory(from: sceneFullSourceText)
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func chapterRollingMemorySheetContent() -> some View {
+        ChapterRollingMemorySheet(
+            chapterTitle: chapterMemorySheetTitle,
+            updatedAt: store.selectedChapterRollingMemoryUpdatedAt,
+            draftSummary: $chapterRollingMemoryDraft,
+            canUpdateFromChapterSummary: !chapterSummarySourceText.isEmpty,
+            canUpdateFromCurrentSceneText: !chapterCurrentSceneSourceText.isEmpty,
+            canUpdateFromFullChapterText: !chapterFullSourceText.isEmpty,
+            canUpdateFromUpToSelectedSceneText: !chapterUpToSelectedSceneSourceText.isEmpty,
+            isUpdating: isRefreshingChapterRollingMemory,
+            updateErrorMessage: chapterRollingMemoryRefreshError.isEmpty ? nil : chapterRollingMemoryRefreshError,
+            onSave: {
+                store.updateSelectedChapterRollingMemory(chapterRollingMemoryDraft)
+            },
+            onClear: {
+                chapterRollingMemoryDraft = ""
+                store.updateSelectedChapterRollingMemory("")
+            },
+            onUpdateFromChapterSummary: {
+                refreshChapterRollingMemory(from: chapterSummarySourceText)
+            },
+            onUpdateFromCurrentSceneText: {
+                refreshChapterRollingMemory(from: chapterCurrentSceneSourceText)
+            },
+            onUpdateFromFullChapterText: {
+                refreshChapterRollingMemory(from: chapterFullSourceText)
+            },
+            onUpdateFromUpToSelectedSceneText: {
+                refreshChapterRollingMemory(from: chapterUpToSelectedSceneSourceText)
+            }
+        )
     }
 
     private func refreshSceneRollingMemory(from sourceText: String) {
@@ -586,6 +607,7 @@ private struct ChapterRollingMemorySheet: View {
     let updatedAt: Date?
     @Binding var draftSummary: String
     let canUpdateFromChapterSummary: Bool
+    let canUpdateFromCurrentSceneText: Bool
     let canUpdateFromFullChapterText: Bool
     let canUpdateFromUpToSelectedSceneText: Bool
     let isUpdating: Bool
@@ -593,11 +615,13 @@ private struct ChapterRollingMemorySheet: View {
     let onSave: () -> Void
     let onClear: () -> Void
     let onUpdateFromChapterSummary: () -> Void
+    let onUpdateFromCurrentSceneText: () -> Void
     let onUpdateFromFullChapterText: () -> Void
     let onUpdateFromUpToSelectedSceneText: () -> Void
 
     private var canRunAnyUpdate: Bool {
         canUpdateFromChapterSummary
+            || canUpdateFromCurrentSceneText
             || canUpdateFromFullChapterText
             || canUpdateFromUpToSelectedSceneText
     }
@@ -641,6 +665,11 @@ private struct ChapterRollingMemorySheet: View {
                         onUpdateFromChapterSummary()
                     }
                     .disabled(!canUpdateFromChapterSummary || isUpdating)
+
+                    Button("From Current Scene Text") {
+                        onUpdateFromCurrentSceneText()
+                    }
+                    .disabled(!canUpdateFromCurrentSceneText || isUpdating)
 
                     Button("From Chapter Text Up to Selected Scene") {
                         onUpdateFromUpToSelectedSceneText()

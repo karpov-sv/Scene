@@ -844,6 +844,21 @@ final class AppStore: ObservableObject {
         return chapterSourceText(chapter: chapter, maxChars: Self.rollingChapterMemorySourceChars)
     }
 
+    var selectedChapterRollingMemorySourceTextCurrentScene: String {
+        guard let chapter = selectedChapter,
+              let selectedSceneID,
+              let sceneIndex = chapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) else {
+            return ""
+        }
+        let scene = chapter.scenes[sceneIndex]
+        let content = scene.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { return "" }
+        let labeled = "Scene \(sceneIndex + 1): \(displaySceneTitle(scene))\n\(content)"
+        return labeled.count > Self.rollingChapterMemorySourceChars
+            ? String(labeled.prefix(Self.rollingChapterMemorySourceChars))
+            : labeled
+    }
+
     var selectedChapterRollingMemorySourceTextUpToSelectedScene: String {
         guard let chapter = selectedChapter,
               let selectedSceneID,
