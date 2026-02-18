@@ -5,23 +5,38 @@ import Foundation
 enum AppHelp {
     enum Topic {
         case home
-        case keyboardShortcuts
+        case workspace
+        case editor
         case textGeneration
+        case rewriting
+        case compendium
+        case context
+        case mentions
         case rollingMemory
+        case workshop
+        case checkpoints
+        case aiProviders
         case promptTemplates
+        case importExport
+        case keyboardShortcuts
 
         var anchor: String {
             switch self {
-            case .home:
-                return "home"
-            case .keyboardShortcuts:
-                return "keyboard-shortcuts"
-            case .textGeneration:
-                return "text-generation"
-            case .rollingMemory:
-                return "rolling-memory"
-            case .promptTemplates:
-                return "prompt-templates"
+            case .home: return "home"
+            case .workspace: return "workspace"
+            case .editor: return "editor"
+            case .textGeneration: return "text-generation"
+            case .rewriting: return "rewriting"
+            case .compendium: return "compendium"
+            case .context: return "context"
+            case .mentions: return "mentions"
+            case .rollingMemory: return "rolling-memory"
+            case .workshop: return "workshop"
+            case .checkpoints: return "checkpoints"
+            case .aiProviders: return "ai-providers"
+            case .promptTemplates: return "prompt-templates"
+            case .importExport: return "import-export"
+            case .keyboardShortcuts: return "keyboard-shortcuts"
             }
         }
     }

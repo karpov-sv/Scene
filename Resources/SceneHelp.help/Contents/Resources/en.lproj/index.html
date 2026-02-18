@@ -12,101 +12,675 @@
             margin: 24px auto;
             max-width: 860px;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.5;
-            padding: 0 20px 40px;
+            line-height: 1.6;
+            padding: 0 20px 60px;
         }
-        h1, h2 {
-            line-height: 1.25;
-        }
+        h1 { line-height: 1.25; margin-bottom: 4px; }
+        h2 { line-height: 1.25; margin-top: 2em; border-bottom: 1px solid #c9c9c9; padding-bottom: 6px; }
+        h3 { margin-top: 1.4em; }
         .toc {
-            padding: 12px 14px;
+            padding: 14px 16px;
             border: 1px solid #c9c9c9;
             border-radius: 8px;
-            margin-bottom: 24px;
+            margin-bottom: 28px;
         }
-        .toc ul {
-            margin: 0;
-            padding-left: 18px;
-        }
-        code {
+        .toc ul { margin: 0; padding-left: 18px; }
+        .toc li { margin: 3px 0; }
+        code, .key {
             font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
-            font-size: 0.94em;
+            font-size: 0.92em;
             background: rgba(127, 127, 127, 0.14);
             border-radius: 4px;
-            padding: 1px 4px;
+            padding: 1px 5px;
         }
-        .muted {
-            color: #666;
-        }
+        .muted { color: #888; }
+        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #ddd; }
+        th { font-weight: 600; }
+        .shortcut-table td:first-child { white-space: nowrap; width: 140px; }
+        dl { margin: 8px 0; }
+        dt { font-weight: 600; margin-top: 8px; }
+        dd { margin-left: 16px; }
     </style>
 </head>
 <body>
-    <a name="home"></a>
-    <h1>Scene Help</h1>
-    <p class="muted">
-        Quick reference for the writing workspace, generation tools, context, and rolling memory workflows.
-    </p>
 
-    <div class="toc">
-        <strong>Sections</strong>
+<a name="home"></a>
+<h1>Scene Help</h1>
+<p class="muted">
+    Scene is a native macOS writing tool for book-length projects with integrated AI text generation,
+    a reference compendium, workshop chat, and rolling memory.
+</p>
+
+<div class="toc">
+    <strong>Contents</strong>
+    <ul>
+        <li><a href="#getting-started">Getting Started</a></li>
+        <li><a href="#workspace">The Workspace</a></li>
+        <li><a href="#binder">Binder &mdash; Chapters &amp; Scenes</a></li>
+        <li><a href="#editor">Writing &amp; Editing</a></li>
+        <li><a href="#text-generation">Text Generation</a></li>
+        <li><a href="#rewriting">Rewriting Selected Text</a></li>
+        <li><a href="#compendium">Compendium</a></li>
+        <li><a href="#context">Scene Context</a></li>
+        <li><a href="#mentions">Mentions &amp; Autocomplete</a></li>
+        <li><a href="#summaries">Summaries</a></li>
+        <li><a href="#rolling-memory">Rolling Memory</a></li>
+        <li><a href="#workshop">Workshop Chat</a></li>
+        <li><a href="#notes">Notes</a></li>
+        <li><a href="#search">Search</a></li>
+        <li><a href="#checkpoints">Checkpoints &amp; History</a></li>
+        <li><a href="#ai-providers">AI Provider Setup</a></li>
+        <li><a href="#project-settings">Project Settings</a></li>
+        <li><a href="#prompt-templates">Prompt Templates</a></li>
+        <li><a href="#import-export">Import &amp; Export</a></li>
+        <li><a href="#projects">Project Format</a></li>
+        <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
+    </ul>
+</div>
+
+<!-- ========== GETTING STARTED ========== -->
+<a name="getting-started"></a>
+<h2>Getting Started</h2>
+<p>
+    Scene uses a document-based workflow. Each project is a <code>.sceneproj</code> folder bundle
+    that contains all of your scenes, compendium entries, workshop sessions, and settings.
+</p>
+<p>
+    When you launch Scene, it restores your last open projects automatically, including the last
+    selected scene in each project. You can have multiple projects open simultaneously, each in its
+    own window.
+</p>
+<h3>Creating a project</h3>
+<p>
+    Use <strong>File &rarr; New</strong> or <code>Cmd-N</code> to create a new project. Choose a
+    location and name for the <code>.sceneproj</code> bundle. The project opens with one chapter and
+    one empty scene.
+</p>
+<h3>Opening a project</h3>
+<p>
+    Use <strong>File &rarr; Open</strong> or <code>Cmd-O</code> to open an existing
+    <code>.sceneproj</code> folder. Recent projects also appear in <strong>File &rarr; Open
+    Recent</strong>.
+</p>
+
+<!-- ========== WORKSPACE ========== -->
+<a name="workspace"></a>
+<h2>The Workspace</h2>
+<p>
+    The workspace is divided into three areas:
+</p>
+<ul>
+    <li><strong>Binder sidebar</strong> (left) &mdash; chapter and scene navigation.</li>
+    <li><strong>Main panel</strong> (center) &mdash; switches between the Writing editor and the Workshop chat.</li>
+    <li><strong>Side panel</strong> (right) &mdash; toggles between Compendium, Summary, Notes, and Conversations.</li>
+</ul>
+<p>
+    Toggle the binder with <code>Cmd-1</code>. Switch the main panel between Writing
+    (<code>Cmd-2</code>) and Workshop (<code>Cmd-3</code>). Toggle side panels with
+    <code>Cmd-4</code> through <code>Cmd-7</code>.
+</p>
+<p>
+    Both Writing and Workshop views are kept alive when you switch tabs &mdash; scroll position,
+    undo history, and editor state are preserved.
+</p>
+
+<!-- ========== BINDER ========== -->
+<a name="binder"></a>
+<h2>Binder &mdash; Chapters &amp; Scenes</h2>
+<p>
+    The Binder sidebar shows your project's structure as a tree of chapters and scenes.
+</p>
+<h3>Creating content</h3>
+<ul>
+    <li>Click the <strong>+</strong> button at the top of the binder to add a new chapter.</li>
+    <li>Right-click a chapter or use its context menu to add a scene within it.</li>
+    <li>Double-click a chapter or scene title to rename it.</li>
+</ul>
+<h3>Reordering</h3>
+<p>
+    Drag and drop chapters or scenes to reorder them. Scenes can be moved between chapters.
+    The order you set in the binder determines the reading order used for export and chapter-level
+    operations.
+</p>
+<h3>Deleting</h3>
+<p>
+    Right-click a chapter or scene and choose <strong>Delete</strong>. Deleting a chapter also
+    removes all of its scenes.
+</p>
+
+<!-- ========== EDITOR ========== -->
+<a name="editor"></a>
+<h2>Writing &amp; Editing</h2>
+<p>
+    The Writing panel (<code>Cmd-2</code>) shows a rich text editor for the selected scene.
+</p>
+<h3>Formatting controls</h3>
+<p>
+    The editor toolbar provides:
+</p>
+<ul>
+    <li><strong>Font family and size</strong> &mdash; split controls for typeface and point size.</li>
+    <li><strong>Bold</strong> (<code>Cmd-B</code>), <strong>Italic</strong> (<code>Cmd-I</code>),
+        <strong>Underline</strong> (<code>Cmd-U</code>) &mdash; stateful toggles.</li>
+    <li><strong>Text color</strong> and <strong>highlight color</strong> pickers.</li>
+    <li><strong>Alignment</strong> &mdash; left, center, right, justified.</li>
+    <li><strong>Clear formatting</strong> &mdash; strips all formatting from the selection.</li>
+</ul>
+<p>
+    Scene content is stored as RTF (Rich Text Format), preserving your formatting choices.
+</p>
+
+<!-- ========== TEXT GENERATION ========== -->
+<a name="text-generation"></a>
+<h2>Text Generation</h2>
+<p>
+    The text generation form appears at the bottom of the Writing panel. Use it to generate prose
+    from a short description (a "story beat") that the AI expands into full text.
+</p>
+<h3>Basic workflow</h3>
+<ol>
+    <li>Select a scene in the binder.</li>
+    <li>Type a story beat into the generation input (e.g., "Elena discovers the hidden letter").</li>
+    <li>Choose a prompt template from the dropdown.</li>
+    <li>Press <code>Enter</code> to generate. The result streams into the editor in real time.</li>
+</ol>
+<h3>Generation controls</h3>
+<ul>
+    <li><strong>Prompt template picker</strong> &mdash; choose from built-in or custom prose templates.</li>
+    <li><strong>Preview</strong> &mdash; inspect the full API payload before sending.</li>
+    <li><strong>Cancel</strong> &mdash; stop a generation in progress.</li>
+    <li><strong>Token usage</strong> &mdash; live token count displayed during and after generation.</li>
+</ul>
+<h3>Collapsible form</h3>
+<p>
+    The generation form can be collapsed using the control at its lower-right corner to give
+    more space to the editor. Restore it from the same location or press <code>Cmd-K</code>.
+    Visibility state persists within the window session.
+</p>
+<h3>Input history</h3>
+<p>
+    Beat inputs are saved per scene (up to 30 entries). Access previous beats with the history
+    control in the input field. Duplicate entries are removed automatically.
+</p>
+<p>
+    Generated text is inserted as a single undo step, so <code>Cmd-Z</code> removes the entire
+    generated block at once.
+</p>
+
+<!-- ========== REWRITING ========== -->
+<a name="rewriting"></a>
+<h2>Rewriting Selected Text</h2>
+<p>
+    When you select text in the editor, the generation form automatically switches to
+    <strong>rewrite mode</strong>. The prompt template picker shows rewrite-specific templates
+    and the action button changes to <strong>Rewrite</strong>.
+</p>
+<h3>Built-in rewrite templates</h3>
+<dl>
+    <dt>Rewrite</dt>
+    <dd>Rewrites the selected passage while preserving meaning and style.</dd>
+    <dt>Expand</dt>
+    <dd>Expands the passage with more detail, description, or dialogue.</dd>
+    <dt>Shorten</dt>
+    <dd>Condenses the passage while retaining key content.</dd>
+</dl>
+<p>
+    Each template is also available in a compact variant optimized for shorter prompts.
+</p>
+<h3>Incremental rewrite</h3>
+<p>
+    When enabled in <strong>Project Settings &rarr; Text Generation</strong>, the rewrite
+    streams directly into the editor, replacing the selected text token by token. This lets you
+    watch the rewrite form in real time. The entire rewrite is consolidated into a single undo step.
+</p>
+
+<!-- ========== COMPENDIUM ========== -->
+<a name="compendium"></a>
+<h2>Compendium</h2>
+<p>
+    The Compendium (<code>Cmd-4</code>) is a reference library for your project's world-building.
+    Entries are organized into five categories:
+</p>
+<ul>
+    <li><strong>Characters</strong> &mdash; people, beings, and other actors.</li>
+    <li><strong>Locations</strong> &mdash; places, settings, and environments.</li>
+    <li><strong>Lore</strong> &mdash; history, mythology, rules, and background.</li>
+    <li><strong>Items</strong> &mdash; objects, artifacts, and significant things.</li>
+    <li><strong>Notes</strong> &mdash; general reference material.</li>
+</ul>
+<h3>Managing entries</h3>
+<ul>
+    <li>Click <strong>+</strong> to create a new entry in the selected category.</li>
+    <li>Each entry has a <strong>title</strong>, one or more <strong>tags</strong>, and a
+        <strong>body</strong> (stored as Markdown).</li>
+    <li>Tags are used for mention autocomplete (<code>@tag</code>) and context matching.</li>
+</ul>
+<p>
+    Compendium entries can be included in scene context to inform AI generation. See
+    <a href="#context">Scene Context</a>.
+</p>
+
+<!-- ========== CONTEXT ========== -->
+<a name="context"></a>
+<h2>Scene Context</h2>
+<p>
+    Scene context controls what reference material is sent to the AI alongside your prompts. Context
+    selection is <strong>scene-local</strong> &mdash; each scene has its own set of selected context
+    sources, and selections are saved with the project.
+</p>
+<h3>Context source types</h3>
+<ul>
+    <li><strong>Compendium entries</strong> &mdash; character descriptions, locations, lore, etc.</li>
+    <li><strong>Scene summaries</strong> &mdash; summaries of other scenes for continuity.</li>
+    <li><strong>Chapter summaries</strong> &mdash; higher-level chapter overviews.</li>
+</ul>
+<h3>Selecting context</h3>
+<p>
+    Open the context sheet from the editor header to browse and select from all available sources.
+    The selection sheet is searchable and groups entries by type. There are no hard limits on the
+    number of entries or their length.
+</p>
+<p>
+    Context is used by prose generation, rewrite, summary generation, and workshop chat (when
+    context usage is enabled for the session).
+</p>
+
+<!-- ========== MENTIONS ========== -->
+<a name="mentions"></a>
+<h2>Mentions &amp; Autocomplete</h2>
+<p>
+    In the beat input and workshop chat, type <code>@</code> or <code>#</code> to reference
+    project content directly. Mentioned items are automatically included in the AI context.
+</p>
+<h3>Mention types</h3>
+<table>
+    <tr><th>Prefix</th><th>References</th><th>Examples</th></tr>
+    <tr>
+        <td><code>@</code></td>
+        <td>Compendium entries (by tag or title)</td>
+        <td><code>@elena</code>, <code>@[Elena Vasquez]</code></td>
+    </tr>
+    <tr>
+        <td><code>#</code></td>
+        <td>Scenes (by title)</td>
+        <td><code>#prologue</code>, <code>#[The Hidden Letter]</code></td>
+    </tr>
+</table>
+<p>
+    Use brackets for multi-word names: <code>@[character name]</code> or
+    <code>#[scene title]</code>. As you type after a mention prefix, an autocomplete list appears
+    with matching entries.
+</p>
+<p>
+    In workshop chat, explicit <code>@</code> and <code>#</code> mentions are resolved even when
+    the session's Compendium Context toggle is disabled.
+</p>
+
+<!-- ========== SUMMARIES ========== -->
+<a name="summaries"></a>
+<h2>Summaries</h2>
+<p>
+    The Summary panel (<code>Cmd-5</code>) shows and manages summaries at two levels:
+</p>
+<dl>
+    <dt>Scene summaries</dt>
+    <dd>A synopsis of an individual scene. Generate it from the scene's text using the
+        <strong>Generate</strong> action, or write it manually. Scene summaries can be selected
+        as context for other scenes.</dd>
+    <dt>Chapter summaries</dt>
+    <dd>A higher-level overview generated from the chapter's scene summaries.
+        Chapter summaries can also be selected as context.</dd>
+</dl>
+<p>
+    All summaries are editable after generation. Summaries stream in real time and show token usage.
+</p>
+
+<!-- ========== ROLLING MEMORY ========== -->
+<a name="rolling-memory"></a>
+<h2>Rolling Memory</h2>
+<p>
+    Rolling memory keeps a condensed summary of important state across generation turns.
+    It helps the AI maintain consistency over long writing sessions without resending all
+    previous content. There are three independent memory scopes:
+</p>
+<dl>
+    <dt>Workshop memory</dt>
+    <dd>Per-conversation. Refreshes automatically in the background after enough new chat turns.
+        Edit it from the book icon in the workshop header.</dd>
+    <dt>Chapter memory</dt>
+    <dd>Per-chapter. Edit from the book icon in the Summary panel (chapter scope).
+        Update it from multiple sources via the <strong>Update&hellip;</strong> menu:
         <ul>
-            <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
-            <li><a href="#text-generation">Text Generation</a></li>
-            <li><a href="#rolling-memory">Rolling Memory</a></li>
-            <li><a href="#prompt-templates">Prompt Templates</a></li>
+            <li>Chapter summary text</li>
+            <li>Chapter text up to the currently selected scene</li>
+            <li>Full chapter text</li>
         </ul>
-    </div>
+        During iterative updates from scene text, the memory sheet updates live after each scene
+        merge step.
+    </dd>
+    <dt>Scene memory</dt>
+    <dd>Per-scene, validated against a hash of the scene content. Edit from the book icon in the
+        Summary panel (scene scope). Update from:
+        <ul>
+            <li>Scene summary text</li>
+            <li>Full scene text</li>
+        </ul>
+    </dd>
+</dl>
+<h3>Using rolling memory in prompts</h3>
+<p>
+    Rolling memory is available in prompt templates via <code>{{context_rolling}}</code>
+    (or its alias <code>{{rolling_summary}}</code>). It is also included automatically when
+    you use <code>{{context}}</code>. Individual scopes can be accessed with
+    <code>{{rolling_workshop_summary}}</code>, <code>{{rolling_chapter_summary}}</code>, and
+    <code>{{rolling_scene_summary}}</code>.
+</p>
 
-    <a name="keyboard-shortcuts"></a>
-    <h2>Keyboard Shortcuts</h2>
-    <p>
-        Main workspace shortcuts:
-    </p>
-    <ul>
-        <li><code>Cmd-1</code> Toggle Binder</li>
-        <li><code>Cmd-2</code> Switch to Writing</li>
-        <li><code>Cmd-3</code> Switch to Workshop</li>
-        <li><code>Cmd-4</code> Toggle Compendium panel</li>
-        <li><code>Cmd-5</code> Toggle Summary panel</li>
-        <li><code>Cmd-6</code> Toggle Notes panel</li>
-        <li><code>Cmd-7</code> Toggle Conversations panel</li>
-        <li><code>Cmd-8</code> Toggle Text Generation panel</li>
-        <li><code>Cmd-K</code> Switch to Text Generation and focus beat input</li>
-    </ul>
-    <p>
-        In generation and workshop inputs, <code>Enter</code> sends and <code>Cmd-Enter</code> inserts a newline.
-    </p>
+<!-- ========== WORKSHOP ========== -->
+<a name="workshop"></a>
+<h2>Workshop Chat</h2>
+<p>
+    The Workshop (<code>Cmd-3</code>) is a multi-session AI chat for brainstorming, plotting,
+    getting feedback, and exploring ideas related to your project.
+</p>
+<h3>Sessions</h3>
+<ul>
+    <li>Create multiple chat sessions, each with its own conversation history and rolling memory.</li>
+    <li>Browse sessions in the Conversations panel (<code>Cmd-7</code>) or the sidebar
+        within the Workshop view.</li>
+    <li>Each session can independently toggle whether scene context and compendium context
+        are sent with messages.</li>
+</ul>
+<h3>Chat features</h3>
+<ul>
+    <li><strong>Streaming responses</strong> &mdash; AI replies appear token by token.</li>
+    <li><strong>Markdown rendering</strong> &mdash; assistant messages render Markdown formatting.</li>
+    <li><strong>Inline message actions</strong> &mdash; copy, regenerate, or act on individual messages.</li>
+    <li><strong>Mentions</strong> &mdash; use <code>@</code> and <code>#</code> to reference
+        compendium entries and scenes (see <a href="#mentions">Mentions</a>).</li>
+    <li><strong>Input history</strong> &mdash; per-conversation history of sent messages
+        (up to 30 entries, deduplicated).</li>
+    <li><strong>Token usage</strong> &mdash; usage metrics displayed per message.</li>
+</ul>
+<p>
+    Press <code>Enter</code> to send a message. Press <code>Cmd-Enter</code> to insert a newline
+    without sending.
+</p>
 
-    <a name="text-generation"></a>
-    <h2>Text Generation</h2>
-    <p>
-        Use the generation form under the editor to produce prose from a beat or rewrite selected text.
-    </p>
-    <ul>
-        <li>When text is selected, the action switches to rewrite mode.</li>
-        <li>Use <code>@</code> to mention compendium entries and <code>#</code> to mention scenes.</li>
-        <li>The generation form can be collapsed from its lower-right control and restored later.</li>
-    </ul>
+<!-- ========== NOTES ========== -->
+<a name="notes"></a>
+<h2>Notes</h2>
+<p>
+    The Notes panel (<code>Cmd-6</code>) provides free-form text notes at three levels:
+</p>
+<ul>
+    <li><strong>Project notes</strong> &mdash; general notes for the entire project.</li>
+    <li><strong>Chapter notes</strong> &mdash; notes attached to the selected chapter.</li>
+    <li><strong>Scene notes</strong> &mdash; notes attached to the selected scene.</li>
+</ul>
+<p>
+    Use the scope picker at the top of the panel to switch between levels. Notes are saved with
+    the project and searchable via <strong>Find in Project</strong>.
+</p>
 
-    <a name="rolling-memory"></a>
-    <h2>Rolling Memory</h2>
-    <p>
-        Scene, chapter, and workshop memories keep high-signal state between generations.
-    </p>
-    <ul>
-        <li>Workshop memory is chat-session-local and refreshes automatically in background.</li>
-        <li>Scene and chapter memory can be edited from the Summary panel via the book button.</li>
-        <li>Chapter memory supports iterative updates from scene text sources.</li>
-    </ul>
+<!-- ========== SEARCH ========== -->
+<a name="search"></a>
+<h2>Search</h2>
+<p>
+    Scene provides two search modes:
+</p>
+<table class="shortcut-table">
+    <tr><td><code>Cmd-F</code></td><td><strong>Find in Scene</strong> &mdash; search within the current scene's text.</td></tr>
+    <tr><td><code>Cmd-Shift-F</code></td><td><strong>Find in Project</strong> &mdash; search across all scenes, compendium entries, summaries, notes, and chat messages.</td></tr>
+    <tr><td><code>Cmd-G</code></td><td><strong>Find Next</strong> &mdash; jump to the next match.</td></tr>
+    <tr><td><code>Cmd-Shift-G</code></td><td><strong>Find Previous</strong> &mdash; jump to the previous match.</td></tr>
+</table>
+<p>
+    Project search results are grouped by type. Selecting a result navigates to the appropriate
+    view &mdash; opening the scene, switching to the compendium, or showing the relevant summary,
+    note, or chat message.
+</p>
 
-    <a name="prompt-templates"></a>
-    <h2>Prompt Templates</h2>
-    <p>
-        Prompt templates support variables like <code>{{beat}}</code>, <code>{{context}}</code>, and
-        <code>{{context_rolling}}</code>.
-    </p>
-    <p>
-        Open <strong>Project Settings -> Prompt Templates</strong> for variable reference and rendered previews.
-    </p>
+<!-- ========== CHECKPOINTS ========== -->
+<a name="checkpoints"></a>
+<h2>Checkpoints &amp; History</h2>
+<p>
+    Checkpoints are timestamped snapshots of your entire project. Use them to save milestone
+    versions and roll back when needed.
+</p>
+<h3>Managing checkpoints</h3>
+<ul>
+    <li><strong>Checkpoints &rarr; Create</strong> &mdash; save a snapshot of the current project state.</li>
+    <li><strong>Checkpoints &rarr; Restore&hellip;</strong> &mdash; browse checkpoints and restore
+        with options for selective scope and behavior.</li>
+    <li><strong>Checkpoints &rarr; Scene History</strong> &mdash; view the history of the current
+        scene across all checkpoints, with diffs against the current version.</li>
+</ul>
+<h3>Scene history</h3>
+<p>
+    The Scene History viewer shows how a scene has changed over time. You can compare any historical
+    version against the current text (diff view) and restore just the scene text from a specific
+    checkpoint without affecting the rest of the project.
+</p>
+
+<!-- ========== AI PROVIDERS ========== -->
+<a name="ai-providers"></a>
+<h2>AI Provider Setup</h2>
+<p>
+    Scene supports multiple AI providers. Configure your provider in
+    <strong>Project Settings &rarr; General</strong>. Settings are per-project.
+</p>
+<h3>Supported providers</h3>
+<table>
+    <tr><th>Provider</th><th>Description</th></tr>
+    <tr><td>OpenAI (ChatGPT)</td><td>GPT-4, GPT-4o, and other OpenAI models.</td></tr>
+    <tr><td>Anthropic (Claude)</td><td>Claude Sonnet, Opus, Haiku, and other Anthropic models.</td></tr>
+    <tr><td>OpenRouter</td><td>Aggregator providing access to models from many providers.</td></tr>
+    <tr><td>LM Studio (Local)</td><td>Run models locally on your Mac via LM Studio.</td></tr>
+    <tr><td>OpenAI-Compatible (Custom)</td><td>Any endpoint implementing the OpenAI chat completions API.</td></tr>
+</table>
+<h3>Configuration</h3>
+<ul>
+    <li><strong>Endpoint URL</strong> &mdash; auto-populated with the provider's default. Editable for custom endpoints.</li>
+    <li><strong>API Key</strong> &mdash; your provider API key (stored in the project file).</li>
+    <li><strong>Model</strong> &mdash; select from the model picker or type a model name directly.</li>
+    <li><strong>Refresh</strong> &mdash; discovers available models from the provider's
+        <code>/v1/models</code> endpoint. Stale or unavailable models are automatically removed.</li>
+    <li><strong>Streaming</strong> &mdash; enable or disable real-time token streaming.</li>
+    <li><strong>Request timeout</strong> &mdash; maximum wait time for API responses (default: 5 minutes).</li>
+</ul>
+<h3>Multi-model selection</h3>
+<p>
+    In <strong>Project Settings &rarr; Text Generation</strong>, you can configure separate models
+    for different tasks (prose generation, rewrite, summary, workshop chat).
+</p>
+
+<!-- ========== PROJECT SETTINGS ========== -->
+<a name="project-settings"></a>
+<h2>Project Settings</h2>
+<p>
+    Open with <strong>File &rarr; Project Settings&hellip;</strong> or from the menu bar.
+    Settings are organized into tabs:
+</p>
+<h3>General</h3>
+<ul>
+    <li><strong>AI provider configuration</strong> &mdash; endpoint, API key, model, streaming, timeout.</li>
+    <li><strong>Autosave</strong> &mdash; automatically save project changes (enabled by default).</li>
+    <li><strong>Project metadata</strong> &mdash; author, language, publisher, rights, and
+        description. These fields are mapped to EPUB metadata on export.</li>
+    <li><strong>Data Exchange</strong> &mdash; import/export controls for prompts, compendium, and
+        full project data (JSON and EPUB).</li>
+</ul>
+<h3>Text Generation</h3>
+<ul>
+    <li><strong>Multi-model selection</strong> &mdash; assign different models per task type.</li>
+    <li><strong>Inline generation</strong> &mdash; toggle whether generated text is inserted directly into the editor.</li>
+    <li><strong>Incremental rewrite</strong> &mdash; stream rewrites into the editor in real time.</li>
+    <li><strong>Task toast notifications</strong> &mdash; configure notifications for background
+        generation, summarization, and memory tasks.</li>
+</ul>
+<h3>Prompt Templates</h3>
+<p>
+    See <a href="#prompt-templates">Prompt Templates</a> below.
+</p>
+
+<!-- ========== PROMPT TEMPLATES ========== -->
+<a name="prompt-templates"></a>
+<h2>Prompt Templates</h2>
+<p>
+    Prompt templates define the system and user messages sent to the AI. Scene includes built-in
+    templates for each task type. You can customize them or create your own in
+    <strong>Project Settings &rarr; Prompt Templates</strong>.
+</p>
+<h3>Template categories</h3>
+<table>
+    <tr><th>Category</th><th>Used for</th></tr>
+    <tr><td>Prose</td><td>Generating new text from story beats.</td></tr>
+    <tr><td>Rewrite</td><td>Rewriting, expanding, or shortening selected text.</td></tr>
+    <tr><td>Summary</td><td>Generating scene and chapter summaries.</td></tr>
+    <tr><td>Workshop</td><td>Workshop chat conversations.</td></tr>
+</table>
+<h3>Template variables</h3>
+<p>
+    Templates use <code>{{variable}}</code> syntax. Legacy <code>{variable}</code> syntax is also
+    supported. The template editor in Project Settings shows a rendered preview and warns about
+    unrecognized variables.
+</p>
+<h4>Common variables</h4>
+<table>
+    <tr><th>Variable</th><th>Description</th></tr>
+    <tr><td><code>{{beat}}</code></td><td>Current beat input text.</td></tr>
+    <tr><td><code>{{scene}}</code></td><td>Current scene body.</td></tr>
+    <tr><td><code>{{selection}}</code></td><td>Currently selected editor text (rewrite mode).</td></tr>
+    <tr><td><code>{{selection_context}}</code></td><td>Text surrounding the selection for rewrite context.</td></tr>
+    <tr><td><code>{{scene_title}}</code></td><td>Title of the selected scene.</td></tr>
+    <tr><td><code>{{chapter_title}}</code></td><td>Title of the selected chapter.</td></tr>
+    <tr><td><code>{{project_title}}</code></td><td>Project title.</td></tr>
+    <tr><td><code>{{context}}</code></td><td>All selected context (compendium + summaries + rolling memory).</td></tr>
+    <tr><td><code>{{context_rolling}}</code></td><td>Rolling memory block (all scopes).</td></tr>
+    <tr><td><code>{{context_compendium}}</code></td><td>Compendium entries only.</td></tr>
+    <tr><td><code>{{context_scene_summaries}}</code></td><td>Scene summaries only.</td></tr>
+    <tr><td><code>{{context_chapter_summaries}}</code></td><td>Chapter summaries only.</td></tr>
+    <tr><td><code>{{conversation}}</code></td><td>Workshop transcript context.</td></tr>
+    <tr><td><code>{{chat_name}}</code></td><td>Active workshop session name.</td></tr>
+    <tr><td><code>{{summary_scope}}</code></td><td>Summary mode label (scene or chapter).</td></tr>
+    <tr><td><code>{{source}}</code></td><td>Primary source text for the current template category.</td></tr>
+</table>
+<h4>Functions with parameters</h4>
+<table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code>{{scene_tail(chars=2400)}}</code></td><td>Last N characters of the scene.</td></tr>
+    <tr><td><code>{{chat_history(turns=8)}}</code></td><td>Recent workshop chat turns.</td></tr>
+    <tr><td><code>{{context(max_chars=4000)}}</code></td><td>Context with a character limit.</td></tr>
+    <tr><td><code>{{context_rolling(max_chars=2200)}}</code></td><td>Rolling memory with a character limit.</td></tr>
+    <tr><td><code>{{context_compendium(max_chars=4000)}}</code></td><td>Compendium context with a limit.</td></tr>
+    <tr><td><code>{{context_scene_summaries(max_chars=4000)}}</code></td><td>Scene summaries with a limit.</td></tr>
+    <tr><td><code>{{context_chapter_summaries(max_chars=4000)}}</code></td><td>Chapter summaries with a limit.</td></tr>
+</table>
+<h3>Exporting and importing templates</h3>
+<p>
+    In <strong>Project Settings &rarr; General &rarr; Data Exchange</strong>, export your prompt
+    templates to share with other projects. Import adds new templates and updates built-in templates
+    that you have customized, with duplicate-safe naming for custom templates.
+</p>
+
+<!-- ========== IMPORT/EXPORT ========== -->
+<a name="import-export"></a>
+<h2>Import &amp; Export</h2>
+<p>
+    Scene supports multiple data exchange formats via the <strong>File</strong> menu and
+    <strong>Project Settings &rarr; Data Exchange</strong>.
+</p>
+<h3>Project import</h3>
+<table>
+    <tr><th>Format</th><th>Menu</th><th>Behavior</th></tr>
+    <tr><td>JSON</td><td>File &rarr; Import &rarr; JSON&hellip;</td><td>Creates a new <code>.sceneproj</code> and opens it in a new window.</td></tr>
+    <tr><td>EPUB</td><td>File &rarr; Import &rarr; EPUB&hellip;</td><td>Creates a new <code>.sceneproj</code> from EPUB structure and opens it in a new window.</td></tr>
+</table>
+<h3>Project export</h3>
+<table>
+    <tr><th>Format</th><th>Menu</th><th>Contents</th></tr>
+    <tr><td>JSON</td><td>File &rarr; Export &rarr; JSON&hellip;</td><td>Complete project data as a single JSON file.</td></tr>
+    <tr><td>Plain Text</td><td>File &rarr; Export &rarr; Plain Text&hellip;</td><td>All scenes in chapter/scene order as one <code>.txt</code> file.</td></tr>
+    <tr><td>HTML</td><td>File &rarr; Export &rarr; HTML&hellip;</td><td>Semantic HTML with headings and paragraphs.</td></tr>
+    <tr><td>EPUB</td><td>File &rarr; Export &rarr; EPUB&hellip;</td><td>Standard EPUB with embedded Scene payload for round-trip import.</td></tr>
+</table>
+<p>
+    Project metadata (author, language, publisher, rights, description) is mapped to EPUB OPF
+    metadata fields on export and imported back on EPUB import.
+</p>
+<h3>Data exchange in Project Settings</h3>
+<p>
+    <strong>Project Settings &rarr; General &rarr; Data Exchange</strong> provides additional
+    import/export for prompt templates, compendium entries, and full project data (replacing the
+    current project's content).
+</p>
+
+<!-- ========== PROJECTS ========== -->
+<a name="projects"></a>
+<h2>Project Format</h2>
+<p>
+    Each project is a macOS folder bundle with the <code>.sceneproj</code> extension. Inside:
+</p>
+<table>
+    <tr><th>Path</th><th>Contents</th></tr>
+    <tr><td><code>manifest.json</code></td><td>Project structure, metadata, settings, context selections, and ordering.</td></tr>
+    <tr><td><code>scenes/*.rtf</code></td><td>Scene content in Rich Text Format.</td></tr>
+    <tr><td><code>compendium/*.md</code></td><td>Compendium entries in Markdown.</td></tr>
+    <tr><td><code>workshop/*.json</code></td><td>Workshop chat session messages.</td></tr>
+    <tr><td><code>checkpoints/</code></td><td>Timestamped project snapshots.</td></tr>
+</table>
+<p>
+    The format is schema-versioned. Autosave is enabled by default and can be toggled in Project
+    Settings. The app restores all previously open projects on launch, including the last selected
+    scene in each.
+</p>
+
+<!-- ========== KEYBOARD SHORTCUTS ========== -->
+<a name="keyboard-shortcuts"></a>
+<h2>Keyboard Shortcuts</h2>
+
+<h3>Workspace navigation</h3>
+<table class="shortcut-table">
+    <tr><td><code>Cmd-1</code></td><td>Toggle Binder sidebar</td></tr>
+    <tr><td><code>Cmd-2</code></td><td>Switch to Writing (focuses editor)</td></tr>
+    <tr><td><code>Cmd-3</code></td><td>Switch to Workshop (focuses chat input)</td></tr>
+    <tr><td><code>Cmd-4</code></td><td>Toggle Compendium panel</td></tr>
+    <tr><td><code>Cmd-5</code></td><td>Toggle Summary panel</td></tr>
+    <tr><td><code>Cmd-6</code></td><td>Toggle Notes panel</td></tr>
+    <tr><td><code>Cmd-7</code></td><td>Toggle Conversations panel</td></tr>
+    <tr><td><code>Cmd-8</code></td><td>Toggle Text Generation panel</td></tr>
+    <tr><td><code>Cmd-K</code></td><td>Focus story beat / text generation input</td></tr>
+</table>
+
+<h3>Search</h3>
+<table class="shortcut-table">
+    <tr><td><code>Cmd-F</code></td><td>Find in Scene</td></tr>
+    <tr><td><code>Cmd-Shift-F</code></td><td>Find in Project</td></tr>
+    <tr><td><code>Cmd-G</code></td><td>Find Next</td></tr>
+    <tr><td><code>Cmd-Shift-G</code></td><td>Find Previous</td></tr>
+</table>
+
+<h3>Text editing</h3>
+<table class="shortcut-table">
+    <tr><td><code>Cmd-B</code></td><td>Bold</td></tr>
+    <tr><td><code>Cmd-I</code></td><td>Italic</td></tr>
+    <tr><td><code>Cmd-U</code></td><td>Underline</td></tr>
+    <tr><td><code>Cmd-Z</code></td><td>Undo</td></tr>
+    <tr><td><code>Cmd-Shift-Z</code></td><td>Redo</td></tr>
+</table>
+
+<h3>Input fields</h3>
+<table class="shortcut-table">
+    <tr><td><code>Enter</code></td><td>Send / generate (in beat and chat inputs)</td></tr>
+    <tr><td><code>Cmd-Enter</code></td><td>Insert newline without sending</td></tr>
+</table>
+
+<h3>Help</h3>
+<table class="shortcut-table">
+    <tr><td><code>Cmd-?</code></td><td>Open Scene Help</td></tr>
+</table>
+
 </body>
 </html>

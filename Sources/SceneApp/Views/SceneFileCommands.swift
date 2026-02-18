@@ -156,16 +156,26 @@ struct SceneFileCommands: Commands {
         CommandGroup(after: .help) {
             Divider()
 
-            Button("Open Help Home") {
-                AppHelp.open(.home)
+            Button("The Workspace") {
+                AppHelp.open(.workspace)
             }
 
-            Button("Keyboard Shortcuts") {
-                AppHelp.open(.keyboardShortcuts)
+            Button("Writing & Editing") {
+                AppHelp.open(.editor)
             }
 
             Button("Text Generation") {
                 AppHelp.open(.textGeneration)
+            }
+
+            Button("Workshop Chat") {
+                AppHelp.open(.workshop)
+            }
+
+            Divider()
+
+            Button("Compendium & Context") {
+                AppHelp.open(.compendium)
             }
 
             Button("Rolling Memory") {
@@ -174,6 +184,16 @@ struct SceneFileCommands: Commands {
 
             Button("Prompt Templates") {
                 AppHelp.open(.promptTemplates)
+            }
+
+            Button("AI Provider Setup") {
+                AppHelp.open(.aiProviders)
+            }
+
+            Divider()
+
+            Button("Keyboard Shortcuts") {
+                AppHelp.open(.keyboardShortcuts)
             }
         }
 

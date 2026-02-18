@@ -81,6 +81,13 @@ if [[ "$CLEAN" -eq 1 ]]; then
     rm -rf "$PROJECT_PATH" "$DERIVED_DATA_PATH" "$DIST_DIR/$APP_NAME"
 fi
 
+HELP_LPROJ="$ROOT_DIR/Resources/SceneHelp.help/Contents/Resources/en.lproj"
+if [[ -d "$HELP_LPROJ" ]]; then
+    echo "Rebuilding help search index"
+    rm -f "$HELP_LPROJ/search.cshelpindex"
+    hiutil -I corespotlight -Caf "$HELP_LPROJ/search.cshelpindex" "$HELP_LPROJ/"
+fi
+
 echo "Generating Xcode project from $SPEC_FILE"
 xcodegen generate --spec "$SPEC_FILE" --project "$ROOT_DIR"
 

@@ -44,7 +44,8 @@ Scene/
 ├─ project.yml
 ├─ README.md
 ├─ scripts/
-│  └─ build-gui-app.sh
+│  ├─ build-gui-app.sh
+│  └─ flush-help-cache.sh
 ├─ Resources/
 └─ Sources/SceneApp/
    ├─ SceneApp.swift
@@ -139,6 +140,38 @@ Script options:
 ./scripts/build-gui-app.sh --debug
 ./scripts/build-gui-app.sh --clean --release
 ```
+
+## Help System
+
+The app includes a bundled Apple Help book (`Resources/SceneHelp.help/`) that integrates with the macOS Help menu. The help index must be rebuilt whenever help content changes.
+
+### Rebuilding help after editing content
+
+```bash
+# Rebuild the .cshelpindex from the HTML sources
+hiutil -I corespotlight -Caf \
+  Resources/SceneHelp.help/Contents/Resources/en.lproj/search.cshelpindex \
+  Resources/SceneHelp.help/Contents/Resources/en.lproj/
+```
+
+The build script (`build-gui-app.sh`) runs this automatically before each build.
+
+### Flushing the help cache
+
+macOS caches help book content aggressively via the `helpd` daemon. After rebuilding the app with updated help pages, run:
+
+```bash
+./scripts/flush-help-cache.sh
+```
+
+Then relaunch the app. Without this step, the Help viewer will continue showing stale content.
+
+### Help book structure notes
+
+- HTML anchors must use `<a name="...">` (not `<a id="...">`) for `NSHelpManager.openHelpAnchor` to resolve them.
+- The search index must be `.cshelpindex` format (created with `hiutil -I corespotlight`), not the legacy `.helpindex`.
+- The help bundle's `Info.plist` must include `HPDBookCSIndexPath`, `HPDBookType`, and `CFBundleSignature` alongside `HPDBookTitle` and `HPDBookAccessPath`.
+- The built app must be ad-hoc signed (`codesign --force --deep --sign -`) for `NSHelpManager.registerBooks` to succeed on macOS 15+.
 
 ## Data & Configuration
 
