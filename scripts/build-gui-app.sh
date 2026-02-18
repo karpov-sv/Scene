@@ -105,5 +105,8 @@ mkdir -p "$DIST_DIR"
 rm -rf "$DIST_DIR/$APP_NAME"
 cp -R "$APP_SOURCE" "$DIST_DIR/$APP_NAME"
 
+echo "Ad-hoc signing $APP_NAME"
+codesign --force --deep --sign - "$DIST_DIR/$APP_NAME"
+
 echo "App bundle created at:"
 echo "  $DIST_DIR/$APP_NAME"

@@ -22,6 +22,7 @@
 - Persistent prompt history for workshop input (per conversation) and beat input (per scene), with trimming/deduplication and a 30-entry cap.
 - Rolling memory for workshop sessions, chapters, and scenes, with editable memory sheets in chat and summary headers.
 - `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-8`) plus quick switch/focus to text generation (`Cmd-K`).
+- Native Help menu integration with a bundled `Scene Help` book (topics for shortcuts, generation, rolling memory, and prompts).
 - Project checkpoints with selective restore scope/behavior and scene-level history browsing (diff + text-only restore).
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
 - Project-local settings for AI provider, prompt templates, text generation behavior, and autosave.
@@ -229,6 +230,7 @@ Script options:
 - Added `View -> Switch to Text Generation` command and aligned `Cmd-K`/`Cmd-8` to always focus the generation input when the form is shown.
 - Added writing-panel generation form collapse/restore buttons (bottom-right) with persistent visibility state per window session.
 - Added project-configurable task toast notifications for generation/summarization/memory background tasks and cancellation outcomes.
+- Added standard app help infrastructure: bundled Help Book metadata/resources plus Help menu topic entries.
 - Updated workshop context behavior so explicit `@`/`#` mentions are included even when `Compendium Context` is disabled.
 - Extended `@` mention matching to recognize compendium entry titles in addition to explicit entry tags.
 - Persisted and restored the currently selected scene across app restart/reopen.

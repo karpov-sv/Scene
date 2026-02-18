@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="AppleTitle" content="Scene Help">
+    <title>Scene Help</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+        }
+        body {
+            margin: 24px auto;
+            max-width: 860px;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.5;
+            padding: 0 20px 40px;
+        }
+        h1, h2 {
+            line-height: 1.25;
+        }
+        .toc {
+            padding: 12px 14px;
+            border: 1px solid #c9c9c9;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+        .toc ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+        code {
+            font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+            font-size: 0.94em;
+            background: rgba(127, 127, 127, 0.14);
+            border-radius: 4px;
+            padding: 1px 4px;
+        }
+        .muted {
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <a name="home"></a>
+    <h1>Scene Help</h1>
+    <p class="muted">
+        Quick reference for the writing workspace, generation tools, context, and rolling memory workflows.
+    </p>
+
+    <div class="toc">
+        <strong>Sections</strong>
+        <ul>
+            <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
+            <li><a href="#text-generation">Text Generation</a></li>
+            <li><a href="#rolling-memory">Rolling Memory</a></li>
+            <li><a href="#prompt-templates">Prompt Templates</a></li>
+        </ul>
+    </div>
+
+    <a name="keyboard-shortcuts"></a>
+    <h2>Keyboard Shortcuts</h2>
+    <p>
+        Main workspace shortcuts:
+    </p>
+    <ul>
+        <li><code>Cmd-1</code> Toggle Binder</li>
+        <li><code>Cmd-2</code> Switch to Writing</li>
+        <li><code>Cmd-3</code> Switch to Workshop</li>
+        <li><code>Cmd-4</code> Toggle Compendium panel</li>
+        <li><code>Cmd-5</code> Toggle Summary panel</li>
+        <li><code>Cmd-6</code> Toggle Notes panel</li>
+        <li><code>Cmd-7</code> Toggle Conversations panel</li>
+        <li><code>Cmd-8</code> Toggle Text Generation panel</li>
+        <li><code>Cmd-K</code> Switch to Text Generation and focus beat input</li>
+    </ul>
+    <p>
+        In generation and workshop inputs, <code>Enter</code> sends and <code>Cmd-Enter</code> inserts a newline.
+    </p>
+
+    <a name="text-generation"></a>
+    <h2>Text Generation</h2>
+    <p>
+        Use the generation form under the editor to produce prose from a beat or rewrite selected text.
+    </p>
+    <ul>
+        <li>When text is selected, the action switches to rewrite mode.</li>
+        <li>Use <code>@</code> to mention compendium entries and <code>#</code> to mention scenes.</li>
+        <li>The generation form can be collapsed from its lower-right control and restored later.</li>
+    </ul>
+
+    <a name="rolling-memory"></a>
+    <h2>Rolling Memory</h2>
+    <p>
+        Scene, chapter, and workshop memories keep high-signal state between generations.
+    </p>
+    <ul>
+        <li>Workshop memory is chat-session-local and refreshes automatically in background.</li>
+        <li>Scene and chapter memory can be edited from the Summary panel via the book button.</li>
+        <li>Chapter memory supports iterative updates from scene text sources.</li>
+    </ul>
+
+    <a name="prompt-templates"></a>
+    <h2>Prompt Templates</h2>
+    <p>
+        Prompt templates support variables like <code>{{beat}}</code>, <code>{{context}}</code>, and
+        <code>{{context_rolling}}</code>.
+    </p>
+    <p>
+        Open <strong>Project Settings -> Prompt Templates</strong> for variable reference and rendered previews.
+    </p>
+</body>
+</html>

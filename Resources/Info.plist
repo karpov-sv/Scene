@@ -10,6 +10,10 @@
     <string>$(PRODUCT_NAME)</string>
     <key>CFBundleDisplayName</key>
     <string>Scene</string>
+    <key>CFBundleHelpBookFolder</key>
+    <string>SceneHelp.help</string>
+    <key>CFBundleHelpBookName</key>
+    <string>Scene Help</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>

@@ -146,6 +146,37 @@ struct SceneFileCommands: Commands {
             .disabled(viewActions?.canUseViewActions != true)
         }
 
+        CommandGroup(replacing: .help) {
+            Button("Scene Help") {
+                AppHelp.open(.home)
+            }
+            .keyboardShortcut("?", modifiers: .command)
+        }
+
+        CommandGroup(after: .help) {
+            Divider()
+
+            Button("Open Help Home") {
+                AppHelp.open(.home)
+            }
+
+            Button("Keyboard Shortcuts") {
+                AppHelp.open(.keyboardShortcuts)
+            }
+
+            Button("Text Generation") {
+                AppHelp.open(.textGeneration)
+            }
+
+            Button("Rolling Memory") {
+                AppHelp.open(.rollingMemory)
+            }
+
+            Button("Prompt Templates") {
+                AppHelp.open(.promptTemplates)
+            }
+        }
+
         CommandMenu("Checkpoints") {
             Button("Create") {
                 checkpointActions?.createCheckpoint()

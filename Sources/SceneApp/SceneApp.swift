@@ -5,6 +5,11 @@ import AppKit
 final class SceneAppDelegate: NSObject, NSApplicationDelegate {
     private let persistence = ProjectPersistence.shared
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Register the help book bundled in Resources/SceneHelp.help so that
+        // NSHelpManager.openHelpAnchor can find it. Without this, macOS falls
+        // back to the Tips app for any help request.
+        NSHelpManager.shared.registerBooks(in: Bundle.main)
+
         // When launched from `swift run`, make the app frontmost so keyboard input
         // is delivered to the window instead of remaining in the terminal.
         NSApp.setActivationPolicy(.regular)

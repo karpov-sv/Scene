@@ -16,6 +16,10 @@ targets:
         optional: true
         excludes:
           - Info.plist
+          - SceneHelp.help
+      - path: Resources/SceneHelp.help
+        type: folder
+        optional: true
     settings:
       base:
         PRODUCT_NAME: SceneApp
