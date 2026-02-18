@@ -32,6 +32,8 @@ struct ContentView: View {
     private var storedWritingSidePanelRawValue: String = WritingSidePanel.compendium.rawValue
     @AppStorage("SceneApp.ui.binderVisible")
     private var storedBinderVisible: Bool = true
+    @AppStorage("SceneApp.ui.generationPanelVisible")
+    private var storedGenerationPanelVisible: Bool = true
     @State private var summaryScope: SummaryScope = .scene
     @State private var notesScope: NotesScope = .scene
     @State private var workspaceColumnVisibility: NavigationSplitViewVisibility = .all
@@ -88,6 +90,7 @@ struct ContentView: View {
             .onAppear {
                 restoreSidebarStateFromStorage()
                 restoreBinderVisibilityFromStorage()
+                restoreGenerationPanelVisibilityFromStorage()
             }
             .onChange(of: selectedTab) { _, newValue in
                 storedWorkspaceTabRawValue = newValue.rawValue
@@ -97,6 +100,9 @@ struct ContentView: View {
             }
             .onChange(of: workspaceColumnVisibility) { _, newValue in
                 storedBinderVisible = newValue != .detailOnly
+            }
+            .onChange(of: store.isGenerationPanelVisible) { _, newValue in
+                storedGenerationPanelVisible = newValue
             }
     }
 
@@ -361,7 +367,7 @@ struct ContentView: View {
             findPrevious: activatePreviousSearchResult,
             focusBeatInput: {
                 selectedTab = .writing
-                store.requestBeatInputFocus()
+                store.focusTextGenerationInput()
             },
             canFindInScene: store.isProjectOpen && store.selectedScene != nil,
             canFindInProject: store.isProjectOpen,
@@ -386,6 +392,7 @@ struct ContentView: View {
             toggleSummary: toggleSummaryPanel,
             toggleNotes: toggleNotesPanel,
             toggleConversations: toggleConversationsPanel,
+            toggleTextGeneration: toggleGenerationPanel,
             canUseViewActions: store.isProjectOpen
         )
     }
@@ -501,6 +508,18 @@ struct ContentView: View {
         writingSidePanel = writingSidePanel == .conversations ? .none : .conversations
     }
 
+    private func toggleGenerationPanel() {
+        guard store.isProjectOpen else { return }
+        let wasInWriting = selectedTab == .writing
+        selectedTab = .writing
+
+        if store.isGenerationPanelVisible && wasInWriting {
+            store.setGenerationPanelVisible(false)
+        } else {
+            store.focusTextGenerationInput()
+        }
+    }
+
     private func toggleBinderSidebar() {
         guard store.isProjectOpen else { return }
         workspaceColumnVisibility = workspaceColumnVisibility == .detailOnly ? .all : .detailOnly
@@ -508,6 +527,10 @@ struct ContentView: View {
 
     private func restoreBinderVisibilityFromStorage() {
         workspaceColumnVisibility = storedBinderVisible ? .all : .detailOnly
+    }
+
+    private func restoreGenerationPanelVisibilityFromStorage() {
+        store.setGenerationPanelVisible(storedGenerationPanelVisible)
     }
 
     private func restoreSidebarStateFromStorage() {

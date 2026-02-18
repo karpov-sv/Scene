@@ -107,6 +107,12 @@ struct SceneFileCommands: Commands {
             .keyboardShortcut("3", modifiers: .command)
             .disabled(viewActions?.canUseViewActions != true)
 
+            Button("Switch to Text Generation") {
+                searchActions?.focusBeatInput()
+            }
+            .keyboardShortcut("k", modifiers: .command)
+            .disabled(searchActions?.canFocusBeatInput != true)
+
             Divider()
 
             Button("Toggle Compendium") {
@@ -131,6 +137,12 @@ struct SceneFileCommands: Commands {
                 viewActions?.toggleConversations()
             }
             .keyboardShortcut("7", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
+            Button("Toggle Text Generation") {
+                viewActions?.toggleTextGeneration()
+            }
+            .keyboardShortcut("8", modifiers: .command)
             .disabled(viewActions?.canUseViewActions != true)
         }
 

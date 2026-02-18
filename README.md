@@ -13,6 +13,7 @@
 - AI prose generation from story beats with streaming, cancellation, payload preview, and token usage stats.
 - AI rewrite actions (rewrite/expand/shorten) on selected text via prompt templates, with optional incremental rewrite streaming.
 - Streaming generation/rewrite updates are coalesced into a single undo step per run.
+- Collapsible text-generation form in the writing panel, with persistent visibility state and quick re-focus actions.
 - Scene and chapter summary workflows with editable summaries and streaming updates.
 - Compendium with categories (characters, locations, lore, items, notes).
 - Scene-local context selection using compendium entries, scene summaries, and chapter summaries.
@@ -20,7 +21,7 @@
 - Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
 - Persistent prompt history for workshop input (per conversation) and beat input (per scene), with trimming/deduplication and a 30-entry cap.
 - Rolling memory for workshop sessions, chapters, and scenes, with editable memory sheets in chat and summary headers.
-- `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-7`).
+- `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-8`) plus quick switch/focus to text generation (`Cmd-K`).
 - Project checkpoints with selective restore scope/behavior and scene-level history browsing (diff + text-only restore).
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
 - Project-local settings for AI provider, prompt templates, text generation behavior, and autosave.
@@ -148,7 +149,7 @@ Script options:
   - `workshop/*.json` (chat messages)
 - The app restores the last opened project on restart, including the last selected scene for that project.
 - Project Settings -> General includes `Autosave project changes` (enabled by default) and project metadata fields.
-- Project Settings -> Text Generation includes multi-model selection, inline generation toggle, and rewrite behavior toggles.
+- Project Settings -> Text Generation includes multi-model selection, inline generation toggle, rewrite behavior toggles, and task-notification controls.
 - Supported providers: `OpenAI (ChatGPT)`, `Anthropic (Claude)`, `OpenRouter`, `LM Studio (Local)`, and `OpenAI-Compatible (Custom)`.
 - Configure provider settings in Project Settings:
   - endpoint URL (auto-populated with provider default)
@@ -201,6 +202,7 @@ Script options:
   - chapter summary text
   - chapter text up to the currently selected scene
   - full chapter text
+- During iterative chapter-memory refresh from scene text, the chapter memory sheet updates live after each scene merge step (when the sheet is open).
 - Scene memory can be edited from the Summary panel in scene scope (`book` icon), with an `Update...` menu:
   - scene summary text
   - full scene text
@@ -222,6 +224,11 @@ Script options:
   - `Cmd-5` toggle summary
   - `Cmd-6` toggle notes
   - `Cmd-7` toggle conversations
+  - `Cmd-8` toggle text generation (opens and focuses generation input when showing)
+  - `Cmd-K` switch to text generation / focus story beat input
+- Added `View -> Switch to Text Generation` command and aligned `Cmd-K`/`Cmd-8` to always focus the generation input when the form is shown.
+- Added writing-panel generation form collapse/restore buttons (bottom-right) with persistent visibility state per window session.
+- Added project-configurable task toast notifications for generation/summarization/memory background tasks and cancellation outcomes.
 - Updated workshop context behavior so explicit `@`/`#` mentions are included even when `Compendium Context` is disabled.
 - Extended `@` mention matching to recognize compendium entry titles in addition to explicit entry tags.
 - Persisted and restored the currently selected scene across app restart/reopen.

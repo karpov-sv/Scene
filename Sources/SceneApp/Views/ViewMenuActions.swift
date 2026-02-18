@@ -8,6 +8,7 @@ struct ViewMenuActions {
     let toggleSummary: () -> Void
     let toggleNotes: () -> Void
     let toggleConversations: () -> Void
+    let toggleTextGeneration: () -> Void
     let canUseViewActions: Bool
 }
 

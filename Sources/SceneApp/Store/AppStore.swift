@@ -493,6 +493,7 @@ final class AppStore: ObservableObject {
     // Per-document UI layout state (avoids global @AppStorage cross-window contamination)
     @Published var workspaceTab: String = "writing"
     @Published var writingSidePanel: String = "compendium"
+    @Published var isGenerationPanelVisible: Bool = true
 
     private let persistence: ProjectPersistence
     private let openAIService: OpenAICompatibleAIService
@@ -965,6 +966,23 @@ final class AppStore: ObservableObject {
 
     func requestBeatInputFocus() {
         beatInputFocusRequestID = UUID()
+    }
+
+    func focusTextGenerationInput() {
+        isGenerationPanelVisible = true
+        requestBeatInputFocus()
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.requestBeatInputFocus()
+        }
+    }
+
+    func setGenerationPanelVisible(_ visible: Bool) {
+        isGenerationPanelVisible = visible
+    }
+
+    func toggleGenerationPanelVisibility() {
+        isGenerationPanelVisible.toggle()
     }
 
     func requestSceneEditorFocus() {

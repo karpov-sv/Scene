@@ -341,6 +341,22 @@ struct EditorView: View {
             Divider()
             writingSplit
         }
+        .overlay(alignment: .bottomTrailing) {
+            if !store.isGenerationPanelVisible {
+                Button {
+                    store.setGenerationPanelVisible(true)
+                } label: {
+                    Image(systemName: "chevron.up.circle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Show text generation form.")
+                .padding(.trailing, 10)
+                .padding(.bottom, 8)
+            }
+        }
     }
 
     private var sceneHeader: some View {
@@ -585,16 +601,23 @@ struct EditorView: View {
         .padding(.bottom, -10)
     }
 
+    @ViewBuilder
     private var writingSplit: some View {
-        VSplitView {
+        if store.isGenerationPanelVisible {
+            VSplitView {
+                sceneEditor
+                    .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
+                    .layoutPriority(1)
+
+                generationPanel
+                    .frame(minHeight: generationPanelMinimumHeight, idealHeight: generationPanelInitialHeight, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
             sceneEditor
                 .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
-                .layoutPriority(1)
-
-            generationPanel
-                .frame(minHeight: generationPanelMinimumHeight, idealHeight: generationPanelInitialHeight, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sceneEditor: some View {
@@ -787,15 +810,31 @@ struct EditorView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            Text(
-                isRewriteMode
-                    ? "Selection is active: prompt, preview, and action buttons now target rewrite for the selected text."
-                    : "Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes."
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
-                .padding(.bottom, 6)
+            HStack(alignment: .center, spacing: 8) {
+                Text(
+                    isRewriteMode
+                        ? "Selection is active: prompt, preview, and action buttons now target rewrite for the selected text."
+                        : "Press Enter to send. Press Cmd+Enter for a newline. Use @ for compendium entries, # for scenes."
+                )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    store.setGenerationPanelVisible(false)
+                } label: {
+                    Image(systemName: "chevron.down.circle")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Hide text generation form.")
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
