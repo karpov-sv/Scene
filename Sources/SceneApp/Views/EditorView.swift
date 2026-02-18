@@ -1109,6 +1109,7 @@ struct EditorView: View {
 
 private struct SceneRollingMemorySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isSummaryEditorFocused: Bool
 
     let sceneTitle: String
     let updatedAt: Date?
@@ -1149,6 +1150,7 @@ private struct SceneRollingMemorySheet: View {
                 .scrollContentBackground(.hidden)
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
+                .focused($isSummaryEditorFocused)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
@@ -1201,6 +1203,11 @@ private struct SceneRollingMemorySheet: View {
             }
         }
         .frame(minWidth: 540, minHeight: 360)
+        .onAppear {
+            DispatchQueue.main.async {
+                isSummaryEditorFocused = true
+            }
+        }
     }
 
     private static let timestampFormatter: DateFormatter = {
