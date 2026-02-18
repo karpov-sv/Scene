@@ -120,6 +120,7 @@ final class AppStore: ObservableObject {
     private static let rollingChapterMemoryMaxChars = 2600
     private static let rollingSceneMemorySourceChars = 12000
     private static let rollingChapterMemorySourceChars = 18000
+    private static let rollingChapterMemorySceneChunkChars = 6000
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
         "cover",
@@ -160,6 +161,12 @@ final class AppStore: ObservableObject {
     struct SceneLocation {
         let chapterIndex: Int
         let sceneIndex: Int
+    }
+
+    enum ChapterRollingMemorySceneSource {
+        case currentScene
+        case upToSelectedScene
+        case fullChapter
     }
 
     struct WorkshopPayloadPreview: Identifiable {
@@ -411,6 +418,11 @@ final class AppStore: ObservableObject {
         let chapterTitle: String
         let sceneContent: String
         let note: String?
+    }
+
+    private struct ChapterMemorySourceChunk {
+        let label: String
+        let text: String
     }
 
     @Published private(set) var project: StoryProject
@@ -2641,54 +2653,44 @@ final class AppStore: ObservableObject {
         let chapterTitle = displayChapterTitle(chapter)
         let sourceExcerpt = String(trimmedSource.prefix(Self.rollingChapterMemorySourceChars))
         let existingMemory = rollingChapterSummary(for: chapter.id)
-
-        let systemPrompt = """
-        You maintain concise long-lived memory for a single fiction chapter.
-
-        Output rules:
-        - Return plain prose bullets or short paragraphs only.
-        - Keep stable facts, chapter-level decisions, continuity constraints, unresolved questions, and arc-level shifts.
-        - Remove repetition and low-value narration details.
-        - Do not invent facts not present in input.
-        """
-
-        let userPrompt = """
-        CHAPTER: \(chapterTitle)
-
-        EXISTING_MEMORY:
-        <<<
-        \(existingMemory)
-        >>>
-
-        SOURCE_TEXT:
-        <<<
-        \(sourceExcerpt)
-        >>>
-
-        TASK:
-        Update the chapter memory by merging EXISTING_MEMORY with SOURCE_TEXT. Keep the result compact and high-signal.
-        """
-
-        let request = TextGenerationRequest(
-            systemPrompt: systemPrompt,
-            userPrompt: userPrompt,
-            model: resolvedPrimaryModel(),
-            temperature: min(project.settings.temperature, 0.3),
-            maxTokens: min(project.settings.maxTokens, 1000)
+        let normalizedSummary = try await mergeChapterRollingMemory(
+            chapterTitle: chapterTitle,
+            existingMemory: existingMemory,
+            sourceText: sourceExcerpt
         )
-
-        let result = try await generateTextResult(request)
-        let normalizedSummary = normalizedRollingMemorySummary(
-            result.text,
-            maxChars: Self.rollingChapterMemoryMaxChars
-        )
-        guard !normalizedSummary.isEmpty else {
-            throw AIServiceError.badResponse("Chapter memory update was empty.")
-        }
 
         updateRollingChapterMemory(chapterID: chapter.id, summary: normalizedSummary)
         saveProject(debounced: true)
         return normalizedSummary
+    }
+
+    func refreshSelectedChapterRollingMemoryFromScenes(
+        _ source: ChapterRollingMemorySceneSource
+    ) async throws -> String {
+        guard let chapter = selectedChapter else {
+            throw AIServiceError.badResponse("Select a chapter first.")
+        }
+
+        let chunks = try chapterMemorySourceChunks(chapter: chapter, source: source)
+        guard !chunks.isEmpty else {
+            throw AIServiceError.badResponse("Source text is empty.")
+        }
+
+        let chapterTitle = displayChapterTitle(chapter)
+        var memory = rollingChapterSummary(for: chapter.id)
+        for chunk in chunks {
+            try Task.checkCancellation()
+            memory = try await mergeChapterRollingMemory(
+                chapterTitle: chapterTitle,
+                existingMemory: memory,
+                sourceText: chunk.text,
+                sourceLabel: chunk.label
+            )
+        }
+
+        updateRollingChapterMemory(chapterID: chapter.id, summary: memory)
+        saveProject(debounced: true)
+        return memory
     }
 
     func updateSelectedChapterSummary(_ summary: String) {
@@ -6557,6 +6559,151 @@ final class AppStore: ObservableObject {
         let combined = chunks.joined(separator: "\n\n")
         guard let maxChars, maxChars > 0 else { return combined }
         return combined.count > maxChars ? String(combined.prefix(maxChars)) : combined
+    }
+
+    private func chunkTextByCharacters(_ text: String, maxChars: Int) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, maxChars > 0 else { return [] }
+
+        let chunkLimit = min(maxChars, Self.rollingChapterMemorySourceChars)
+        var chunks: [String] = []
+        var start = trimmed.startIndex
+        while start < trimmed.endIndex {
+            let end = trimmed.index(start, offsetBy: chunkLimit, limitedBy: trimmed.endIndex) ?? trimmed.endIndex
+            let chunk = trimmed[start..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !chunk.isEmpty {
+                chunks.append(String(chunk))
+            }
+            start = end
+        }
+        return chunks
+    }
+
+    private func chapterMemorySourceChunks(
+        chapter: Chapter,
+        source: ChapterRollingMemorySceneSource
+    ) throws -> [ChapterMemorySourceChunk] {
+        let scenesWithIndex: [(index: Int, scene: Scene)] = {
+            switch source {
+            case .fullChapter:
+                return Array(chapter.scenes.enumerated()).map { ($0.offset, $0.element) }
+            case .currentScene:
+                guard let selectedSceneID,
+                      let index = chapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) else {
+                    return []
+                }
+                return [(index: index, scene: chapter.scenes[index])]
+            case .upToSelectedScene:
+                guard let selectedSceneID,
+                      let index = chapter.scenes.firstIndex(where: { $0.id == selectedSceneID }) else {
+                    return []
+                }
+                return Array(chapter.scenes.prefix(index + 1).enumerated()).map { ($0.offset, $0.element) }
+            }
+        }()
+
+        guard !scenesWithIndex.isEmpty else {
+            switch source {
+            case .fullChapter:
+                throw AIServiceError.badResponse("Selected chapter has no scenes.")
+            case .currentScene:
+                throw AIServiceError.badResponse("Select a scene in this chapter first.")
+            case .upToSelectedScene:
+                throw AIServiceError.badResponse("Select a scene in this chapter first.")
+            }
+        }
+
+        var chunks: [ChapterMemorySourceChunk] = []
+        for (sceneIndex, scene) in scenesWithIndex {
+            let sceneContent = scene.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sceneContent.isEmpty else { continue }
+
+            let sceneTitle = displaySceneTitle(scene)
+            let sceneLabel = "Scene \(sceneIndex + 1): \(sceneTitle)"
+            let sceneChunks = chunkTextByCharacters(
+                sceneContent,
+                maxChars: Self.rollingChapterMemorySceneChunkChars
+            )
+
+            for (chunkIndex, chunkText) in sceneChunks.enumerated() {
+                let label: String = {
+                    if sceneChunks.count == 1 {
+                        return sceneLabel
+                    }
+                    return "\(sceneLabel) (part \(chunkIndex + 1))"
+                }()
+                chunks.append(
+                    ChapterMemorySourceChunk(
+                        label: label,
+                        text: "\(label)\n\(chunkText)"
+                    )
+                )
+            }
+        }
+
+        return chunks
+    }
+
+    private func mergeChapterRollingMemory(
+        chapterTitle: String,
+        existingMemory: String,
+        sourceText: String,
+        sourceLabel: String? = nil
+    ) async throws -> String {
+        let trimmedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty else {
+            throw AIServiceError.badResponse("Source text is empty.")
+        }
+
+        let sourceExcerpt = String(trimmedSource.prefix(Self.rollingChapterMemorySourceChars))
+        let normalizedExistingMemory = existingMemory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSourceLabel = sourceLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sourceLabelLine = normalizedSourceLabel.isEmpty ? "" : "SOURCE_SEGMENT: \(normalizedSourceLabel)\n\n"
+
+        let systemPrompt = """
+        You maintain concise long-lived memory for a single fiction chapter.
+
+        Output rules:
+        - Return plain prose bullets or short paragraphs only.
+        - Keep stable facts, chapter-level decisions, continuity constraints, unresolved questions, and arc-level shifts.
+        - Remove repetition and low-value narration details.
+        - Do not invent facts not present in input.
+        """
+
+        let userPrompt = """
+        CHAPTER: \(chapterTitle)
+
+        EXISTING_MEMORY:
+        <<<
+        \(normalizedExistingMemory)
+        >>>
+
+        \(sourceLabelLine)SOURCE_TEXT:
+        <<<
+        \(sourceExcerpt)
+        >>>
+
+        TASK:
+        Update the chapter memory by merging EXISTING_MEMORY with SOURCE_TEXT. Keep the result compact and high-signal.
+        """
+
+        let request = TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: resolvedPrimaryModel(),
+            temperature: min(project.settings.temperature, 0.3),
+            maxTokens: min(project.settings.maxTokens, 1000)
+        )
+
+        let result = try await generateTextResult(request)
+        let normalizedSummary = normalizedRollingMemorySummary(
+            result.text,
+            maxChars: Self.rollingChapterMemoryMaxChars
+        )
+        guard !normalizedSummary.isEmpty else {
+            throw AIServiceError.badResponse("Chapter memory update was empty.")
+        }
+        return normalizedSummary
     }
 
     private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> PromptRenderer.Result {

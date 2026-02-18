@@ -401,13 +401,13 @@ struct SceneSummaryPanelView: View {
                 refreshChapterRollingMemory(from: chapterSummarySourceText)
             },
             onUpdateFromCurrentSceneText: {
-                refreshChapterRollingMemory(from: chapterCurrentSceneSourceText)
+                refreshChapterRollingMemory(fromSceneSource: .currentScene)
             },
             onUpdateFromFullChapterText: {
-                refreshChapterRollingMemory(from: chapterFullSourceText)
+                refreshChapterRollingMemory(fromSceneSource: .fullChapter)
             },
             onUpdateFromUpToSelectedSceneText: {
-                refreshChapterRollingMemory(from: chapterUpToSelectedSceneSourceText)
+                refreshChapterRollingMemory(fromSceneSource: .upToSelectedScene)
             }
         )
     }
@@ -455,6 +455,29 @@ struct SceneSummaryPanelView: View {
 
             do {
                 let refreshed = try await store.refreshSelectedChapterRollingMemory(from: trimmedSource)
+                chapterRollingMemoryDraft = refreshed
+            } catch is CancellationError {
+                return
+            } catch {
+                chapterRollingMemoryRefreshError = error.localizedDescription
+                store.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshChapterRollingMemory(
+        fromSceneSource source: AppStore.ChapterRollingMemorySceneSource
+    ) {
+        cancelChapterRollingMemoryRefresh()
+        chapterRollingMemoryRefreshError = ""
+
+        chapterRollingMemoryTask = Task { @MainActor in
+            defer {
+                chapterRollingMemoryTask = nil
+            }
+
+            do {
+                let refreshed = try await store.refreshSelectedChapterRollingMemoryFromScenes(source)
                 chapterRollingMemoryDraft = refreshed
             } catch is CancellationError {
                 return
