@@ -1156,6 +1156,10 @@ struct GenerationSettings: Codable, Equatable {
     var maxTokens: Int
     var enableStreaming: Bool
     var requestTimeoutSeconds: Double
+    var enableTaskNotifications: Bool
+    var showTaskProgressNotifications: Bool
+    var showTaskCancellationNotifications: Bool
+    var taskNotificationDurationSeconds: Double
     var defaultSystemPrompt: String
 
     static let openAIDefaultEndpoint = "https://api.openai.com/v1"
@@ -1178,6 +1182,10 @@ struct GenerationSettings: Codable, Equatable {
         maxTokens: Int,
         enableStreaming: Bool,
         requestTimeoutSeconds: Double,
+        enableTaskNotifications: Bool,
+        showTaskProgressNotifications: Bool,
+        showTaskCancellationNotifications: Bool,
+        taskNotificationDurationSeconds: Double,
         defaultSystemPrompt: String
     ) {
         self.provider = provider
@@ -1193,6 +1201,10 @@ struct GenerationSettings: Codable, Equatable {
         self.maxTokens = maxTokens
         self.enableStreaming = enableStreaming
         self.requestTimeoutSeconds = requestTimeoutSeconds
+        self.enableTaskNotifications = enableTaskNotifications
+        self.showTaskProgressNotifications = showTaskProgressNotifications
+        self.showTaskCancellationNotifications = showTaskCancellationNotifications
+        self.taskNotificationDurationSeconds = taskNotificationDurationSeconds
         self.defaultSystemPrompt = defaultSystemPrompt
     }
 
@@ -1210,6 +1222,10 @@ struct GenerationSettings: Codable, Equatable {
         case maxTokens
         case enableStreaming
         case requestTimeoutSeconds
+        case enableTaskNotifications
+        case showTaskProgressNotifications
+        case showTaskCancellationNotifications
+        case taskNotificationDurationSeconds
         case defaultSystemPrompt
     }
 
@@ -1242,6 +1258,13 @@ struct GenerationSettings: Codable, Equatable {
         maxTokens = try container.decode(Int.self, forKey: .maxTokens)
         enableStreaming = try container.decodeIfPresent(Bool.self, forKey: .enableStreaming) ?? true
         requestTimeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .requestTimeoutSeconds) ?? 300
+        enableTaskNotifications = try container.decodeIfPresent(Bool.self, forKey: .enableTaskNotifications) ?? true
+        showTaskProgressNotifications = try container.decodeIfPresent(Bool.self, forKey: .showTaskProgressNotifications) ?? true
+        showTaskCancellationNotifications = try container.decodeIfPresent(Bool.self, forKey: .showTaskCancellationNotifications) ?? true
+        taskNotificationDurationSeconds = min(
+            max(try container.decodeIfPresent(Double.self, forKey: .taskNotificationDurationSeconds) ?? 4.0, 1.0),
+            30.0
+        )
         defaultSystemPrompt = try container.decode(String.self, forKey: .defaultSystemPrompt)
     }
 
@@ -1259,6 +1282,10 @@ struct GenerationSettings: Codable, Equatable {
         maxTokens: 700,
         enableStreaming: true,
         requestTimeoutSeconds: 300,
+        enableTaskNotifications: true,
+        showTaskProgressNotifications: true,
+        showTaskCancellationNotifications: true,
+        taskNotificationDurationSeconds: 4.0,
         defaultSystemPrompt: "You are a fiction writing assistant. Keep continuity and return only the generated passage."
     )
 }

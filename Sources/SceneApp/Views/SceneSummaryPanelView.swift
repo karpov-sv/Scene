@@ -477,7 +477,12 @@ struct SceneSummaryPanelView: View {
             }
 
             do {
-                let refreshed = try await store.refreshSelectedChapterRollingMemoryFromScenes(source)
+                let refreshed = try await store.refreshSelectedChapterRollingMemoryFromScenes(
+                    source
+                ) { partialMemory, _, _ in
+                    guard isChapterRollingMemorySheetPresented else { return }
+                    chapterRollingMemoryDraft = partialMemory
+                }
                 chapterRollingMemoryDraft = refreshed
             } catch is CancellationError {
                 return

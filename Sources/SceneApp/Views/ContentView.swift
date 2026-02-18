@@ -60,6 +60,16 @@ struct ContentView: View {
             .focusedSceneValue(\.searchMenuActions, searchMenuActions)
             .focusedSceneValue(\.viewMenuActions, viewMenuActions)
             .focusedSceneValue(\.checkpointMenuActions, checkpointMenuActions)
+            .overlay(alignment: .bottomTrailing) {
+                if store.isProjectOpen {
+                    TaskNotificationToastStack(
+                        toasts: store.taskNotificationToasts,
+                        onDismiss: { store.dismissTaskNotificationToast($0) }
+                    )
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 16)
+                }
+            }
             .sheet(isPresented: $store.showingSettings) {
                 SettingsSheetView()
                     .environmentObject(store)
@@ -622,6 +632,99 @@ struct ContentView: View {
             if let error {
                 store.lastError = "Imported project was created, but opening a new window failed: \(error.localizedDescription)"
             }
+        }
+    }
+}
+
+private struct TaskNotificationToastStack: View {
+    let toasts: [AppStore.TaskNotificationToast]
+    let onDismiss: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 10) {
+            ForEach(toasts) { toast in
+                TaskNotificationToastRow(toast: toast) {
+                    onDismiss(toast.id)
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.25, dampingFraction: 0.9), value: toasts)
+        .frame(maxWidth: 360, alignment: .trailing)
+    }
+}
+
+private struct TaskNotificationToastRow: View {
+    let toast: AppStore.TaskNotificationToast
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: iconName)
+                .foregroundStyle(accentColor)
+                .frame(width: 16, height: 16, alignment: .center)
+
+            Text(toast.message)
+                .font(.callout)
+                .foregroundStyle(Color.primary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Dismiss")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(minWidth: 240, maxWidth: 360, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(accentColor.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 4)
+    }
+
+    private var iconName: String {
+        switch toast.style {
+        case .progress:
+            return "hourglass"
+        case .success:
+            return "checkmark.circle.fill"
+        case .info:
+            return "info.circle.fill"
+        case .warning:
+            return "exclamationmark.triangle.fill"
+        case .error:
+            return "xmark.octagon.fill"
+        case .cancelled:
+            return "slash.circle.fill"
+        }
+    }
+
+    private var accentColor: Color {
+        switch toast.style {
+        case .progress:
+            return .blue
+        case .success:
+            return .green
+        case .info:
+            return .secondary
+        case .warning:
+            return .orange
+        case .error:
+            return .red
+        case .cancelled:
+            return .gray
         }
     }
 }

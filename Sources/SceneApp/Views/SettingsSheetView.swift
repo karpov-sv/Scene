@@ -273,6 +273,34 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var enableTaskNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.enableTaskNotifications },
+            set: { store.updateEnableTaskNotifications($0) }
+        )
+    }
+
+    private var showTaskProgressNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.showTaskProgressNotifications },
+            set: { store.updateShowTaskProgressNotifications($0) }
+        )
+    }
+
+    private var showTaskCancellationNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.showTaskCancellationNotifications },
+            set: { store.updateShowTaskCancellationNotifications($0) }
+        )
+    }
+
+    private var taskNotificationDurationBinding: Binding<Double> {
+        Binding(
+            get: { store.project.settings.taskNotificationDurationSeconds },
+            set: { store.updateTaskNotificationDurationSeconds($0) }
+        )
+    }
+
     private var defaultSystemPromptBinding: Binding<String> {
         Binding(
             get: { store.project.settings.defaultSystemPrompt },
@@ -1083,6 +1111,56 @@ struct SettingsSheetView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                GroupBox("Task Notifications") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("Show notifications")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: enableTaskNotificationsBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Show task notifications")
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Show progress")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: showTaskProgressNotificationsBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Show task progress notifications")
+                        }
+                        .disabled(!store.project.settings.enableTaskNotifications)
+
+                        HStack(spacing: 8) {
+                            Text("Show cancellation")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: showTaskCancellationNotificationsBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Show task cancellation notifications")
+                        }
+                        .disabled(!store.project.settings.enableTaskNotifications)
+
+                        Stepper(value: taskNotificationDurationBinding, in: 1 ... 30, step: 1) {
+                            HStack {
+                                Text("Auto-hide delay")
+                                Spacer(minLength: 0)
+                                Text(taskNotificationDurationLabel(store.project.settings.taskNotificationDurationSeconds))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                        .disabled(!store.project.settings.enableTaskNotifications)
+
+                        Text("Controls corner notifications for generation, summary, and memory background jobs.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1634,6 +1712,11 @@ struct SettingsSheetView: View {
             return "\(rounded / 60) min"
         }
         return "\(rounded) sec"
+    }
+
+    private func taskNotificationDurationLabel(_ seconds: Double) -> String {
+        let rounded = Int(seconds.rounded())
+        return rounded == 1 ? "1 sec" : "\(rounded) sec"
     }
 
     private func deleteSelectedPrompt() {

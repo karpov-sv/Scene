@@ -121,6 +121,7 @@ final class AppStore: ObservableObject {
     private static let rollingSceneMemorySourceChars = 12000
     private static let rollingChapterMemorySourceChars = 18000
     private static let rollingChapterMemorySceneChunkChars = 6000
+    private static let maxVisibleTaskToasts = 4
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
         "cover",
@@ -425,6 +426,22 @@ final class AppStore: ObservableObject {
         let text: String
     }
 
+    struct TaskNotificationToast: Identifiable, Equatable {
+        enum Style: Equatable {
+            case progress
+            case success
+            case info
+            case warning
+            case error
+            case cancelled
+        }
+
+        let id: UUID
+        var message: String
+        var style: Style
+        var createdAt: Date
+    }
+
     @Published private(set) var project: StoryProject
     @Published private(set) var isProjectOpen: Bool = false
     @Published private(set) var currentProjectURL: URL?
@@ -471,6 +488,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var requestedSceneHistorySceneID: UUID?
 
     @Published var showingSettings: Bool = false
+    @Published private(set) var taskNotificationToasts: [TaskNotificationToast] = []
 
     // Per-document UI layout state (avoids global @AppStorage cross-window contamination)
     @Published var workspaceTab: String = "writing"
@@ -492,6 +510,7 @@ final class AppStore: ObservableObject {
     private var documentSaveInProgress: Bool = false
     private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
+    private var toastDismissTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
         persistence: ProjectPersistence = .shared,
@@ -565,6 +584,10 @@ final class AppStore: ObservableObject {
         workshopRequestTask?.cancel()
         workshopRollingMemoryTask?.cancel()
         proseRequestTask?.cancel()
+        for task in toastDismissTasks.values {
+            task.cancel()
+        }
+        toastDismissTasks.removeAll()
     }
 
     // MARK: - Read APIs
@@ -1800,6 +1823,173 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateEnableTaskNotifications(_ enabled: Bool) {
+        guard project.settings.enableTaskNotifications != enabled else { return }
+        project.settings.enableTaskNotifications = enabled
+        if !enabled {
+            clearTaskNotificationToasts()
+        }
+        saveProject(debounced: true)
+    }
+
+    func updateShowTaskProgressNotifications(_ enabled: Bool) {
+        guard project.settings.showTaskProgressNotifications != enabled else { return }
+        project.settings.showTaskProgressNotifications = enabled
+        saveProject(debounced: true)
+    }
+
+    func updateShowTaskCancellationNotifications(_ enabled: Bool) {
+        guard project.settings.showTaskCancellationNotifications != enabled else { return }
+        project.settings.showTaskCancellationNotifications = enabled
+        saveProject(debounced: true)
+    }
+
+    func updateTaskNotificationDurationSeconds(_ seconds: Double) {
+        let normalized = min(max(seconds, 1), 30)
+        guard abs(project.settings.taskNotificationDurationSeconds - normalized) > 0.001 else { return }
+        project.settings.taskNotificationDurationSeconds = normalized
+        saveProject(debounced: true)
+    }
+
+    func dismissTaskNotificationToast(_ id: UUID) {
+        cancelTaskToastDismiss(id)
+        taskNotificationToasts.removeAll { $0.id == id }
+    }
+
+    private var taskNotificationDuration: TimeInterval {
+        min(max(project.settings.taskNotificationDurationSeconds, 1), 30)
+    }
+
+    private func clearTaskNotificationToasts() {
+        for task in toastDismissTasks.values {
+            task.cancel()
+        }
+        toastDismissTasks.removeAll()
+        taskNotificationToasts = []
+    }
+
+    private func cancelTaskToastDismiss(_ id: UUID) {
+        toastDismissTasks[id]?.cancel()
+        toastDismissTasks.removeValue(forKey: id)
+    }
+
+    private func scheduleTaskToastDismiss(_ id: UUID, after seconds: TimeInterval) {
+        cancelTaskToastDismiss(id)
+        toastDismissTasks[id] = Task { [weak self] in
+            let delay = UInt64(max(0.2, seconds) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, !Task.isCancelled else { return }
+            await MainActor.run {
+                self.dismissTaskNotificationToast(id)
+            }
+        }
+    }
+
+    @discardableResult
+    private func showTaskNotification(
+        _ message: String,
+        style: TaskNotificationToast.Style,
+        updating toastID: UUID? = nil,
+        autoDismiss: Bool
+    ) -> UUID? {
+        guard project.settings.enableTaskNotifications else {
+            if let toastID {
+                dismissTaskNotificationToast(toastID)
+            }
+            return nil
+        }
+
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return toastID }
+
+        let id = toastID ?? UUID()
+        let now = Date()
+        if let index = taskNotificationToasts.firstIndex(where: { $0.id == id }) {
+            taskNotificationToasts[index].message = normalized
+            taskNotificationToasts[index].style = style
+            taskNotificationToasts[index].createdAt = now
+        } else {
+            taskNotificationToasts.append(
+                TaskNotificationToast(
+                    id: id,
+                    message: normalized,
+                    style: style,
+                    createdAt: now
+                )
+            )
+        }
+
+        if taskNotificationToasts.count > Self.maxVisibleTaskToasts {
+            let overflow = taskNotificationToasts.count - Self.maxVisibleTaskToasts
+            let removed = taskNotificationToasts.prefix(overflow)
+            for toast in removed {
+                cancelTaskToastDismiss(toast.id)
+            }
+            taskNotificationToasts.removeFirst(overflow)
+        }
+
+        if autoDismiss {
+            scheduleTaskToastDismiss(id, after: taskNotificationDuration)
+        } else {
+            cancelTaskToastDismiss(id)
+        }
+
+        return id
+    }
+
+    @discardableResult
+    private func startTaskProgressToast(_ message: String) -> UUID? {
+        guard project.settings.showTaskProgressNotifications else { return nil }
+        return showTaskNotification(
+            message,
+            style: .progress,
+            updating: nil,
+            autoDismiss: false
+        )
+    }
+
+    private func finishTaskSuccessToast(_ toastID: UUID?, _ message: String) {
+        _ = showTaskNotification(
+            message,
+            style: .success,
+            updating: toastID,
+            autoDismiss: true
+        )
+    }
+
+    private func finishTaskErrorToast(_ toastID: UUID?, _ message: String) {
+        _ = showTaskNotification(
+            message,
+            style: .error,
+            updating: toastID,
+            autoDismiss: true
+        )
+    }
+
+    private func finishTaskWarningToast(_ toastID: UUID?, _ message: String) {
+        _ = showTaskNotification(
+            message,
+            style: .warning,
+            updating: toastID,
+            autoDismiss: true
+        )
+    }
+
+    private func finishTaskCancelledToast(_ toastID: UUID?, _ message: String) {
+        guard project.settings.showTaskCancellationNotifications else {
+            if let toastID {
+                dismissTaskNotificationToast(toastID)
+            }
+            return
+        }
+        _ = showTaskNotification(
+            message,
+            style: .cancelled,
+            updating: toastID,
+            autoDismiss: true
+        )
+    }
+
     func updateDefaultSystemPrompt(_ prompt: String) {
         project.settings.defaultSystemPrompt = prompt
         saveProject(debounced: true)
@@ -2615,23 +2805,33 @@ final class AppStore: ObservableObject {
             temperature: min(project.settings.temperature, 0.3),
             maxTokens: min(project.settings.maxTokens, 900)
         )
+        let toastID = startTaskProgressToast("Updating scene memory…")
 
-        let result = try await generateTextResult(request)
-        let normalizedSummary = normalizedRollingMemorySummary(
-            result.text,
-            maxChars: Self.rollingSceneMemoryMaxChars
-        )
-        guard !normalizedSummary.isEmpty else {
-            throw AIServiceError.badResponse("Scene memory update was empty.")
+        do {
+            let result = try await generateTextResult(request)
+            let normalizedSummary = normalizedRollingMemorySummary(
+                result.text,
+                maxChars: Self.rollingSceneMemoryMaxChars
+            )
+            guard !normalizedSummary.isEmpty else {
+                throw AIServiceError.badResponse("Scene memory update was empty.")
+            }
+
+            updateRollingSceneMemory(
+                sceneID: sceneID,
+                summary: normalizedSummary,
+                sourceContent: scene.content
+            )
+            saveProject(debounced: true)
+            finishTaskSuccessToast(toastID, "Scene memory updated.")
+            return normalizedSummary
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Scene memory update cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Scene memory update failed.")
+            throw error
         }
-
-        updateRollingSceneMemory(
-            sceneID: sceneID,
-            summary: normalizedSummary,
-            sourceContent: scene.content
-        )
-        saveProject(debounced: true)
-        return normalizedSummary
     }
 
     func updateSelectedChapterRollingMemory(_ summary: String) {
@@ -2653,19 +2853,31 @@ final class AppStore: ObservableObject {
         let chapterTitle = displayChapterTitle(chapter)
         let sourceExcerpt = String(trimmedSource.prefix(Self.rollingChapterMemorySourceChars))
         let existingMemory = rollingChapterSummary(for: chapter.id)
-        let normalizedSummary = try await mergeChapterRollingMemory(
-            chapterTitle: chapterTitle,
-            existingMemory: existingMemory,
-            sourceText: sourceExcerpt
-        )
+        let toastID = startTaskProgressToast("Updating chapter memory…")
 
-        updateRollingChapterMemory(chapterID: chapter.id, summary: normalizedSummary)
-        saveProject(debounced: true)
-        return normalizedSummary
+        do {
+            let normalizedSummary = try await mergeChapterRollingMemory(
+                chapterTitle: chapterTitle,
+                existingMemory: existingMemory,
+                sourceText: sourceExcerpt
+            )
+
+            updateRollingChapterMemory(chapterID: chapter.id, summary: normalizedSummary)
+            saveProject(debounced: true)
+            finishTaskSuccessToast(toastID, "Chapter memory updated.")
+            return normalizedSummary
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Chapter memory update cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Chapter memory update failed.")
+            throw error
+        }
     }
 
     func refreshSelectedChapterRollingMemoryFromScenes(
-        _ source: ChapterRollingMemorySceneSource
+        _ source: ChapterRollingMemorySceneSource,
+        onIteration: ((String, Int, Int) -> Void)? = nil
     ) async throws -> String {
         guard let chapter = selectedChapter else {
             throw AIServiceError.badResponse("Select a chapter first.")
@@ -2678,19 +2890,39 @@ final class AppStore: ObservableObject {
 
         let chapterTitle = displayChapterTitle(chapter)
         var memory = rollingChapterSummary(for: chapter.id)
-        for chunk in chunks {
-            try Task.checkCancellation()
-            memory = try await mergeChapterRollingMemory(
-                chapterTitle: chapterTitle,
-                existingMemory: memory,
-                sourceText: chunk.text,
-                sourceLabel: chunk.label
-            )
-        }
+        var toastID = startTaskProgressToast("Updating chapter memory (0/\(chunks.count))…")
 
-        updateRollingChapterMemory(chapterID: chapter.id, summary: memory)
-        saveProject(debounced: true)
-        return memory
+        do {
+            for (index, chunk) in chunks.enumerated() {
+                try Task.checkCancellation()
+                memory = try await mergeChapterRollingMemory(
+                    chapterTitle: chapterTitle,
+                    existingMemory: memory,
+                    sourceText: chunk.text,
+                    sourceLabel: chunk.label
+                )
+                onIteration?(memory, index + 1, chunks.count)
+                if let existingID = toastID {
+                    toastID = showTaskNotification(
+                        "Updating chapter memory (\(index + 1)/\(chunks.count))…",
+                        style: .progress,
+                        updating: existingID,
+                        autoDismiss: false
+                    )
+                }
+            }
+
+            updateRollingChapterMemory(chapterID: chapter.id, summary: memory)
+            saveProject(debounced: true)
+            finishTaskSuccessToast(toastID, "Chapter memory updated.")
+            return memory
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Chapter memory update cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Chapter memory update failed.")
+            throw error
+        }
     }
 
     func updateSelectedChapterSummary(_ summary: String) {
@@ -3044,6 +3276,7 @@ final class AppStore: ObservableObject {
         let request = makeRewriteRequest(selectedText: normalizedSelection, scene: scene).request
         generationStatus = shouldUseStreaming ? "Rewriting..." : "Rewriting..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
+        let toastID = startTaskProgressToast("Rewriting selected text…")
 
         let rewritePartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
@@ -3069,13 +3302,16 @@ final class AppStore: ObservableObject {
 
             proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalizedRewrite)
             generationStatus = "Rewrote \(normalizedRewrite.count) characters."
+            finishTaskSuccessToast(toastID, "Rewrite completed.")
             return normalizedRewrite
         } catch is CancellationError {
             generationStatus = "Rewrite cancelled."
+            finishTaskCancelledToast(toastID, "Rewrite cancelled.")
             throw CancellationError()
         } catch {
             proseLiveUsage = nil
             generationStatus = "Rewrite failed."
+            finishTaskErrorToast(toastID, "Rewrite failed.")
             throw error
         }
     }
@@ -3088,6 +3324,7 @@ final class AppStore: ObservableObject {
         let sceneID = scene.id
         let request = makeSummaryRequest(scene: scene).request
         updateSceneSummary(sceneID: sceneID, summary: "", debounced: true)
+        let toastID = startTaskProgressToast("Summarizing scene…")
 
         let summaryPartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
@@ -3099,19 +3336,28 @@ final class AppStore: ObservableObject {
             summaryPartialHandler = nil
         }
 
-        let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
-        let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedSummary.isEmpty else {
-            throw AIServiceError.badResponse("Summary result was empty.")
-        }
+        do {
+            let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
+            let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedSummary.isEmpty else {
+                throw AIServiceError.badResponse("Summary result was empty.")
+            }
 
-        updateSceneSummary(sceneID: sceneID, summary: normalizedSummary, debounced: false)
-        updateRollingSceneMemory(
-            sceneID: sceneID,
-            summary: normalizedSummary,
-            sourceContent: scene.content
-        )
-        return normalizedSummary
+            updateSceneSummary(sceneID: sceneID, summary: normalizedSummary, debounced: false)
+            updateRollingSceneMemory(
+                sceneID: sceneID,
+                summary: normalizedSummary,
+                sourceContent: scene.content
+            )
+            finishTaskSuccessToast(toastID, "Scene summary updated.")
+            return normalizedSummary
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Scene summarization cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Scene summarization failed.")
+            throw error
+        }
     }
 
     func summarizeSelectedChapter() async throws -> String {
@@ -3122,6 +3368,7 @@ final class AppStore: ObservableObject {
         let chapterID = chapter.id
         let request = makeChapterSummaryRequest(chapter: chapter).request
         updateChapterSummary(chapterID: chapterID, summary: "", debounced: true)
+        let toastID = startTaskProgressToast("Summarizing chapter…")
 
         let summaryPartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
@@ -3133,15 +3380,24 @@ final class AppStore: ObservableObject {
             summaryPartialHandler = nil
         }
 
-        let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
-        let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedSummary.isEmpty else {
-            throw AIServiceError.badResponse("Summary result was empty.")
-        }
+        do {
+            let result = try await generateTextResult(request, onPartial: summaryPartialHandler)
+            let normalizedSummary = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedSummary.isEmpty else {
+                throw AIServiceError.badResponse("Summary result was empty.")
+            }
 
-        updateChapterSummary(chapterID: chapterID, summary: normalizedSummary, debounced: false)
-        updateRollingChapterMemory(chapterID: chapterID, summary: normalizedSummary)
-        return normalizedSummary
+            updateChapterSummary(chapterID: chapterID, summary: normalizedSummary, debounced: false)
+            updateRollingChapterMemory(chapterID: chapterID, summary: normalizedSummary)
+            finishTaskSuccessToast(toastID, "Chapter summary updated.")
+            return normalizedSummary
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Chapter summarization cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Chapter summarization failed.")
+            throw error
+        }
     }
 
     // MARK: - Workshop
@@ -3357,6 +3613,7 @@ final class AppStore: ObservableObject {
         workshopIsGenerating = true
         workshopLiveUsage = nil
         workshopStatus = shouldUseStreaming ? "Streaming..." : "Thinking..."
+        let toastID = startTaskProgressToast("Generating workshop response…")
 
         let prompt = buildWorkshopUserPrompt(sessionID: sessionID).renderedText
         let systemPrompt = resolvedWorkshopSystemPrompt()
@@ -3426,6 +3683,7 @@ final class AppStore: ObservableObject {
             workshopStatus = "Response generated."
             project.workshopSessions[sessionIndex].updatedAt = .now
             saveProject()
+            finishTaskSuccessToast(toastID, "Workshop response generated.")
             scheduleWorkshopRollingMemoryRefresh(for: sessionID)
         } catch is CancellationError {
             workshopStatus = "Request cancelled."
@@ -3435,6 +3693,7 @@ final class AppStore: ObservableObject {
             }
 
             saveProject()
+            finishTaskCancelledToast(toastID, "Workshop request cancelled.")
         } catch {
             workshopStatus = "Chat request failed."
             lastError = error.localizedDescription
@@ -3449,6 +3708,7 @@ final class AppStore: ObservableObject {
                 )
             }
             saveProject()
+            finishTaskErrorToast(toastID, "Workshop request failed.")
         }
     }
 
@@ -4056,6 +4316,7 @@ final class AppStore: ObservableObject {
         isGenerating = true
         proseLiveUsage = nil
         generationStatus = "Generating 0/\(candidateRequests.count)..."
+        var toastID = startTaskProgressToast("Generating candidates (0/\(candidateRequests.count))…")
 
         defer {
             isGenerating = false
@@ -4143,29 +4404,51 @@ final class AppStore: ObservableObject {
                 completed += 1
                 applyProseCandidateRunResult(outcome, reviewID: reviewID)
                 generationStatus = "Generating \(completed)/\(total)..."
+                if let existingToastID = toastID {
+                    toastID = showTaskNotification(
+                        "Generating candidates (\(completed)/\(total))…",
+                        style: .progress,
+                        updating: existingToastID,
+                        autoDismiss: false
+                    )
+                }
             }
         }
 
-        if Task.isCancelled {
+        let wasCancelled = Task.isCancelled
+        if wasCancelled {
             generationStatus = "Generation cancelled."
             markRunningProseCandidatesCancelled(reviewID: reviewID)
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
         }
 
         if var review = proseGenerationReview, review.id == reviewID {
             review.isRunning = false
             proseGenerationReview = review
 
-            if review.successCount > 0 {
+            if wasCancelled {
+                if review.successCount > 0 {
+                    let label = review.successCount == 1 ? "candidate" : "candidates"
+                    generationStatus = "Generation cancelled. \(review.successCount) \(label) completed."
+                }
+            } else if review.successCount > 0 {
                 let label = review.successCount == 1 ? "candidate" : "candidates"
                 generationStatus = "Review \(review.successCount) \(label) and accept one."
+                if !wasCancelled {
+                    finishTaskSuccessToast(toastID, "Generation completed. \(review.successCount) \(label) ready.")
+                }
             } else {
                 generationStatus = "No candidate was generated."
+                if !wasCancelled {
+                    finishTaskWarningToast(toastID, "Generation completed with no candidates.")
+                }
             }
-        } else if !Task.isCancelled {
+        } else if !wasCancelled {
             generationStatus = "Generation finished."
+            finishTaskSuccessToast(toastID, "Generation completed.")
         }
 
-        if !Task.isCancelled {
+        if !wasCancelled {
             saveProject(debounced: true)
         }
     }
@@ -4187,6 +4470,7 @@ final class AppStore: ObservableObject {
         isGenerating = true
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
+        let toastID = startTaskProgressToast("Generating text…")
 
         defer {
             isGenerating = false
@@ -4224,13 +4508,16 @@ final class AppStore: ObservableObject {
             generationStatus = "Generated \(text.count) characters."
             beatInput = ""
             saveProject()
+            finishTaskSuccessToast(toastID, "Generation completed.")
         } catch is CancellationError {
             generationStatus = "Generation cancelled."
             saveProject()
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
         } catch {
             proseLiveUsage = nil
             lastError = error.localizedDescription
             generationStatus = "Generation failed."
+            finishTaskErrorToast(toastID, "Generation failed.")
         }
     }
 
@@ -6388,19 +6675,33 @@ final class AppStore: ObservableObject {
             temperature: min(project.settings.temperature, 0.3),
             maxTokens: min(project.settings.maxTokens, 900)
         )
+        let toastID = startTaskProgressToast("Updating workshop memory…")
 
         do {
             let result = try await generateTextResult(request)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                if let toastID {
+                    dismissTaskNotificationToast(toastID)
+                }
+                return
+            }
 
             let normalizedSummary = normalizedRollingMemorySummary(
                 result.text,
                 maxChars: Self.rollingWorkshopMemoryMaxChars
             )
-            guard !normalizedSummary.isEmpty else { return }
+            guard !normalizedSummary.isEmpty else {
+                finishTaskWarningToast(toastID, "Workshop memory update returned no content.")
+                return
+            }
 
             // Re-read session state after async boundary to avoid stale counters.
-            guard let latestSessionIndex = workshopSessionIndex(for: sessionID) else { return }
+            guard let latestSessionIndex = workshopSessionIndex(for: sessionID) else {
+                if let toastID {
+                    dismissTaskNotificationToast(toastID)
+                }
+                return
+            }
             let latestCount = project.workshopSessions[latestSessionIndex].messages.filter {
                 !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }.count
@@ -6411,8 +6712,13 @@ final class AppStore: ObservableObject {
                 updatedAt: .now
             )
             saveProject(debounced: true)
+            finishTaskSuccessToast(toastID, "Workshop memory updated.")
+        } catch is CancellationError {
+            if let toastID {
+                dismissTaskNotificationToast(toastID)
+            }
         } catch {
-            // Rolling memory refresh is best-effort and should not affect chat flow.
+            finishTaskErrorToast(toastID, "Workshop memory update failed.")
         }
     }
 
