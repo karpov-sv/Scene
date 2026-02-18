@@ -19,7 +19,7 @@
 - Mention-based context injection in beat/chat inputs via `@tags` (including compendium entry titles) and `#scenes` with autocomplete.
 - Workshop chat with multi-session history, markdown rendering, inline message actions, and usage metrics.
 - Persistent prompt history for workshop input (per conversation) and beat input (per scene), with trimming/deduplication and a 30-entry cap.
-- Rolling memory for workshop sessions and scenes, with editable memory sheets in chat/editor headers.
+- Rolling memory for workshop sessions, chapters, and scenes, with editable memory sheets in chat and summary headers.
 - `View` menu keyboard shortcuts for binder/workspace/panel toggles (`Cmd-1` through `Cmd-7`).
 - Project checkpoints with selective restore scope/behavior and scene-level history browsing (diff + text-only restore).
 - Provider support: OpenAI, Anthropic, OpenRouter, LM Studio (local), and custom OpenAI-compatible endpoints.
@@ -194,10 +194,15 @@ Script options:
 ## Rolling Memory
 
 - Workshop rolling memory is conversation-local (per workshop session).
+- Chapter rolling memory is chapter-local.
 - Scene rolling memory is scene-local and validated against scene content hash.
 - Workshop memory refreshes automatically in background after enough new turns, and can be edited from the workshop header (`book` icon).
-- Scene memory can be edited from the editor header (`book` icon), and updated from:
-  - current selected scene text in the editor
+- Chapter memory can be edited from the Summary panel in chapter scope (`book` icon), with an `Update...` menu:
+  - chapter summary text
+  - chapter text up to the currently selected scene
+  - full chapter text
+- Scene memory can be edited from the Summary panel in scene scope (`book` icon), with an `Update...` menu:
+  - scene summary text
   - full scene text
 - Rolling memory is available in prompt rendering via `{{context_rolling}}`/`{{rolling_summary}}`, and included in `{{context}}`.
 
@@ -237,8 +242,8 @@ Script options:
 - Added richer text formatting controls (font family/size split controls, color/highlight controls, clear formatting action).
 - Added incremental rewrite streaming option and consolidated undo history for streaming generation/rewrite.
 - Added rolling memory model/persistence and prompt integration (`context_rolling`, `rolling_*` variables).
-- Added workshop rolling memory editor sheet in chat header and scene rolling memory editor sheet in scene header.
-- Added scene rolling memory refresh actions from selected scene text or full scene text.
+- Added workshop rolling memory editor sheet in the chat header and scene/chapter rolling memory sheets in the Summary header.
+- Added rolling memory refresh actions from scene/chapter summary text, full scene/chapter text, and chapter text up to selected scene.
 - Hardened model discovery refresh to remove stale unavailable models from active configuration and menus.
 - Added structured prompt rendering with canonical `{{variable}}` and `{{function(...)}}` syntax (legacy `{variable}` remains supported), plus template warnings in payload previews.
 
@@ -261,12 +266,13 @@ Common variables:
 - `{{chapter_title}}`: selected chapter title.
 - `{{project_title}}`: current project title.
 - `{{context}}`: merged context from selected compendium entries + selected scene/chapter summaries.
-- `{{context_rolling}}`: merged rolling memory block (workshop + scene when available).
+- `{{context_rolling}}`: merged rolling memory block (workshop + chapter + scene when available).
 - `{{rolling_summary}}`: alias of `{{context_rolling}}`.
 - `{{context_compendium}}`: compendium-only context block.
 - `{{context_scene_summaries}}`: scene-summary-only context block.
 - `{{context_chapter_summaries}}`: chapter-summary-only context block.
 - `{{rolling_workshop_summary}}`: workshop/session rolling memory only.
+- `{{rolling_chapter_summary}}`: chapter rolling memory only.
 - `{{rolling_scene_summary}}`: scene rolling memory only.
 - `{{conversation}}`: workshop transcript text context.
 - `{{chat_name}}`: active workshop chat/session name.

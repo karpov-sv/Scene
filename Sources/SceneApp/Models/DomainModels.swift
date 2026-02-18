@@ -1113,6 +1113,35 @@ struct RollingSceneMemory: Codable, Equatable {
     }
 }
 
+struct RollingChapterMemory: Codable, Equatable {
+    var summary: String
+    var sourceFingerprint: String
+    var updatedAt: Date
+
+    init(
+        summary: String = "",
+        sourceFingerprint: String = "",
+        updatedAt: Date = .now
+    ) {
+        self.summary = summary
+        self.sourceFingerprint = sourceFingerprint
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case summary
+        case sourceFingerprint
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        sourceFingerprint = try container.decodeIfPresent(String.self, forKey: .sourceFingerprint) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+}
+
 struct GenerationSettings: Codable, Equatable {
     var provider: AIProvider
     var endpoint: String
@@ -1383,6 +1412,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneNarrativeStates: [String: SceneNarrativeState]
     var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]
     var rollingSceneMemoryByScene: [String: RollingSceneMemory]
+    var rollingChapterMemoryByChapter: [String: RollingChapterMemory]
     var settings: GenerationSettings
     var editorAppearance: EditorAppearanceSettings
     var updatedAt: Date
@@ -1411,6 +1441,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneNarrativeStates: [String: SceneNarrativeState],
         rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory],
         rollingSceneMemoryByScene: [String: RollingSceneMemory],
+        rollingChapterMemoryByChapter: [String: RollingChapterMemory],
         settings: GenerationSettings,
         editorAppearance: EditorAppearanceSettings,
         updatedAt: Date
@@ -1438,6 +1469,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneNarrativeStates = sceneNarrativeStates
         self.rollingWorkshopMemoryBySession = rollingWorkshopMemoryBySession
         self.rollingSceneMemoryByScene = rollingSceneMemoryByScene
+        self.rollingChapterMemoryByChapter = rollingChapterMemoryByChapter
         self.settings = settings
         self.editorAppearance = editorAppearance
         self.updatedAt = updatedAt
@@ -1467,6 +1499,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneNarrativeStates
         case rollingWorkshopMemoryBySession
         case rollingSceneMemoryByScene
+        case rollingChapterMemoryByChapter
         case settings
         case editorAppearance
         case updatedAt
@@ -1498,6 +1531,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneNarrativeStates = try container.decodeIfPresent([String: SceneNarrativeState].self, forKey: .sceneNarrativeStates) ?? [:]
         rollingWorkshopMemoryBySession = try container.decodeIfPresent([String: RollingWorkshopMemory].self, forKey: .rollingWorkshopMemoryBySession) ?? [:]
         rollingSceneMemoryByScene = try container.decodeIfPresent([String: RollingSceneMemory].self, forKey: .rollingSceneMemoryByScene) ?? [:]
+        rollingChapterMemoryByChapter = try container.decodeIfPresent([String: RollingChapterMemory].self, forKey: .rollingChapterMemoryByChapter) ?? [:]
         settings = try container.decode(GenerationSettings.self, forKey: .settings)
         editorAppearance = try container.decodeIfPresent(EditorAppearanceSettings.self, forKey: .editorAppearance) ?? .default
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
@@ -1559,6 +1593,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneNarrativeStates: [:],
             rollingWorkshopMemoryBySession: [:],
             rollingSceneMemoryByScene: [:],
+            rollingChapterMemoryByChapter: [:],
             settings: .default,
             editorAppearance: .default,
             updatedAt: .now

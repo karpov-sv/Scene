@@ -117,7 +117,9 @@ final class AppStore: ObservableObject {
     private static let rollingWorkshopMemoryDeltaWindow = 18
     private static let rollingWorkshopMemoryMaxChars = 3200
     private static let rollingSceneMemoryMaxChars = 2200
+    private static let rollingChapterMemoryMaxChars = 2600
     private static let rollingSceneMemorySourceChars = 12000
+    private static let rollingChapterMemorySourceChars = 18000
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
         "cover",
@@ -825,6 +827,34 @@ final class AppStore: ObservableObject {
     var selectedSceneRollingMemoryUpdatedAt: Date? {
         guard let selectedSceneID else { return nil }
         return project.rollingSceneMemoryByScene[selectedSceneID.uuidString]?.updatedAt
+    }
+
+    var selectedChapterRollingMemorySummary: String {
+        rollingChapterSummary(for: selectedChapterID)
+    }
+
+    var selectedChapterRollingMemoryUpdatedAt: Date? {
+        guard let selectedChapterID else { return nil }
+        guard !rollingChapterSummary(for: selectedChapterID).isEmpty else { return nil }
+        return project.rollingChapterMemoryByChapter[selectedChapterID.uuidString]?.updatedAt
+    }
+
+    var selectedChapterRollingMemorySourceText: String {
+        guard let chapter = selectedChapter else { return "" }
+        return chapterSourceText(chapter: chapter, maxChars: Self.rollingChapterMemorySourceChars)
+    }
+
+    var selectedChapterRollingMemorySourceTextUpToSelectedScene: String {
+        guard let chapter = selectedChapter,
+              let selectedSceneID,
+              chapter.scenes.contains(where: { $0.id == selectedSceneID }) else {
+            return ""
+        }
+        return chapterSourceText(
+            chapter: chapter,
+            upToSceneID: selectedSceneID,
+            maxChars: Self.rollingChapterMemorySourceChars
+        )
     }
 
     var beatInputHistory: [String] {
@@ -2200,6 +2230,7 @@ final class AppStore: ObservableObject {
         importedProject.beatInputHistoryByScene = [:]
         importedProject.rollingWorkshopMemoryBySession = [:]
         importedProject.rollingSceneMemoryByScene = [:]
+        importedProject.rollingChapterMemoryByChapter = [:]
         importedProject.selectedSceneID = chapters.first?.scenes.first?.id
         importedProject.updatedAt = .now
 
@@ -2275,6 +2306,7 @@ final class AppStore: ObservableObject {
         )
 
         project.chapters.removeAll { $0.id == chapterID }
+        project.rollingChapterMemoryByChapter.removeValue(forKey: chapterID.uuidString)
         removeChapterSummaryFromSceneContextSelections(chapterID)
         for sceneID in removedSceneIDs {
             removeSceneSummaryFromSceneContextSelections(sceneID)
@@ -2336,6 +2368,7 @@ final class AppStore: ObservableObject {
 
         project.chapters[chapterIndex].scenes.append(scene)
         project.chapters[chapterIndex].updatedAt = .now
+        project.rollingChapterMemoryByChapter.removeValue(forKey: targetChapterID.uuidString)
 
         selectedChapterID = project.chapters[chapterIndex].id
         selectedSceneID = scene.id
@@ -2345,8 +2378,16 @@ final class AppStore: ObservableObject {
     }
 
     func deleteScene(_ sceneID: UUID) {
+        let affectedChapterIDs = Set(
+            project.chapters
+                .filter { chapter in chapter.scenes.contains(where: { $0.id == sceneID }) }
+                .map(\.id)
+        )
         for chapterIndex in project.chapters.indices {
             project.chapters[chapterIndex].scenes.removeAll { $0.id == sceneID }
+        }
+        for chapterID in affectedChapterIDs {
+            project.rollingChapterMemoryByChapter.removeValue(forKey: chapterID.uuidString)
         }
         removeSceneSummaryFromSceneContextSelections(sceneID)
         removeSceneContextSelection(for: sceneID)
@@ -2378,8 +2419,10 @@ final class AppStore: ObservableObject {
             return
         }
 
+        let chapterID = project.chapters[location.chapterIndex].id
         project.chapters[location.chapterIndex].scenes.swapAt(location.sceneIndex, location.sceneIndex - 1)
         project.chapters[location.chapterIndex].updatedAt = .now
+        project.rollingChapterMemoryByChapter.removeValue(forKey: chapterID.uuidString)
         saveProject()
     }
 
@@ -2389,8 +2432,10 @@ final class AppStore: ObservableObject {
             return
         }
 
+        let chapterID = project.chapters[location.chapterIndex].id
         project.chapters[location.chapterIndex].scenes.swapAt(location.sceneIndex, location.sceneIndex + 1)
         project.chapters[location.chapterIndex].updatedAt = .now
+        project.rollingChapterMemoryByChapter.removeValue(forKey: chapterID.uuidString)
         saveProject()
     }
 
@@ -2425,12 +2470,15 @@ final class AppStore: ObservableObject {
         guard let sourceLocation = sceneLocation(for: sceneID),
               let targetChapterIndex = chapterIndex(for: toChapterID) else { return }
 
+        let sourceChapterID = project.chapters[sourceLocation.chapterIndex].id
         let scene = project.chapters[sourceLocation.chapterIndex].scenes.remove(at: sourceLocation.sceneIndex)
         project.chapters[sourceLocation.chapterIndex].updatedAt = .now
 
         let clampedIndex = min(max(atIndex, 0), project.chapters[targetChapterIndex].scenes.count)
         project.chapters[targetChapterIndex].scenes.insert(scene, at: clampedIndex)
         project.chapters[targetChapterIndex].updatedAt = .now
+        project.rollingChapterMemoryByChapter.removeValue(forKey: sourceChapterID.uuidString)
+        project.rollingChapterMemoryByChapter.removeValue(forKey: toChapterID.uuidString)
 
         if selectedSceneID == sceneID {
             selectedChapterID = toChapterID
@@ -2463,6 +2511,9 @@ final class AppStore: ObservableObject {
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
         project.rollingSceneMemoryByScene.removeValue(forKey: selectedSceneID.uuidString)
+        project.rollingChapterMemoryByChapter.removeValue(
+            forKey: project.chapters[location.chapterIndex].id.uuidString
+        )
         saveProject(debounced: true)
     }
 
@@ -2552,6 +2603,75 @@ final class AppStore: ObservableObject {
             summary: normalizedSummary,
             sourceContent: scene.content
         )
+        saveProject(debounced: true)
+        return normalizedSummary
+    }
+
+    func updateSelectedChapterRollingMemory(_ summary: String) {
+        guard let selectedChapterID else { return }
+        updateRollingChapterMemory(chapterID: selectedChapterID, summary: summary)
+        saveProject(debounced: true)
+    }
+
+    func refreshSelectedChapterRollingMemory(from sourceText: String) async throws -> String {
+        guard let chapter = selectedChapter else {
+            throw AIServiceError.badResponse("Select a chapter first.")
+        }
+
+        let trimmedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty else {
+            throw AIServiceError.badResponse("Source text is empty.")
+        }
+
+        let chapterTitle = displayChapterTitle(chapter)
+        let sourceExcerpt = String(trimmedSource.prefix(Self.rollingChapterMemorySourceChars))
+        let existingMemory = rollingChapterSummary(for: chapter.id)
+
+        let systemPrompt = """
+        You maintain concise long-lived memory for a single fiction chapter.
+
+        Output rules:
+        - Return plain prose bullets or short paragraphs only.
+        - Keep stable facts, chapter-level decisions, continuity constraints, unresolved questions, and arc-level shifts.
+        - Remove repetition and low-value narration details.
+        - Do not invent facts not present in input.
+        """
+
+        let userPrompt = """
+        CHAPTER: \(chapterTitle)
+
+        EXISTING_MEMORY:
+        <<<
+        \(existingMemory)
+        >>>
+
+        SOURCE_TEXT:
+        <<<
+        \(sourceExcerpt)
+        >>>
+
+        TASK:
+        Update the chapter memory by merging EXISTING_MEMORY with SOURCE_TEXT. Keep the result compact and high-signal.
+        """
+
+        let request = TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: resolvedPrimaryModel(),
+            temperature: min(project.settings.temperature, 0.3),
+            maxTokens: min(project.settings.maxTokens, 1000)
+        )
+
+        let result = try await generateTextResult(request)
+        let normalizedSummary = normalizedRollingMemorySummary(
+            result.text,
+            maxChars: Self.rollingChapterMemoryMaxChars
+        )
+        guard !normalizedSummary.isEmpty else {
+            throw AIServiceError.badResponse("Chapter memory update was empty.")
+        }
+
+        updateRollingChapterMemory(chapterID: chapter.id, summary: normalizedSummary)
         saveProject(debounced: true)
         return normalizedSummary
     }
@@ -3003,6 +3123,7 @@ final class AppStore: ObservableObject {
         }
 
         updateChapterSummary(chapterID: chapterID, summary: normalizedSummary, debounced: false)
+        updateRollingChapterMemory(chapterID: chapterID, summary: normalizedSummary)
         return normalizedSummary
     }
 
@@ -3580,6 +3701,7 @@ final class AppStore: ObservableObject {
                     beat: "",
                     selection: "",
                     sceneID: nil,
+                    chapterID: chapter.id,
                     sceneExcerpt: sceneSummaryContext,
                     sceneFullText: sceneSummaryContext,
                     sceneTitle: "Chapter Summary Input",
@@ -4409,6 +4531,7 @@ final class AppStore: ObservableObject {
             beat: "",
             selection: "",
             sceneID: nil,
+            chapterID: chapter.id,
             sceneExcerpt: sceneSummaryContext,
             sceneFullText: sceneSummaryContext,
             sceneTitle: "Chapter Summary Input",
@@ -4683,6 +4806,12 @@ final class AppStore: ObservableObject {
         merged.rollingSceneMemoryByScene = mergeDictionaryEntries(
             current: merged.rollingSceneMemoryByScene,
             source: checkpointProject.rollingSceneMemoryByScene,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.rollingChapterMemoryByChapter = mergeDictionaryEntries(
+            current: merged.rollingChapterMemoryByChapter,
+            source: checkpointProject.rollingChapterMemoryByChapter,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
@@ -6145,6 +6274,31 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func updateRollingChapterMemory(
+        chapterID: UUID,
+        summary: String
+    ) {
+        let normalizedSummary = normalizedRollingMemorySummary(
+            summary,
+            maxChars: Self.rollingChapterMemoryMaxChars
+        )
+        let key = chapterID.uuidString
+        guard let chapter = chapter(for: chapterID) else {
+            project.rollingChapterMemoryByChapter.removeValue(forKey: key)
+            return
+        }
+        guard !normalizedSummary.isEmpty else {
+            project.rollingChapterMemoryByChapter.removeValue(forKey: key)
+            return
+        }
+
+        project.rollingChapterMemoryByChapter[key] = RollingChapterMemory(
+            summary: normalizedSummary,
+            sourceFingerprint: chapterSourceFingerprint(chapter: chapter),
+            updatedAt: .now
+        )
+    }
+
     private func scheduleWorkshopRollingMemoryRefresh(for sessionID: UUID) {
         workshopRollingMemoryTask?.cancel()
         workshopRollingMemoryTask = Task { [weak self] in
@@ -6344,9 +6498,50 @@ final class AppStore: ObservableObject {
         return String(hash, radix: 16)
     }
 
+    private func chapter(for chapterID: UUID) -> Chapter? {
+        guard let index = chapterIndex(for: chapterID) else { return nil }
+        return project.chapters[index]
+    }
+
+    private func chapterIDForScene(_ sceneID: UUID?) -> UUID? {
+        guard let sceneID,
+              let location = sceneLocation(for: sceneID) else {
+            return nil
+        }
+        return project.chapters[location.chapterIndex].id
+    }
+
     private func scene(for sceneID: UUID) -> Scene? {
         guard let location = sceneLocation(for: sceneID) else { return nil }
         return project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+    }
+
+    private func chapterSourceFingerprint(chapter: Chapter) -> String {
+        let sceneComponents = chapter.scenes.map { scene in
+            "\(scene.id.uuidString):\(stableContentHash(scene.content))"
+        }
+        return stableContentHash(sceneComponents.joined(separator: "|"))
+    }
+
+    private func chapterSourceText(
+        chapter: Chapter,
+        upToSceneID: UUID? = nil,
+        maxChars: Int? = nil
+    ) -> String {
+        var chunks: [String] = []
+        for (index, scene) in chapter.scenes.enumerated() {
+            let content = scene.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !content.isEmpty {
+                let sceneTitle = displaySceneTitle(scene)
+                chunks.append("Scene \(index + 1): \(sceneTitle)\n\(content)")
+            }
+            if let upToSceneID, scene.id == upToSceneID {
+                break
+            }
+        }
+        let combined = chunks.joined(separator: "\n\n")
+        guard let maxChars, maxChars > 0 else { return combined }
+        return combined.count > maxChars ? String(combined.prefix(maxChars)) : combined
     }
 
     private func buildWorkshopUserPrompt(sessionID: UUID, pendingUserInput: String? = nil) -> PromptRenderer.Result {
@@ -6567,6 +6762,7 @@ final class AppStore: ObservableObject {
     }
 
     private func combinedRollingSummaryText(
+        chapterRolling: String,
         sceneRolling: String,
         workshopRolling: String
     ) -> String {
@@ -6574,6 +6770,11 @@ final class AppStore: ObservableObject {
         let trimmedWorkshop = workshopRolling.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedWorkshop.isEmpty {
             lines.append("- [Rolling Workshop Memory] \(trimmedWorkshop)")
+        }
+
+        let trimmedChapter = chapterRolling.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedChapter.isEmpty {
+            lines.append("- [Rolling Chapter Memory] \(trimmedChapter)")
         }
 
         let trimmedScene = sceneRolling.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6608,6 +6809,32 @@ final class AppStore: ObservableObject {
 
         let currentHash = stableContentHash(scene.content)
         guard memory.sourceContentHash == currentHash else {
+            return ""
+        }
+
+        return summary
+    }
+
+    private func rollingChapterSummary(for chapterID: UUID?) -> String {
+        guard let chapterID,
+              let chapter = chapter(for: chapterID) else {
+            return ""
+        }
+
+        let key = chapterID.uuidString
+        guard let memory = project.rollingChapterMemoryByChapter[key] else {
+            return ""
+        }
+
+        let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else {
+            return ""
+        }
+
+        let currentFingerprint = chapterSourceFingerprint(chapter: chapter)
+        let storedFingerprint = memory.sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveFingerprint = storedFingerprint.isEmpty ? currentFingerprint : storedFingerprint
+        guard effectiveFingerprint == currentFingerprint else {
             return ""
         }
 
@@ -7314,6 +7541,7 @@ final class AppStore: ObservableObject {
         beat: String,
         selection: String,
         sceneID: UUID?,
+        chapterID: UUID? = nil,
         sceneExcerpt: String,
         sceneFullText: String,
         sceneTitle: String,
@@ -7331,9 +7559,12 @@ final class AppStore: ObservableObject {
             fallbackTemplate: fallbackTemplate
         )
 
+        let resolvedChapterID = chapterID ?? chapterIDForScene(sceneID)
+        let rollingChapter = rollingChapterSummary(for: resolvedChapterID)
         let rollingScene = rollingSceneSummary(for: sceneID)
         let rollingWorkshop = rollingWorkshopSummary(for: workshopSessionID)
         let rollingCombined = combinedRollingSummaryText(
+            chapterRolling: rollingChapter,
             sceneRolling: rollingScene,
             workshopRolling: rollingWorkshop
         )
@@ -7355,6 +7586,7 @@ final class AppStore: ObservableObject {
             "context_chapter_summaries": contextSections.chapterSummaries,
             "context_rolling": rollingCombined,
             "rolling_summary": rollingCombined,
+            "rolling_chapter_summary": rollingChapter,
             "rolling_scene_summary": rollingScene,
             "rolling_workshop_summary": rollingWorkshop,
             "conversation": conversation,
@@ -7858,6 +8090,31 @@ final class AppStore: ObservableObject {
             )
         }
         project.rollingSceneMemoryByScene = sanitizedSceneMemory
+
+        let chapterByKey = Dictionary(
+            uniqueKeysWithValues: project.chapters.map { ($0.id.uuidString, $0) }
+        )
+        var sanitizedChapterMemory: [String: RollingChapterMemory] = [:]
+        for (chapterKey, memory) in project.rollingChapterMemoryByChapter {
+            guard let chapter = chapterByKey[chapterKey] else { continue }
+            let summary = normalizedRollingMemorySummary(
+                memory.summary,
+                maxChars: Self.rollingChapterMemoryMaxChars
+            )
+            guard !summary.isEmpty else { continue }
+            let resolvedFingerprint: String = {
+                let normalizedFingerprint = memory.sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+                return normalizedFingerprint.isEmpty
+                    ? chapterSourceFingerprint(chapter: chapter)
+                    : normalizedFingerprint
+            }()
+            sanitizedChapterMemory[chapterKey] = RollingChapterMemory(
+                summary: summary,
+                sourceFingerprint: resolvedFingerprint,
+                updatedAt: memory.updatedAt
+            )
+        }
+        project.rollingChapterMemoryByChapter = sanitizedChapterMemory
     }
 
     private struct GenerationAppendBase {

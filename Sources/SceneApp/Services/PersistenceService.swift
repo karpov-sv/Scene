@@ -362,6 +362,7 @@ final class ProjectPersistence {
         var sceneNarrativeStates: [String: SceneNarrativeState]?
         var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]?
         var rollingSceneMemoryByScene: [String: RollingSceneMemory]?
+        var rollingChapterMemoryByChapter: [String: RollingChapterMemory]?
         var settings: GenerationSettings
         var editorAppearance: EditorAppearanceSettings?
         var chapters: [ChapterRecord]
@@ -665,6 +666,7 @@ final class ProjectPersistence {
             sceneNarrativeStates: manifest.sceneNarrativeStates ?? [:],
             rollingWorkshopMemoryBySession: manifest.rollingWorkshopMemoryBySession ?? [:],
             rollingSceneMemoryByScene: manifest.rollingSceneMemoryByScene ?? [:],
+            rollingChapterMemoryByChapter: manifest.rollingChapterMemoryByChapter ?? [:],
             settings: manifest.settings,
             editorAppearance: manifest.editorAppearance ?? .default,
             updatedAt: manifest.updatedAt
@@ -803,6 +805,7 @@ final class ProjectPersistence {
             sceneNarrativeStates: project.sceneNarrativeStates,
             rollingWorkshopMemoryBySession: project.rollingWorkshopMemoryBySession,
             rollingSceneMemoryByScene: project.rollingSceneMemoryByScene,
+            rollingChapterMemoryByChapter: project.rollingChapterMemoryByChapter,
             settings: project.settings,
             editorAppearance: project.editorAppearance,
             chapters: chapterRecords,

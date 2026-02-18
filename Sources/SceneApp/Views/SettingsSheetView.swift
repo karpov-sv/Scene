@@ -1620,7 +1620,7 @@ struct SettingsSheetView: View {
                 .init(token: "{{state_location}} / {{state_time}} / {{state_goal}} / {{state_emotion}}", meaning: "Additional scene-local narrative state fields."),
                 .init(token: "{{context}}", meaning: "Selected/mentioned compendium and summary context."),
                 .init(token: "{{context_rolling(max_chars=2200)}}", meaning: "Rolling memory block with optional truncation."),
-                .init(token: "{{rolling_workshop_summary}} / {{rolling_scene_summary}}", meaning: "Raw rolling memory variables for workshop/session and scene."),
+                .init(token: "{{rolling_workshop_summary}} / {{rolling_chapter_summary}} / {{rolling_scene_summary}}", meaning: "Raw rolling memory variables for workshop/session, chapter, and scene."),
                 .init(token: "{{context_compendium(max_chars=4000)}}", meaning: "Compendium-only context with optional truncation."),
                 .init(token: "{{context_scene_summaries(max_chars=4000)}}", meaning: "Scene-summary context with optional truncation."),
                 .init(token: "{{context_chapter_summaries(max_chars=4000)}}", meaning: "Chapter-summary context with optional truncation."),
