@@ -1973,13 +1973,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 return
             }
 
-            let baseFont = baseFontForReplacement(in: effectiveRange, textView: textView)
-            let replacementFont = emphasizeWithItalics
-                ? NSFontManager.shared.convert(baseFont, toHaveTrait: .italicFontMask)
-                : baseFont
-
-            var replacementAttributes = textView.typingAttributes
-            replacementAttributes[.font] = replacementFont
+            var replacementAttributes = baseAttributesForReplacement(in: effectiveRange, textView: textView)
+            if emphasizeWithItalics, let baseFont = replacementAttributes[.font] as? NSFont {
+                replacementAttributes[.font] = NSFontManager.shared.convert(baseFont, toHaveTrait: .italicFontMask)
+            }
 
             let replacementAttributedText = NSAttributedString(
                 string: normalizedText,
@@ -2036,9 +2033,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 return
             }
 
-            let baseFont = baseFontForReplacement(in: replacedRange, textView: textView)
-            var replacementAttributes = textView.typingAttributes
-            replacementAttributes[.font] = baseFont
+            let replacementAttributes = baseAttributesForReplacement(in: replacedRange, textView: textView)
 
             let replacementAttributedText = NSAttributedString(
                 string: replacementText,
@@ -2222,19 +2217,29 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return (firstValue ?? nil, false)
         }
 
-        private func baseFontForReplacement(in range: NSRange, textView: NSTextView) -> NSFont {
-            let fallback = NSFont.preferredFont(forTextStyle: .body)
+        /// Build replacement attributes from the text at `range`, falling back to
+        /// the editor's typing attributes for any keys not present in the range.
+        /// This ensures generated/rewritten text inherits formatting from the text
+        /// it replaces rather than from the cursor's current position.
+        private func baseAttributesForReplacement(
+            in range: NSRange,
+            textView: NSTextView
+        ) -> [NSAttributedString.Key: Any] {
+            var attrs = textView.typingAttributes
 
-            if range.length > 0,
-               let font = textView.textStorage?.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont {
-                return font
+            if range.length > 0, let textStorage = textView.textStorage {
+                let rangeAttrs = textStorage.attributes(at: range.location, effectiveRange: nil)
+                for (key, value) in rangeAttrs {
+                    attrs[key] = value
+                }
             }
 
-            if let font = textView.typingAttributes[.font] as? NSFont {
-                return font
+            // Guarantee a font is always present.
+            if attrs[.font] == nil {
+                attrs[.font] = textView.font ?? NSFont.preferredFont(forTextStyle: .body)
             }
 
-            return textView.font ?? fallback
+            return attrs
         }
 
         private func toggleFontTrait(_ trait: NSFontTraitMask, in textView: NSTextView) -> Bool {
