@@ -601,23 +601,19 @@ struct EditorView: View {
         .padding(.bottom, -10)
     }
 
-    @ViewBuilder
     private var writingSplit: some View {
-        if store.isGenerationPanelVisible {
-            VSplitView {
-                sceneEditor
-                    .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
-                    .layoutPriority(1)
+        VSplitView {
+            sceneEditor
+                .id("scene-editor")
+                .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
+                .layoutPriority(1)
 
+            if store.isGenerationPanelVisible {
                 generationPanel
                     .frame(minHeight: generationPanelMinimumHeight, idealHeight: generationPanelInitialHeight, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            sceneEditor
-                .frame(minHeight: sceneEditorMinimumHeight, maxHeight: .infinity)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sceneEditor: some View {

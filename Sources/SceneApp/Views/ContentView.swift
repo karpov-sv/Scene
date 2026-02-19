@@ -515,6 +515,7 @@ struct ContentView: View {
 
         if store.isGenerationPanelVisible && wasInWriting {
             store.setGenerationPanelVisible(false)
+            store.requestSceneEditorFocus()
         } else {
             store.focusTextGenerationInput()
         }
