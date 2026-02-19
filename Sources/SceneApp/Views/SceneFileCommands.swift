@@ -63,6 +63,12 @@ struct SceneFileCommands: Commands {
             .keyboardShortcut("f", modifiers: [.command, .shift])
             .disabled(searchActions?.canFindInProject != true)
 
+            Button("Find & Replace...") {
+                searchActions?.findAndReplace()
+            }
+            .keyboardShortcut("f", modifiers: [.command, .option])
+            .disabled(searchActions?.canFindAndReplace != true)
+
             Divider()
 
             Button("Find Next") {

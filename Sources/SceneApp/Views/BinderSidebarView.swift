@@ -11,6 +11,7 @@ struct BinderSidebarView: View {
     @State private var sceneToDelete: (scene: Scene, chapterID: UUID)?
     @State private var isEditingProjectTitle: Bool = false
     @State private var editingTitle: String = ""
+    @State private var replaceAllFeedback: String?
     @FocusState private var isRenameFieldFocused: Bool
     let onOpenProjectNotes: (() -> Void)?
     let onOpenSceneSummary: ((UUID, UUID) -> Void)?
@@ -220,9 +221,31 @@ struct BinderSidebarView: View {
         store.isGlobalSearchVisible && !trimmedSearchQuery.isEmpty
     }
 
+    private var replaceTextBinding: Binding<String> {
+        Binding(
+            get: { store.replaceText },
+            set: { store.replaceText = $0 }
+        )
+    }
+
+    private var isReplacementDisabled: Bool {
+        store.globalSearchScope == .chats
+    }
+
     private var searchPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                Button {
+                    store.isReplaceMode.toggle()
+                } label: {
+                    Image(systemName: store.isReplaceMode ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(store.isReplaceMode ? "Hide Replace" : "Show Replace")
+
                 TextField("Search", text: searchQueryBinding)
                     .textFieldStyle(.roundedBorder)
                     .focused($isSearchFieldFocused)
@@ -243,6 +266,39 @@ struct BinderSidebarView: View {
                 .help("Close Search")
             }
 
+            if store.isReplaceMode {
+                HStack(spacing: 6) {
+                    // Spacer matching the chevron button width
+                    Color.clear.frame(width: 14, height: 1)
+
+                    TextField("Replace", text: replaceTextBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            _ = store.replaceCurrentSearchMatch(with: store.replaceText)
+                        }
+
+                    Button("Replace") {
+                        _ = store.replaceCurrentSearchMatch(with: store.replaceText)
+                    }
+                    .disabled(store.selectedGlobalSearchResultID == nil || isReplacementDisabled)
+                    .help("Replace current match")
+
+                    Button("All") {
+                        let count = store.replaceAllSearchMatches(with: store.replaceText)
+                        if count > 0 {
+                            replaceAllFeedback = "\(count) replaced"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                if replaceAllFeedback != nil {
+                                    replaceAllFeedback = nil
+                                }
+                            }
+                        }
+                    }
+                    .disabled(store.globalSearchResults.isEmpty || isReplacementDisabled)
+                    .help("Replace all matches")
+                }
+            }
+
             ScopeFlowLayout(spacing: 4) {
                 ForEach(AppStore.GlobalSearchScope.allCases) { scope in
                     scopePill(scope)
@@ -254,9 +310,16 @@ struct BinderSidebarView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if isShowingSearchResults {
-                Text("\(store.globalSearchResults.count) result\(store.globalSearchResults.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(store.globalSearchResults.count) result\(store.globalSearchResults.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let feedback = replaceAllFeedback {
+                        Text("(\(feedback))")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
             }
         }
         .padding(12)

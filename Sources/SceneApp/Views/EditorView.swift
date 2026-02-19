@@ -47,6 +47,13 @@ private struct SceneEditorCommand: Equatable {
         case clearSelectionFormatting(targetRange: SceneEditorRange?)
         case applyAlignment(TextAlignmentOption)
         case openFontPanel
+        case replaceInRange(
+            replacement: String,
+            range: SceneEditorRange,
+            query: String,
+            options: NSString.CompareOptions
+        )
+        case replaceAllOccurrences(query: String, replacement: String, options: NSString.CompareOptions)
     }
 
     let id: UUID = UUID()
@@ -321,6 +328,14 @@ struct EditorView: View {
         .onChange(of: store.pendingSceneSearchSelection?.requestID) { _, requestID in
             guard requestID != nil else { return }
             applyPendingSceneSearchSelectionIfNeeded()
+        }
+        .onChange(of: store.pendingSceneReplace?.requestID) { _, requestID in
+            guard requestID != nil else { return }
+            applyPendingSceneReplaceIfNeeded()
+        }
+        .onChange(of: store.pendingSceneReplaceAll?.requestID) { _, requestID in
+            guard requestID != nil else { return }
+            applyPendingSceneReplaceAllIfNeeded()
         }
         .onChange(of: store.selectedSceneID) { _, _ in
             isEditingSceneTitle = false
@@ -638,7 +653,13 @@ struct EditorView: View {
                 canUndoInSceneEditor = canUndo
                 canRedoInSceneEditor = canRedo
             },
-            onFindResult: { _ in }
+            onFindResult: { _ in },
+            onEditorReplace: {
+                store.didCompleteEditorReplace()
+            },
+            onEditorReplaceAll: { count in
+                store.didCompleteEditorReplaceAll(count: count)
+            }
         ) { plainText, richTextData in
             store.updateSelectedSceneContent(plainText, richTextData: richTextData)
         }
@@ -991,6 +1012,38 @@ struct EditorView: View {
         store.consumeSceneSearchSelectionRequest(pending.requestID)
     }
 
+    private func applyPendingSceneReplaceIfNeeded() {
+        guard let pending = store.pendingSceneReplace else { return }
+        guard store.selectedSceneID == pending.sceneID else { return }
+
+        let targetRange = SceneEditorRange(
+            range: NSRange(location: pending.location, length: pending.length)
+        )
+        sceneEditorCommand = SceneEditorCommand(
+            action: .replaceInRange(
+                replacement: pending.replacement,
+                range: targetRange,
+                query: pending.query,
+                options: pending.options
+            )
+        )
+        store.consumeSceneReplaceRequest(pending.requestID)
+    }
+
+    private func applyPendingSceneReplaceAllIfNeeded() {
+        guard let pending = store.pendingSceneReplaceAll else { return }
+        guard store.selectedSceneID == pending.sceneID else { return }
+
+        sceneEditorCommand = SceneEditorCommand(
+            action: .replaceAllOccurrences(
+                query: pending.query,
+                replacement: pending.replacement,
+                options: pending.options
+            )
+        )
+        store.consumeSceneReplaceAllRequest(pending.requestID)
+    }
+
     private func presentSceneHistoryIfRequested() {
         guard let sceneID = store.requestedSceneHistorySceneID else { return }
         sceneHistorySheetRequest = SceneHistorySheetRequest(id: sceneID)
@@ -1075,6 +1128,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let onFormattingChange: (SceneEditorFormatting) -> Void
     let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
     let onFindResult: (Bool) -> Void
+    let onEditorReplace: () -> Void
+    let onEditorReplaceAll: (Int) -> Void
     let onChange: (String, Data?) -> Void
 
     private final class SceneEditorTextView: NSTextView {
@@ -1274,6 +1329,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             onFormattingChange: onFormattingChange,
             onUndoRedoAvailabilityChange: onUndoRedoAvailabilityChange,
             onFindResult: onFindResult,
+            onEditorReplace: onEditorReplace,
+            onEditorReplaceAll: onEditorReplaceAll,
             onChange: onChange
         )
     }
@@ -1284,6 +1341,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         private let onFormattingChange: (SceneEditorFormatting) -> Void
         private let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
         private let onFindResult: (Bool) -> Void
+        private let onEditorReplace: () -> Void
+        private let onEditorReplaceAll: (Int) -> Void
         private let onChange: (String, Data?) -> Void
         private var isApplyingProgrammaticChange: Bool = false
         private var lastSceneID: UUID?
@@ -1304,12 +1363,16 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             onFormattingChange: @escaping (SceneEditorFormatting) -> Void,
             onUndoRedoAvailabilityChange: @escaping (Bool, Bool) -> Void,
             onFindResult: @escaping (Bool) -> Void,
+            onEditorReplace: @escaping () -> Void,
+            onEditorReplaceAll: @escaping (Int) -> Void,
             onChange: @escaping (String, Data?) -> Void
         ) {
             self.onSelectionChange = onSelectionChange
             self.onFormattingChange = onFormattingChange
             self.onUndoRedoAvailabilityChange = onUndoRedoAvailabilityChange
             self.onFindResult = onFindResult
+            self.onEditorReplace = onEditorReplace
+            self.onEditorReplaceAll = onEditorReplaceAll
             self.onChange = onChange
         }
 
@@ -1515,6 +1578,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             var isInlineFormatting = false
             var shouldFocusTextView = true
             var shouldResignTextViewForBackgroundColor = false
+            var shouldNotifyEditorReplace = false
+            var editorReplaceAllCount: Int?
 
             // For inline formatting commands, suppress delegate callbacks
             // BEFORE making the text view first responder, because
@@ -1714,6 +1779,25 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 let currentFont = textView.typingAttributes[.font] as? NSFont ?? NSFont.preferredFont(forTextStyle: .body)
                 NSFontManager.shared.setSelectedFont(currentFont, isMultiple: false)
                 NSFontManager.shared.orderFrontFontPanel(nil)
+            case let .replaceInRange(replacement, range, query, options):
+                let didReplace = replaceTextInRange(
+                    in: textView,
+                    range: range,
+                    with: replacement,
+                    query: query,
+                    options: options
+                )
+                didMutateText = didReplace
+                shouldNotifyEditorReplace = true
+            case let .replaceAllOccurrences(query, replacement, options):
+                let count = replaceAllOccurrencesInEditor(
+                    in: textView,
+                    query: query,
+                    replacement: replacement,
+                    options: options
+                )
+                didMutateText = count > 0
+                editorReplaceAllCount = count
             }
             if didMutateText {
                 publishChange(from: textView)
@@ -1727,6 +1811,12 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             }
             publishUndoRedoState(from: textView)
             isApplyingProgrammaticChange = false
+            if shouldNotifyEditorReplace {
+                onEditorReplace()
+            }
+            if let editorReplaceAllCount {
+                onEditorReplaceAll(editorReplaceAllCount)
+            }
         }
 
         func handleFontPanelChange(in textView: NSTextView) {
@@ -1840,6 +1930,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             case .replaceSelection(rewrittenText: _, targetRange: _, emphasizeWithItalics: _):
                 return false
             case .applyFont, .applyTextColor, .applyTextBackgroundColor, .clearSelectionFormatting, .applyAlignment, .openFontPanel:
+                return false
+            case .replaceInRange, .replaceAllOccurrences:
                 return false
             }
         }
@@ -1990,6 +2082,93 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             let insertedRange = NSRange(location: effectiveRange.location, length: replacementAttributedText.length)
             textView.setSelectedRange(insertedRange)
             textView.didChangeText()
+        }
+
+        /// Undo-aware single-match replacement at a specific range.
+        private func replaceTextInRange(
+            in textView: NSTextView,
+            range: SceneEditorRange,
+            with replacement: String,
+            query: String,
+            options: NSString.CompareOptions
+        ) -> Bool {
+            guard let textStorage = textView.textStorage else { return false }
+            let clamped = clampedRangeForStorage(range.nsRange, textView: textView)
+            guard clamped.length > 0 else { return false }
+
+            let existingText = (textView.string as NSString).substring(with: clamped) as NSString
+            guard existingText.range(of: query, options: options).location == 0,
+                  existingText.length == clamped.length else {
+                return false
+            }
+
+            guard textView.shouldChangeText(in: clamped, replacementString: replacement) else {
+                return false
+            }
+
+            let attrs = baseAttributesForReplacement(in: clamped, textView: textView)
+            let replacementAttr = NSAttributedString(string: replacement, attributes: attrs)
+
+            textStorage.beginEditing()
+            textStorage.replaceCharacters(in: clamped, with: replacementAttr)
+            textStorage.endEditing()
+
+            let afterRange = NSRange(location: clamped.location + replacementAttr.length, length: 0)
+            textView.setSelectedRange(afterRange)
+            textView.didChangeText()
+            textView.undoManager?.setActionName("Replace")
+            return true
+        }
+
+        /// Undo-aware replace-all within the editor's text storage.
+        private func replaceAllOccurrencesInEditor(
+            in textView: NSTextView,
+            query: String,
+            replacement: String,
+            options: NSString.CompareOptions
+        ) -> Int {
+            guard let textStorage = textView.textStorage else { return 0 }
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+            let fullText = textStorage.string as NSString
+
+            var ranges: [NSRange] = []
+            var searchStart = 0
+            while searchStart < fullText.length {
+                let found = fullText.range(
+                    of: query,
+                    options: options,
+                    range: NSRange(location: searchStart, length: fullText.length - searchStart)
+                )
+                guard found.location != NSNotFound else { break }
+                ranges.append(found)
+                searchStart = found.location + max(found.length, 1)
+            }
+
+            guard !ranges.isEmpty else { return 0 }
+
+            let replacementAttributed = NSMutableAttributedString(attributedString: textStorage)
+            for range in ranges.reversed() {
+                let attrs: [NSAttributedString.Key: Any]
+                if range.location < replacementAttributed.length {
+                    attrs = replacementAttributed.attributes(at: range.location, effectiveRange: nil)
+                } else {
+                    attrs = textView.typingAttributes
+                }
+                let replacementAttr = NSAttributedString(string: replacement, attributes: attrs)
+                replacementAttributed.replaceCharacters(in: range, with: replacementAttr)
+            }
+
+            guard textView.shouldChangeText(in: fullRange, replacementString: replacementAttributed.string) else {
+                return 0
+            }
+
+            textStorage.beginEditing()
+            textStorage.setAttributedString(replacementAttributed)
+            textStorage.endEditing()
+
+            textView.didChangeText()
+            textView.undoManager?.setActionName("Replace All")
+            return ranges.count
         }
 
         private func applyExternalTextDelta(

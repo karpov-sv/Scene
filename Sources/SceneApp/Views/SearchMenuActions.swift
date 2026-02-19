@@ -3,11 +3,13 @@ import SwiftUI
 struct SearchMenuActions {
     let findInScene: () -> Void
     let findInProject: () -> Void
+    let findAndReplace: () -> Void
     let findNext: () -> Void
     let findPrevious: () -> Void
     let focusBeatInput: () -> Void
     let canFindInScene: Bool
     let canFindInProject: Bool
+    let canFindAndReplace: Bool
     let canFindNext: Bool
     let canFindPrevious: Bool
     let canFocusBeatInput: Bool

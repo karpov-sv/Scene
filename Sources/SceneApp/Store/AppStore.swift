@@ -324,6 +324,7 @@ final class AppStore: ObservableObject {
         let workshopMessageID: UUID?
         let location: Int?
         let length: Int?
+        var isCompendiumTitleMatch: Bool = false
     }
 
     struct SceneSearchSelectionRequest: Equatable {
@@ -343,6 +344,24 @@ final class AppStore: ObservableObject {
         let requestID: UUID = UUID()
         let location: Int
         let length: Int
+    }
+
+    struct SceneReplaceRequest: Equatable {
+        let requestID: UUID = UUID()
+        let sceneID: UUID
+        let location: Int
+        let length: Int
+        let query: String
+        let replacement: String
+        let options: NSString.CompareOptions
+    }
+
+    struct SceneReplaceAllRequest: Equatable {
+        let requestID: UUID = UUID()
+        let sceneID: UUID
+        let query: String
+        let replacement: String
+        let options: NSString.CompareOptions
     }
 
     struct ProseGenerationCandidate: Identifiable, Equatable {
@@ -490,11 +509,15 @@ final class AppStore: ObservableObject {
     @Published var isGlobalSearchVisible: Bool = false
     @Published private(set) var lastGlobalSearchQuery: String = ""
     @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
+    @Published var replaceText: String = ""
+    @Published var isReplaceMode: Bool = false
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
     @Published private(set) var pendingWorkshopMessageReveal: WorkshopMessageRevealRequest?
     @Published private(set) var pendingCompendiumTextReveal: PanelTextRevealRequest?
     @Published private(set) var pendingSummaryTextReveal: PanelTextRevealRequest?
     @Published private(set) var pendingNotesTextReveal: PanelTextRevealRequest?
+    @Published private(set) var pendingSceneReplace: SceneReplaceRequest?
+    @Published private(set) var pendingSceneReplaceAll: SceneReplaceAllRequest?
     @Published private(set) var projectCheckpoints: [ProjectCheckpointSummary] = []
 
     @Published private(set) var sceneEditorFocusRequestID: UUID = UUID()
@@ -1082,6 +1105,347 @@ final class AppStore: ObservableObject {
         selectGlobalSearchResult(step: -1)
     }
 
+    // MARK: - Search & Replace
+
+    @discardableResult
+    func replaceCurrentSearchMatch(with replacement: String) -> Bool {
+        guard let result = selectedGlobalSearchResult(),
+              let location = result.location,
+              let length = result.length else {
+            return false
+        }
+
+        let query = globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return false }
+
+        let compareOptions: NSString.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+
+        switch result.kind {
+        case .chatMessage:
+            return false
+
+        case .scene:
+            guard let sceneID = result.sceneID else { return false }
+            if sceneID == selectedSceneID {
+                // Route through the editor for undo support
+                pendingSceneReplace = SceneReplaceRequest(
+                    sceneID: sceneID,
+                    location: location,
+                    length: length,
+                    query: query,
+                    replacement: replacement,
+                    options: compareOptions
+                )
+                // Editor will call didCompleteEditorReplace() which refreshes & advances
+                return true
+            }
+            guard replaceInSceneContent(sceneID: sceneID, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+
+        case .compendium:
+            guard let entryID = result.compendiumEntryID,
+                  let index = compendiumIndex(for: entryID) else {
+                return false
+            }
+            if result.isCompendiumTitleMatch {
+                let title = project.compendium[index].title
+                guard let newTitle = replaceInPlainText(title, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                    return false
+                }
+                project.compendium[index].title = newTitle
+            } else {
+                let body = project.compendium[index].body
+                guard let newBody = replaceInPlainText(body, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                    return false
+                }
+                project.compendium[index].body = newBody
+            }
+            project.compendium[index].updatedAt = .now
+            saveProject(debounced: false)
+
+        case .sceneSummary:
+            guard let sceneID = result.sceneID,
+                  let loc = sceneLocation(for: sceneID) else {
+                return false
+            }
+            let summary = project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].summary
+            guard let newSummary = replaceInPlainText(summary, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+            project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].summary = newSummary
+            project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].updatedAt = .now
+            saveProject(debounced: false)
+
+        case .chapterSummary:
+            guard let chapterID = result.chapterID,
+                  let ci = chapterIndex(for: chapterID) else {
+                return false
+            }
+            let summary = project.chapters[ci].summary
+            guard let newSummary = replaceInPlainText(summary, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+            project.chapters[ci].summary = newSummary
+            project.chapters[ci].updatedAt = .now
+            saveProject(debounced: false)
+
+        case .projectNote:
+            let notes = project.notes
+            guard let newNotes = replaceInPlainText(notes, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+            project.notes = newNotes
+            saveProject(debounced: false)
+
+        case .chapterNote:
+            guard let chapterID = result.chapterID,
+                  let ci = chapterIndex(for: chapterID) else {
+                return false
+            }
+            let notes = project.chapters[ci].notes
+            guard let newNotes = replaceInPlainText(notes, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+            project.chapters[ci].notes = newNotes
+            project.chapters[ci].updatedAt = .now
+            saveProject(debounced: false)
+
+        case .sceneNote:
+            guard let sceneID = result.sceneID,
+                  let loc = sceneLocation(for: sceneID) else {
+                return false
+            }
+            let notes = project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].notes
+            guard let newNotes = replaceInPlainText(notes, at: location, length: length, query: query, replacement: replacement, options: compareOptions) else {
+                return false
+            }
+            project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].notes = newNotes
+            project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].updatedAt = .now
+            saveProject(debounced: false)
+        }
+
+        refreshGlobalSearchResults()
+        _ = selectNextGlobalSearchResult()
+        return true
+    }
+
+    func replaceAllSearchMatches(with replacement: String) -> Int {
+        let query = globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, isProjectOpen else { return 0 }
+
+        let compareOptions: NSString.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        let scope = globalSearchScope
+        var totalCount = 0
+        var mutatedOutsideEditor = false
+
+        let shouldReplaceScenes = scope == .all || scope == .scene || scope == .project
+        let shouldReplaceCompendium = scope == .all || scope == .compendium
+        let shouldReplaceSummaries = scope == .all || scope == .summaries
+        let shouldReplaceNotes = scope == .all || scope == .notes
+
+        if shouldReplaceScenes {
+            let sceneIDs: [UUID]
+            if scope == .scene {
+                sceneIDs = selectedSceneID.map { [$0] } ?? []
+            } else {
+                sceneIDs = project.chapters.flatMap { $0.scenes.map(\.id) }
+            }
+            for sceneID in sceneIDs {
+                if sceneID == selectedSceneID {
+                    // Route displayed scene through editor for undo support
+                    pendingSceneReplaceAll = SceneReplaceAllRequest(
+                        sceneID: sceneID,
+                        query: query,
+                        replacement: replacement,
+                        options: compareOptions
+                    )
+                    // Count matches in advance for the return value
+                    let scene = project.chapters.flatMap(\.scenes).first(where: { $0.id == sceneID })
+                    if let content = scene?.content {
+                        let ns = content as NSString
+                        var start = 0
+                        while start < ns.length {
+                            let r = ns.range(of: query, options: compareOptions, range: NSRange(location: start, length: ns.length - start))
+                            guard r.location != NSNotFound else { break }
+                            totalCount += 1
+                            start = r.location + max(r.length, 1)
+                        }
+                    }
+                } else {
+                    let count = replaceAllInSceneContent(
+                        sceneID: sceneID,
+                        query: query,
+                        replacement: replacement,
+                        options: compareOptions
+                    )
+                    if count > 0 {
+                        mutatedOutsideEditor = true
+                        totalCount += count
+                    }
+                }
+            }
+        }
+
+        if shouldReplaceCompendium {
+            for index in project.compendium.indices {
+                let (newTitle, titleCount) = replaceAllInPlainText(project.compendium[index].title, query: query, replacement: replacement, options: compareOptions)
+                let (newBody, bodyCount) = replaceAllInPlainText(project.compendium[index].body, query: query, replacement: replacement, options: compareOptions)
+                let entryCount = titleCount + bodyCount
+                if entryCount > 0 {
+                    project.compendium[index].title = newTitle
+                    project.compendium[index].body = newBody
+                    project.compendium[index].updatedAt = .now
+                    mutatedOutsideEditor = true
+                    totalCount += entryCount
+                }
+            }
+        }
+
+        if shouldReplaceSummaries {
+            for ci in project.chapters.indices {
+                let (newChapterSummary, csCount) = replaceAllInPlainText(project.chapters[ci].summary, query: query, replacement: replacement, options: compareOptions)
+                if csCount > 0 {
+                    project.chapters[ci].summary = newChapterSummary
+                    project.chapters[ci].updatedAt = .now
+                    mutatedOutsideEditor = true
+                    totalCount += csCount
+                }
+                for si in project.chapters[ci].scenes.indices {
+                    let (newSceneSummary, ssCount) = replaceAllInPlainText(project.chapters[ci].scenes[si].summary, query: query, replacement: replacement, options: compareOptions)
+                    if ssCount > 0 {
+                        project.chapters[ci].scenes[si].summary = newSceneSummary
+                        project.chapters[ci].scenes[si].updatedAt = .now
+                        mutatedOutsideEditor = true
+                        totalCount += ssCount
+                    }
+                }
+            }
+        }
+
+        if shouldReplaceNotes {
+            let (newProjectNotes, pnCount) = replaceAllInPlainText(project.notes, query: query, replacement: replacement, options: compareOptions)
+            if pnCount > 0 {
+                project.notes = newProjectNotes
+                mutatedOutsideEditor = true
+                totalCount += pnCount
+            }
+            for ci in project.chapters.indices {
+                let (newChapterNotes, cnCount) = replaceAllInPlainText(project.chapters[ci].notes, query: query, replacement: replacement, options: compareOptions)
+                if cnCount > 0 {
+                    project.chapters[ci].notes = newChapterNotes
+                    project.chapters[ci].updatedAt = .now
+                    mutatedOutsideEditor = true
+                    totalCount += cnCount
+                }
+                for si in project.chapters[ci].scenes.indices {
+                    let (newSceneNotes, snCount) = replaceAllInPlainText(project.chapters[ci].scenes[si].notes, query: query, replacement: replacement, options: compareOptions)
+                    if snCount > 0 {
+                        project.chapters[ci].scenes[si].notes = newSceneNotes
+                        project.chapters[ci].scenes[si].updatedAt = .now
+                        mutatedOutsideEditor = true
+                        totalCount += snCount
+                    }
+                }
+            }
+        }
+
+        if totalCount > 0 {
+            if mutatedOutsideEditor {
+                saveProject(debounced: false)
+            }
+            refreshGlobalSearchResults()
+        }
+
+        return totalCount
+    }
+
+    // MARK: - Replace Helpers (Private)
+
+    private func replaceInSceneContent(sceneID: UUID, at location: Int, length: Int, query: String, replacement: String, options: NSString.CompareOptions) -> Bool {
+        guard let loc = sceneLocation(for: sceneID) else { return false }
+        let scene = project.chapters[loc.chapterIndex].scenes[loc.sceneIndex]
+        let attributed = makeAttributedSceneContent(plainText: scene.content, richTextData: scene.contentRTFData)
+
+        guard location + length <= attributed.length else { return false }
+        let matchRange = NSRange(location: location, length: length)
+        let existingText = attributed.mutableString.substring(with: matchRange) as NSString
+        guard existingText.range(of: query, options: options).location == 0,
+              existingText.length == length else {
+            return false
+        }
+
+        attributed.replaceCharacters(in: matchRange, with: replacement)
+
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].content = attributed.string
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].contentRTFData = makeRTFData(from: attributed)
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].updatedAt = .now
+        project.chapters[loc.chapterIndex].updatedAt = .now
+        project.rollingSceneMemoryByScene.removeValue(forKey: sceneID.uuidString)
+        project.rollingChapterMemoryByChapter.removeValue(
+            forKey: project.chapters[loc.chapterIndex].id.uuidString
+        )
+
+        if selectedSceneID == sceneID {
+            sceneRichTextRefreshID = UUID()
+        }
+        saveProject(debounced: false)
+        return true
+    }
+
+    private func replaceAllInSceneContent(sceneID: UUID, query: String, replacement: String, options: NSString.CompareOptions) -> Int {
+        guard let loc = sceneLocation(for: sceneID) else { return 0 }
+        let scene = project.chapters[loc.chapterIndex].scenes[loc.sceneIndex]
+        let attributed = makeAttributedSceneContent(plainText: scene.content, richTextData: scene.contentRTFData)
+
+        let count = attributed.mutableString.replaceOccurrences(
+            of: query,
+            with: replacement,
+            options: options,
+            range: NSRange(location: 0, length: attributed.mutableString.length)
+        )
+        guard count > 0 else { return 0 }
+
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].content = attributed.string
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].contentRTFData = makeRTFData(from: attributed)
+        project.chapters[loc.chapterIndex].scenes[loc.sceneIndex].updatedAt = .now
+        project.chapters[loc.chapterIndex].updatedAt = .now
+        project.rollingSceneMemoryByScene.removeValue(forKey: sceneID.uuidString)
+        project.rollingChapterMemoryByChapter.removeValue(
+            forKey: project.chapters[loc.chapterIndex].id.uuidString
+        )
+
+        if selectedSceneID == sceneID {
+            sceneRichTextRefreshID = UUID()
+        }
+        return count
+    }
+
+    private func replaceInPlainText(_ text: String, at location: Int, length: Int, query: String, replacement: String, options: NSString.CompareOptions) -> String? {
+        let nsText = text as NSString
+        guard location + length <= nsText.length else { return nil }
+        let matchRange = NSRange(location: location, length: length)
+        let existing = nsText.substring(with: matchRange) as NSString
+        guard existing.range(of: query, options: options).location == 0,
+              existing.length == length else {
+            return nil
+        }
+        let mutable = NSMutableString(string: text)
+        mutable.replaceCharacters(in: matchRange, with: replacement)
+        return mutable as String
+    }
+
+    private func replaceAllInPlainText(_ text: String, query: String, replacement: String, options: NSString.CompareOptions) -> (String, Int) {
+        let mutable = NSMutableString(string: text)
+        let count = mutable.replaceOccurrences(
+            of: query,
+            with: replacement,
+            options: options,
+            range: NSRange(location: 0, length: mutable.length)
+        )
+        return (mutable as String, count)
+    }
+
     func revealSceneSearchMatch(
         chapterID: UUID,
         sceneID: UUID,
@@ -1145,6 +1509,33 @@ final class AppStore: ObservableObject {
 
     func consumeNotesTextReveal() {
         pendingNotesTextReveal = nil
+    }
+
+    func consumeSceneReplaceRequest(_ requestID: UUID) {
+        guard pendingSceneReplace?.requestID == requestID else { return }
+        pendingSceneReplace = nil
+    }
+
+    func consumeSceneReplaceAllRequest(_ requestID: UUID) {
+        guard pendingSceneReplaceAll?.requestID == requestID else { return }
+        pendingSceneReplaceAll = nil
+    }
+
+    /// Called by EditorView after it performs an undo-aware replacement
+    /// in the displayed scene's NSTextView.
+    func didCompleteEditorReplace() {
+        refreshGlobalSearchResults()
+        _ = selectNextGlobalSearchResult()
+        saveProject(debounced: false)
+    }
+
+    /// Called by EditorView after it performs an undo-aware replace-all
+    /// in the displayed scene's NSTextView.
+    func didCompleteEditorReplaceAll(count: Int) {
+        if count > 0 {
+            refreshGlobalSearchResults()
+            saveProject(debounced: false)
+        }
     }
 
     func searchScenes(
@@ -7689,6 +8080,8 @@ final class AppStore: ObservableObject {
 
             let searchableText = parts.joined(separator: "\n")
 
+            let titleNSLength = (title as NSString).length
+
             appendSearchMatches(
                 query: query,
                 in: searchableText,
@@ -7696,15 +8089,25 @@ final class AppStore: ObservableObject {
                 output: &output,
                 maxResults: maxResults
             ) { foundRange, searchableNSString in
-                // Only provide body-relative location when match is fully within body
+                // Provide body-relative location when match is fully within body
                 var loc: Int? = nil
                 var len: Int? = nil
+                var isTitleMatch = false
                 if bodyOffset >= 0 {
                     let bodyEnd = bodyOffset + bodyNSLength
                     let matchEnd = foundRange.location + foundRange.length
                     if foundRange.location >= bodyOffset && matchEnd <= bodyEnd {
                         loc = foundRange.location - bodyOffset
                         len = foundRange.length
+                    }
+                }
+                // Provide title-relative location when match is fully within title
+                if loc == nil && titleNSLength > 0 {
+                    let matchEnd = foundRange.location + foundRange.length
+                    if matchEnd <= titleNSLength {
+                        loc = foundRange.location
+                        len = foundRange.length
+                        isTitleMatch = true
                     }
                 }
 
@@ -7720,7 +8123,8 @@ final class AppStore: ObservableObject {
                     workshopSessionID: nil,
                     workshopMessageID: nil,
                     location: loc,
-                    length: len
+                    length: len,
+                    isCompendiumTitleMatch: isTitleMatch
                 )
             }
 
@@ -7959,7 +8363,11 @@ final class AppStore: ObservableObject {
         globalSearchScope = .all
         globalSearchResults = []
         selectedGlobalSearchResultID = nil
+        replaceText = ""
+        isReplaceMode = false
         pendingSceneSearchSelection = nil
+        pendingSceneReplace = nil
+        pendingSceneReplaceAll = nil
         pendingWorkshopMessageReveal = nil
         pendingCompendiumTextReveal = nil
         pendingSummaryTextReveal = nil

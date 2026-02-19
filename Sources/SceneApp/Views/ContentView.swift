@@ -363,6 +363,10 @@ struct ContentView: View {
             findInProject: {
                 store.requestGlobalSearchFocus(scope: .all)
             },
+            findAndReplace: {
+                store.isReplaceMode = true
+                store.requestGlobalSearchFocus(scope: store.globalSearchScope)
+            },
             findNext: activateNextSearchResult,
             findPrevious: activatePreviousSearchResult,
             focusBeatInput: {
@@ -371,6 +375,7 @@ struct ContentView: View {
             },
             canFindInScene: store.isProjectOpen && store.selectedScene != nil,
             canFindInProject: store.isProjectOpen,
+            canFindAndReplace: store.isProjectOpen,
             canFindNext: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty,
             canFindPrevious: !store.globalSearchResults.isEmpty || !store.lastGlobalSearchQuery.isEmpty,
             canFocusBeatInput: store.isProjectOpen && store.selectedScene != nil
@@ -444,7 +449,7 @@ struct ContentView: View {
             selectedTab = .writing
             writingSidePanel = .compendium
             store.selectCompendiumEntry(entryID)
-            if let loc = result.location, let len = result.length {
+            if let loc = result.location, let len = result.length, !result.isCompendiumTitleMatch {
                 store.revealCompendiumText(location: loc, length: len)
             }
 

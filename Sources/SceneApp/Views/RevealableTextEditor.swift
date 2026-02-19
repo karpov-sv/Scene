@@ -50,12 +50,10 @@ struct RevealableTextEditor: NSViewRepresentable {
 
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
-        // Sync text from binding to NSTextView (avoid loop via isUpdating flag)
+        // Sync text from binding to NSTextView using undo-aware replacement
         if textView.string != text, !context.coordinator.isUpdating {
             context.coordinator.isUpdating = true
-            let sel = textView.selectedRanges
-            textView.string = text
-            textView.selectedRanges = sel
+            context.coordinator.applyExternalTextChange(text, to: textView)
             context.coordinator.isUpdating = false
         }
 
@@ -92,6 +90,52 @@ struct RevealableTextEditor: NSViewRepresentable {
             isUpdating = true
             parent.text = textView.string
             isUpdating = false
+        }
+
+        /// Replace content using undo-aware NSTextView APIs so the change
+        /// is registered with the window's undo manager.
+        func applyExternalTextChange(_ newText: String, to textView: NSTextView) {
+            let currentNS = textView.string as NSString
+            let targetNS = newText as NSString
+
+            // Find the differing region to minimise the replacement range.
+            var prefix = 0
+            while prefix < currentNS.length,
+                  prefix < targetNS.length,
+                  currentNS.character(at: prefix) == targetNS.character(at: prefix) {
+                prefix += 1
+            }
+            var suffix = 0
+            while suffix < (currentNS.length - prefix),
+                  suffix < (targetNS.length - prefix),
+                  currentNS.character(at: currentNS.length - 1 - suffix) == targetNS.character(at: targetNS.length - 1 - suffix) {
+                suffix += 1
+            }
+
+            let replaceRange = NSRange(location: prefix, length: currentNS.length - prefix - suffix)
+            let insertRange = NSRange(location: prefix, length: targetNS.length - prefix - suffix)
+            let replacementString = targetNS.substring(with: insertRange)
+
+            let previousSelection = textView.selectedRanges
+
+            if textView.shouldChangeText(in: replaceRange, replacementString: replacementString) {
+                textView.textStorage?.beginEditing()
+                textView.textStorage?.replaceCharacters(in: replaceRange, with: replacementString)
+                textView.textStorage?.endEditing()
+                textView.didChangeText()
+            }
+
+            // Restore selection, clamped to new length.
+            let clampedRanges = previousSelection.compactMap { rangeValue -> NSValue? in
+                let r = rangeValue.rangeValue
+                let maxLoc = max(0, (textView.string as NSString).length)
+                let loc = min(r.location, maxLoc)
+                let len = min(r.length, maxLoc - loc)
+                return NSValue(range: NSRange(location: loc, length: len))
+            }
+            if !clampedRanges.isEmpty {
+                textView.selectedRanges = clampedRanges
+            }
         }
     }
 }
