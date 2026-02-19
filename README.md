@@ -158,7 +158,7 @@ The build script (`build-gui-app.sh`) runs this automatically before each build.
 
 ### Flushing the help cache
 
-macOS caches help book content aggressively via the `helpd` daemon. After rebuilding the app with updated help pages, run:
+macOS caches help book content aggressively via the `helpd` and `tipsd` daemons (macOS 15 routes help through the Tips app). After rebuilding the app with updated help pages, run:
 
 ```bash
 ./scripts/flush-help-cache.sh

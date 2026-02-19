@@ -6,4 +6,5 @@ DerivedData/
 *.xcodeproj
 xcuserdata/
 dist/
+*.cshelpindex
 CLAUDE.md
