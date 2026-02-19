@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Configure AI providers: OpenAI, Anthropic, OpenRouter, LM Studio, and custom endpoints.">
+    <meta name="keywords" content="AI, provider, OpenAI, Anthropic, Claude, OpenRouter, LM Studio, API key, model, endpoint">
+    <title>AI Provider Setup</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; AI Provider Setup</div>
+
+<a name="ai-providers"></a>
+<h1>AI Provider Setup</h1>
+<p>
+    Scene supports multiple AI providers. Configure your provider in
+    <strong>Project Settings &rarr; General</strong>. Settings are per-project.
+</p>
+<h3>Supported providers</h3>
+<table>
+    <tr><th>Provider</th><th>Description</th></tr>
+    <tr><td>OpenAI (ChatGPT)</td><td>GPT-4, GPT-4o, and other OpenAI models.</td></tr>
+    <tr><td>Anthropic (Claude)</td><td>Claude Sonnet, Opus, Haiku, and other Anthropic models.</td></tr>
+    <tr><td>OpenRouter</td><td>Aggregator providing access to models from many providers.</td></tr>
+    <tr><td>LM Studio (Local)</td><td>Run models locally on your Mac via LM Studio.</td></tr>
+    <tr><td>OpenAI-Compatible (Custom)</td><td>Any endpoint implementing the OpenAI chat completions API.</td></tr>
+</table>
+<h3>Configuration</h3>
+<ul>
+    <li><strong>Endpoint URL</strong> &mdash; auto-populated with the provider's default. Editable for custom endpoints.</li>
+    <li><strong>API Key</strong> &mdash; your provider API key (stored in the project file).</li>
+    <li><strong>Model</strong> &mdash; select from the model picker or type a model name directly.</li>
+    <li><strong>Refresh</strong> &mdash; discovers available models from the provider's
+        <code>/v1/models</code> endpoint. Stale or unavailable models are automatically removed.</li>
+    <li><strong>Streaming</strong> &mdash; enable or disable real-time token streaming.</li>
+    <li><strong>Request timeout</strong> &mdash; maximum wait time for API responses (default: 5 minutes).</li>
+</ul>
+<h3>Multi-model selection</h3>
+<p>
+    In <strong>Project Settings &rarr; Text Generation</strong>, you can configure separate models
+    for different tasks (prose generation, rewrite, summary, workshop chat).
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="project-settings.html">Project Settings</a></li>
+        <li><a href="text-generation.html">Text Generation</a></li>
+        <li><a href="workshop.html">Workshop Chat</a></li>
+    </ul>
+</div>
+
+</body>
+</html>

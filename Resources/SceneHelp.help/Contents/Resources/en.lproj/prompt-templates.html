@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Customize prompt templates with variables and functions for AI generation.">
+    <meta name="keywords" content="prompt, template, variables, functions, beat, scene, context, rolling, custom">
+    <title>Prompt Templates</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; Prompt Templates</div>
+
+<a name="prompt-templates"></a>
+<h1>Prompt Templates</h1>
+<p>
+    Prompt templates define the system and user messages sent to the AI. Scene includes built-in
+    templates for each task type. You can customize them or create your own in
+    <strong>Project Settings &rarr; Prompt Templates</strong>.
+</p>
+<h3>Template categories</h3>
+<table>
+    <tr><th>Category</th><th>Used for</th></tr>
+    <tr><td>Prose</td><td>Generating new text from story beats.</td></tr>
+    <tr><td>Rewrite</td><td>Rewriting, expanding, or shortening selected text.</td></tr>
+    <tr><td>Summary</td><td>Generating scene and chapter summaries.</td></tr>
+    <tr><td>Workshop</td><td>Workshop chat conversations.</td></tr>
+</table>
+<h3>Template variables</h3>
+<p>
+    Templates use <code>{{variable}}</code> syntax. Legacy <code>{variable}</code> syntax is also
+    supported. The template editor in Project Settings shows a rendered preview and warns about
+    unrecognized variables.
+</p>
+<h4>Common variables</h4>
+<table>
+    <tr><th>Variable</th><th>Description</th></tr>
+    <tr><td><code>{{beat}}</code></td><td>Current beat input text.</td></tr>
+    <tr><td><code>{{scene}}</code></td><td>Current scene body.</td></tr>
+    <tr><td><code>{{selection}}</code></td><td>Currently selected editor text (rewrite mode).</td></tr>
+    <tr><td><code>{{selection_context}}</code></td><td>Text surrounding the selection for rewrite context.</td></tr>
+    <tr><td><code>{{scene_title}}</code></td><td>Title of the selected scene.</td></tr>
+    <tr><td><code>{{chapter_title}}</code></td><td>Title of the selected chapter.</td></tr>
+    <tr><td><code>{{project_title}}</code></td><td>Project title.</td></tr>
+    <tr><td><code>{{context}}</code></td><td>All selected context (compendium + summaries + rolling memory).</td></tr>
+    <tr><td><code>{{context_rolling}}</code></td><td>Rolling memory block (all scopes).</td></tr>
+    <tr><td><code>{{context_compendium}}</code></td><td>Compendium entries only.</td></tr>
+    <tr><td><code>{{context_scene_summaries}}</code></td><td>Scene summaries only.</td></tr>
+    <tr><td><code>{{context_chapter_summaries}}</code></td><td>Chapter summaries only.</td></tr>
+    <tr><td><code>{{conversation}}</code></td><td>Workshop transcript context.</td></tr>
+    <tr><td><code>{{chat_name}}</code></td><td>Active workshop session name.</td></tr>
+    <tr><td><code>{{summary_scope}}</code></td><td>Summary mode label (scene or chapter).</td></tr>
+    <tr><td><code>{{source}}</code></td><td>Primary source text for the current template category.</td></tr>
+</table>
+<h4>Functions with parameters</h4>
+<table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code>{{scene_tail(chars=2400)}}</code></td><td>Last N characters of the scene.</td></tr>
+    <tr><td><code>{{chat_history(turns=8)}}</code></td><td>Recent workshop chat turns.</td></tr>
+    <tr><td><code>{{context(max_chars=4000)}}</code></td><td>Context with a character limit.</td></tr>
+    <tr><td><code>{{context_rolling(max_chars=2200)}}</code></td><td>Rolling memory with a character limit.</td></tr>
+    <tr><td><code>{{context_compendium(max_chars=4000)}}</code></td><td>Compendium context with a limit.</td></tr>
+    <tr><td><code>{{context_scene_summaries(max_chars=4000)}}</code></td><td>Scene summaries with a limit.</td></tr>
+    <tr><td><code>{{context_chapter_summaries(max_chars=4000)}}</code></td><td>Chapter summaries with a limit.</td></tr>
+</table>
+<h3>Exporting and importing templates</h3>
+<p>
+    In <strong>Project Settings &rarr; General &rarr; Data Exchange</strong>, export your prompt
+    templates to share with other projects. Import adds new templates and updates built-in templates
+    that you have customized, with duplicate-safe naming for custom templates.
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="text-generation.html">Text Generation</a></li>
+        <li><a href="rewriting.html">Rewriting Selected Text</a></li>
+        <li><a href="rolling-memory.html">Rolling Memory</a></li>
+        <li><a href="project-settings.html">Project Settings</a></li>
+    </ul>
+</div>
+
+</body>
+</html>

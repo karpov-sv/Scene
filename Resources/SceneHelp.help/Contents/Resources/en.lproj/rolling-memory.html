@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Use rolling memory to maintain AI consistency across long sessions.">
+    <meta name="keywords" content="rolling memory, workshop memory, chapter memory, scene memory, context_rolling">
+    <title>Rolling Memory</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; Rolling Memory</div>
+
+<a name="rolling-memory"></a>
+<h1>Rolling Memory</h1>
+<p>
+    Rolling memory keeps a condensed summary of important state across generation turns.
+    It helps the AI maintain consistency over long writing sessions without resending all
+    previous content. There are three independent memory scopes:
+</p>
+<dl>
+    <dt>Workshop memory</dt>
+    <dd>Per-conversation. Refreshes automatically in the background after enough new chat turns.
+        Edit it from the book icon in the workshop header.</dd>
+    <dt>Chapter memory</dt>
+    <dd>Per-chapter. Edit from the book icon in the Summary panel (chapter scope).
+        Update it from multiple sources via the <strong>Update&hellip;</strong> menu:
+        <ul>
+            <li>Chapter summary text</li>
+            <li>Chapter text up to the currently selected scene</li>
+            <li>Full chapter text</li>
+        </ul>
+        During iterative updates from scene text, the memory sheet updates live after each scene
+        merge step.
+    </dd>
+    <dt>Scene memory</dt>
+    <dd>Per-scene, validated against a hash of the scene content. Edit from the book icon in the
+        Summary panel (scene scope). Update from:
+        <ul>
+            <li>Scene summary text</li>
+            <li>Full scene text</li>
+        </ul>
+    </dd>
+</dl>
+<h3>Using rolling memory in prompts</h3>
+<p>
+    Rolling memory is available in prompt templates via <code>{{context_rolling}}</code>
+    (or its alias <code>{{rolling_summary}}</code>). It is also included automatically when
+    you use <code>{{context}}</code>. Individual scopes can be accessed with
+    <code>{{rolling_workshop_summary}}</code>, <code>{{rolling_chapter_summary}}</code>, and
+    <code>{{rolling_scene_summary}}</code>.
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="summaries.html">Summaries</a></li>
+        <li><a href="context.html">Scene Context</a></li>
+        <li><a href="prompt-templates.html">Prompt Templates</a></li>
+        <li><a href="workshop.html">Workshop Chat</a></li>
+    </ul>
+</div>
+
+</body>
+</html>

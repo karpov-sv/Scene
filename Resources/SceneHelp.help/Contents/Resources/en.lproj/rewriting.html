@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Rewrite, expand, or shorten selected text using AI.">
+    <meta name="keywords" content="rewrite, expand, shorten, selection, incremental, streaming">
+    <title>Rewriting Selected Text</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; Rewriting Selected Text</div>
+
+<a name="rewriting"></a>
+<h1>Rewriting Selected Text</h1>
+<p>
+    When you select text in the editor, the generation form automatically switches to
+    <strong>rewrite mode</strong>. The prompt template picker shows rewrite-specific templates
+    and the action button changes to <strong>Rewrite</strong>.
+</p>
+<h3>Built-in rewrite templates</h3>
+<dl>
+    <dt>Rewrite</dt>
+    <dd>Rewrites the selected passage while preserving meaning and style.</dd>
+    <dt>Expand</dt>
+    <dd>Expands the passage with more detail, description, or dialogue.</dd>
+    <dt>Shorten</dt>
+    <dd>Condenses the passage while retaining key content.</dd>
+</dl>
+<p>
+    Each template is also available in a compact variant optimized for shorter prompts.
+</p>
+<h3>Incremental rewrite</h3>
+<p>
+    When enabled in <strong>Project Settings &rarr; Text Generation</strong>, the rewrite
+    streams directly into the editor, replacing the selected text token by token. This lets you
+    watch the rewrite form in real time. The entire rewrite is consolidated into a single undo step.
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="text-generation.html">Text Generation</a></li>
+        <li><a href="editor.html">Writing &amp; Editing</a></li>
+        <li><a href="prompt-templates.html">Prompt Templates</a></li>
+    </ul>
+</div>
+
+</body>
+</html>

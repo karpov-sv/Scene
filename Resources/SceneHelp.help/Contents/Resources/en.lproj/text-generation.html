@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Generate prose from story beats using AI text generation.">
+    <meta name="keywords" content="generation, prose, story beat, AI, streaming, token, undo">
+    <title>Text Generation</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; Text Generation</div>
+
+<a name="text-generation"></a>
+<h1>Text Generation</h1>
+<p>
+    The text generation form appears at the bottom of the Writing panel. Use it to generate prose
+    from a short description (a "story beat") that the AI expands into full text.
+</p>
+<h3>Basic workflow</h3>
+<ol>
+    <li>Select a scene in the binder.</li>
+    <li>Type a story beat into the generation input (e.g., "Elena discovers the hidden letter").</li>
+    <li>Choose a prompt template from the dropdown.</li>
+    <li>Press <code>Enter</code> to generate. The result streams into the editor in real time.</li>
+</ol>
+<h3>Generation controls</h3>
+<ul>
+    <li><strong>Prompt template picker</strong> &mdash; choose from built-in or custom prose templates.</li>
+    <li><strong>Preview</strong> &mdash; inspect the full API payload before sending.</li>
+    <li><strong>Cancel</strong> &mdash; stop a generation in progress.</li>
+    <li><strong>Token usage</strong> &mdash; live token count displayed during and after generation.</li>
+</ul>
+<h3>Collapsible form</h3>
+<p>
+    The generation form can be collapsed using the control at its lower-right corner to give
+    more space to the editor. Restore it from the same location or press <code>Cmd-K</code>.
+    Visibility state persists within the window session.
+</p>
+<h3>Input history</h3>
+<p>
+    Beat inputs are saved per scene (up to 30 entries). Access previous beats with the history
+    control in the input field. Duplicate entries are removed automatically.
+</p>
+<p>
+    Generated text is inserted as a single undo step, so <code>Cmd-Z</code> removes the entire
+    generated block at once.
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="rewriting.html">Rewriting Selected Text</a></li>
+        <li><a href="prompt-templates.html">Prompt Templates</a></li>
+        <li><a href="context.html">Scene Context</a></li>
+        <li><a href="ai-providers.html">AI Provider Setup</a></li>
+    </ul>
+</div>
+
+</body>
+</html>

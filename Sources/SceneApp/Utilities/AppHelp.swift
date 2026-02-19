@@ -39,6 +39,14 @@ enum AppHelp {
             case .keyboardShortcuts: return "keyboard-shortcuts"
             }
         }
+
+        /// HTML filename (without extension) for the topic page.
+        var page: String {
+            switch self {
+            case .home: return "index"
+            default: return anchor
+            }
+        }
     }
 
     private static let defaultHelpBookName = "Scene Help"
@@ -53,7 +61,7 @@ enum AppHelp {
             return true
         }
 
-        if openBundledHelpPage(anchor: topic.anchor) {
+        if openBundledHelpPage(topic: topic) {
             return true
         }
 
@@ -79,21 +87,21 @@ enum AppHelp {
     }
 
     @discardableResult
-    private static func openBundledHelpPage(anchor: String) -> Bool {
-        guard let baseURL = helpHomePageURL() else {
+    private static func openBundledHelpPage(topic: Topic) -> Bool {
+        guard let pageURL = helpPageURL(page: topic.page) else {
             return false
         }
 
-        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
-        components?.fragment = anchor
+        var components = URLComponents(url: pageURL, resolvingAgainstBaseURL: false)
+        components?.fragment = topic.anchor
         guard let targetURL = components?.url else {
             return false
         }
         return NSWorkspace.shared.open(targetURL)
     }
 
-    private static func helpHomePageURL() -> URL? {
-        let htmlRelPath = "\(helpBookFolderName).\(helpBookFolderExtension)/Contents/Resources/en.lproj/\(homePageName).html"
+    private static func helpPageURL(page: String) -> URL? {
+        let htmlRelPath = "\(helpBookFolderName).\(helpBookFolderExtension)/Contents/Resources/en.lproj/\(page).html"
 
         if let resourceRoot = Bundle.main.resourceURL {
             let directURL = resourceRoot.appendingPathComponent(htmlRelPath, isDirectory: false)
@@ -114,7 +122,7 @@ enum AppHelp {
         }
 
         return Bundle.main.url(
-            forResource: homePageName,
+            forResource: page,
             withExtension: "html",
             subdirectory: helpBookSubdirectory
         )

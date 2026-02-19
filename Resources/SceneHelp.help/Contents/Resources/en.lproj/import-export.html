@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Import and export projects in JSON, EPUB, plain text, and HTML formats.">
+    <meta name="keywords" content="import, export, JSON, EPUB, plain text, HTML, data exchange, metadata">
+    <title>Import &amp; Export</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="breadcrumb"><a href="index.html">Scene Help</a> &rsaquo; Import &amp; Export</div>
+
+<a name="import-export"></a>
+<h1>Import &amp; Export</h1>
+<p>
+    Scene supports multiple data exchange formats via the <strong>File</strong> menu and
+    <strong>Project Settings &rarr; Data Exchange</strong>.
+</p>
+<h3>Project import</h3>
+<table>
+    <tr><th>Format</th><th>Menu</th><th>Behavior</th></tr>
+    <tr><td>JSON</td><td>File &rarr; Import &rarr; JSON&hellip;</td><td>Creates a new <code>.sceneproj</code> and opens it in a new window.</td></tr>
+    <tr><td>EPUB</td><td>File &rarr; Import &rarr; EPUB&hellip;</td><td>Creates a new <code>.sceneproj</code> from EPUB structure and opens it in a new window.</td></tr>
+</table>
+<h3>Project export</h3>
+<table>
+    <tr><th>Format</th><th>Menu</th><th>Contents</th></tr>
+    <tr><td>JSON</td><td>File &rarr; Export &rarr; JSON&hellip;</td><td>Complete project data as a single JSON file.</td></tr>
+    <tr><td>Plain Text</td><td>File &rarr; Export &rarr; Plain Text&hellip;</td><td>All scenes in chapter/scene order as one <code>.txt</code> file.</td></tr>
+    <tr><td>HTML</td><td>File &rarr; Export &rarr; HTML&hellip;</td><td>Semantic HTML with headings and paragraphs.</td></tr>
+    <tr><td>EPUB</td><td>File &rarr; Export &rarr; EPUB&hellip;</td><td>Standard EPUB with embedded Scene payload for round-trip import.</td></tr>
+</table>
+<p>
+    Project metadata (author, language, publisher, rights, description) is mapped to EPUB OPF
+    metadata fields on export and imported back on EPUB import.
+</p>
+<h3>Data exchange in Project Settings</h3>
+<p>
+    <strong>Project Settings &rarr; General &rarr; Data Exchange</strong> provides additional
+    import/export for prompt templates, compendium entries, and full project data (replacing the
+    current project's content).
+</p>
+
+<div class="see-also">
+    <strong>See also</strong>
+    <ul>
+        <li><a href="projects.html">Project Format</a></li>
+        <li><a href="project-settings.html">Project Settings</a></li>
+        <li><a href="prompt-templates.html">Prompt Templates</a></li>
+    </ul>
+</div>
+
+</body>
+</html>
