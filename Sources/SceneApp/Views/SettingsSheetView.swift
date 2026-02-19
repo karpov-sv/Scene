@@ -1909,19 +1909,25 @@ private struct EditorAppearancePreview: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.scrollerInsets = NSEdgeInsets()
 
         let textView = NSTextView(frame: NSRect(origin: .zero, size: scrollView.contentSize))
         textView.isEditable = false
         textView.isSelectable = false
         textView.isRichText = true
-        textView.drawsBackground = false
+        textView.drawsBackground = true
+        textView.backgroundColor = NSColor.textBackgroundColor
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
         textView.textContainer?.lineBreakMode = .byWordWrapping
+        textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.containerSize = NSSize(
             width: scrollView.contentSize.width,
             height: CGFloat.greatestFiniteMagnitude
@@ -1961,6 +1967,8 @@ private struct EditorAppearancePreview: NSViewRepresentable {
         textView.textStorage?.setAttributedString(
             NSAttributedString(string: previewText, attributes: attributes)
         )
+        textView.textColor = textColor
+        textView.backgroundColor = backgroundColor
         textView.textContainerInset = NSSize(
             width: appearance.horizontalPadding,
             height: appearance.verticalPadding
