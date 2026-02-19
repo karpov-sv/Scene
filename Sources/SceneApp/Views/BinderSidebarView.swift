@@ -278,43 +278,61 @@ struct BinderSidebarView: View {
     }
 
     private var searchResultsList: some View {
-        List(selection: selectedSearchResultBinding) {
-            if store.globalSearchResults.isEmpty {
-                Text("No matches found.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(store.globalSearchResults) { result in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Image(systemName: searchResultIcon(for: result.kind))
+        ScrollViewReader { proxy in
+            List(selection: selectedSearchResultBinding) {
+                if store.globalSearchResults.isEmpty {
+                    Text("No matches found.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.globalSearchResults) { result in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Image(systemName: searchResultIcon(for: result.kind))
+                                    .foregroundStyle(.secondary)
+                                Text(result.title)
+                                    .lineLimit(1)
+                            }
+
+                            Text(result.subtitle)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(result.title)
                                 .lineLimit(1)
+
+                            highlightedSnippet(result.snippet)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
-
-                        Text(result.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-
-                        Text(result.snippet)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
+                        .tag(Optional(result.id))
+                        .id(result.id)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 2)
-                    .tag(Optional(result.id))
-                    .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
                 }
             }
+            .listStyle(.sidebar)
+            .onChange(of: store.selectedGlobalSearchResultID) { _, newID in
+                guard let newID,
+                      let result = store.globalSearchResults.first(where: { $0.id == newID }) else { return }
+                withAnimation {
+                    proxy.scrollTo(newID, anchor: .center)
+                }
+                onActivateSearchResult?(result)
+            }
         }
-        .listStyle(.sidebar)
-        .onChange(of: store.selectedGlobalSearchResultID) { _, newID in
-            guard let newID,
-                  let result = store.globalSearchResults.first(where: { $0.id == newID }) else { return }
-            onActivateSearchResult?(result)
+    }
+
+    private func highlightedSnippet(_ snippet: String) -> Text {
+        let query = store.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty,
+              let range = snippet.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else {
+            return Text(snippet)
         }
+        let before = String(snippet[snippet.startIndex..<range.lowerBound])
+        let match = String(snippet[range])
+        let after = String(snippet[range.upperBound..<snippet.endIndex])
+        return Text(before) + Text(match).bold().foregroundColor(.primary) + Text(after)
     }
 
     private var footerActions: some View {

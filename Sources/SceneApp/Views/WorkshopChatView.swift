@@ -410,7 +410,8 @@ struct WorkshopChatView: View {
 
                             WorkshopMessageText(
                                 message: message,
-                                isStreaming: store.workshopIsGenerating && index == messages.count - 1 && message.role == .assistant
+                                isStreaming: store.workshopIsGenerating && index == messages.count - 1 && message.role == .assistant,
+                                searchHighlight: store.isGlobalSearchVisible ? store.globalSearchQuery : ""
                             )
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -422,6 +423,7 @@ struct WorkshopChatView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
+                        .id(message.id.uuidString)
 
                         Divider()
                 }
@@ -456,6 +458,18 @@ struct WorkshopChatView: View {
                 let shouldKeepBottom = shouldStickToBottom
                 guard shouldKeepBottom else { return }
                 scheduleScrollToBottom(using: proxy)
+            }
+            .onChange(of: store.pendingWorkshopMessageReveal?.requestID) { _, requestID in
+                guard let requestID,
+                      let reveal = store.pendingWorkshopMessageReveal,
+                      reveal.sessionID == store.selectedWorkshopSessionID else { return }
+                shouldStickToBottom = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation {
+                        proxy.scrollTo(reveal.messageID.uuidString, anchor: .center)
+                    }
+                }
+                store.consumeWorkshopMessageReveal(requestID)
             }
         }
     }
@@ -1047,11 +1061,14 @@ private struct WorkshopMessagesScrollObserverView: NSViewRepresentable {
 private struct WorkshopMessageText: View {
     let message: WorkshopMessage
     var isStreaming: Bool = false
+    var searchHighlight: String = ""
 
     var body: some View {
         Group {
             if !isStreaming, message.role == .assistant, let rendered = renderedAssistantMarkdown(message.content) {
-                Text(rendered)
+                Text(applySearchHighlight(to: rendered))
+            } else if !searchHighlight.isEmpty {
+                Text(highlightedPlainText(message.content))
             } else {
                 Text(message.content)
             }
@@ -1064,6 +1081,53 @@ private struct WorkshopMessageText: View {
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
         return try? AttributedString(markdown: content, options: options)
+    }
+
+    private func applySearchHighlight(to attributed: AttributedString) -> AttributedString {
+        let query = searchHighlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return attributed }
+
+        var result = attributed
+        let plainString = String(result.characters)
+        let nsString = plainString as NSString
+        var searchStart = 0
+
+        while searchStart < nsString.length {
+            let searchRange = NSRange(location: searchStart, length: nsString.length - searchStart)
+            let found = nsString.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+            guard found.location != NSNotFound else { break }
+
+            let startIndex = result.characters.index(result.startIndex, offsetBy: found.location)
+            let endIndex = result.characters.index(startIndex, offsetBy: found.length)
+            result[startIndex..<endIndex].backgroundColor = .findHighlightColor
+            result[startIndex..<endIndex].foregroundColor = .black
+
+            searchStart = found.location + max(found.length, 1)
+        }
+        return result
+    }
+
+    private func highlightedPlainText(_ content: String) -> AttributedString {
+        let query = searchHighlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return AttributedString(content) }
+
+        var result = AttributedString(content)
+        let nsString = content as NSString
+        var searchStart = 0
+
+        while searchStart < nsString.length {
+            let searchRange = NSRange(location: searchStart, length: nsString.length - searchStart)
+            let found = nsString.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange)
+            guard found.location != NSNotFound else { break }
+
+            let startIndex = result.characters.index(result.startIndex, offsetBy: found.location)
+            let endIndex = result.characters.index(startIndex, offsetBy: found.length)
+            result[startIndex..<endIndex].backgroundColor = .findHighlightColor
+            result[startIndex..<endIndex].foregroundColor = .black
+
+            searchStart = found.location + max(found.length, 1)
+        }
+        return result
     }
 }
 

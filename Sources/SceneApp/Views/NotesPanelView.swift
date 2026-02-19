@@ -3,6 +3,7 @@ import SwiftUI
 struct NotesPanelView: View {
     @EnvironmentObject private var store: AppStore
     @Binding private var scope: NotesScope
+    @State private var notesRevealRequest: RevealableTextEditor.RevealRequest?
 
     init(scope: Binding<NotesScope>) {
         self._scope = scope
@@ -90,6 +91,15 @@ struct NotesPanelView: View {
             notesEditor
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: store.pendingNotesTextReveal?.requestID) { _, _ in
+            guard let reveal = store.pendingNotesTextReveal else { return }
+            notesRevealRequest = .init(
+                id: reveal.requestID,
+                location: reveal.location,
+                length: reveal.length
+            )
+            store.consumeNotesTextReveal()
+        }
     }
 
     private var header: some View {
@@ -130,17 +140,17 @@ struct NotesPanelView: View {
     @ViewBuilder
     private var notesEditor: some View {
         if isScopeAvailable {
-            TextEditor(text: notesBinding)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(
-                    Rectangle()
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-                )
-                .padding(0)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            RevealableTextEditor(
+                text: notesBinding,
+                revealRequest: notesRevealRequest
+            )
+            .padding(8)
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay(
+                Rectangle()
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 8) {
                 Text(unavailableScopeMessage)

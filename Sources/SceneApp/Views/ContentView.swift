@@ -444,6 +444,9 @@ struct ContentView: View {
             selectedTab = .writing
             writingSidePanel = .compendium
             store.selectCompendiumEntry(entryID)
+            if let loc = result.location, let len = result.length {
+                store.revealCompendiumText(location: loc, length: len)
+            }
 
         case .sceneSummary:
             guard let chapterID = result.chapterID,
@@ -454,6 +457,9 @@ struct ContentView: View {
             writingSidePanel = .summary
             summaryScope = .scene
             store.selectScene(sceneID, chapterID: chapterID)
+            if let loc = result.location, let len = result.length {
+                store.revealSummaryText(location: loc, length: len)
+            }
 
         case .chapterSummary:
             guard let chapterID = result.chapterID else { return }
@@ -461,11 +467,17 @@ struct ContentView: View {
             writingSidePanel = .summary
             summaryScope = .chapter
             store.selectChapter(chapterID)
+            if let loc = result.location, let len = result.length {
+                store.revealSummaryText(location: loc, length: len)
+            }
 
         case .projectNote:
             selectedTab = .writing
             writingSidePanel = .notes
             notesScope = .project
+            if let loc = result.location, let len = result.length {
+                store.revealNotesText(location: loc, length: len)
+            }
 
         case .chapterNote:
             guard let chapterID = result.chapterID else { return }
@@ -473,6 +485,9 @@ struct ContentView: View {
             writingSidePanel = .notes
             notesScope = .chapter
             store.selectChapter(chapterID)
+            if let loc = result.location, let len = result.length {
+                store.revealNotesText(location: loc, length: len)
+            }
 
         case .sceneNote:
             guard let chapterID = result.chapterID,
@@ -483,12 +498,17 @@ struct ContentView: View {
             writingSidePanel = .notes
             notesScope = .scene
             store.selectScene(sceneID, chapterID: chapterID)
+            if let loc = result.location, let len = result.length {
+                store.revealNotesText(location: loc, length: len)
+            }
 
         case .chatMessage:
-            guard let sessionID = result.workshopSessionID else { return }
+            guard let sessionID = result.workshopSessionID,
+                  let messageID = result.workshopMessageID else { return }
             selectedTab = .workshop
             writingSidePanel = .conversations
             store.selectWorkshopSession(sessionID)
+            store.revealWorkshopMessage(sessionID: sessionID, messageID: messageID)
         }
     }
 

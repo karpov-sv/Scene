@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 struct CompendiumView: View {
     @EnvironmentObject private var store: AppStore
@@ -7,6 +6,7 @@ struct CompendiumView: View {
     @State private var isAlphabeticalSortAscending: Bool = true
     @State private var confirmDeleteEntry = false
     @State private var confirmClearCompendium = false
+    @State private var bodyRevealRequest: RevealableTextEditor.RevealRequest?
 
     private var filteredEntries: [CompendiumEntry] {
         let entries = store.entries(in: selectedCategory).sorted { lhs, rhs in
@@ -167,16 +167,17 @@ struct CompendiumView: View {
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
 
-                    TextEditor(text: entryBodyBinding)
-                        .font(.body)
-                        .scrollContentBackground(.hidden)
-                        .padding(8)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .overlay(
-                            Rectangle()
-                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    RevealableTextEditor(
+                        text: entryBodyBinding,
+                        revealRequest: bodyRevealRequest
+                    )
+                    .padding(8)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .overlay(
+                        Rectangle()
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .padding(.bottom, 0)
             } else {
@@ -214,6 +215,15 @@ struct CompendiumView: View {
             if store.selectedCompendiumEntry == nil {
                 store.selectCompendiumEntry(filteredEntries.first?.id)
             }
+        }
+        .onChange(of: store.pendingCompendiumTextReveal?.requestID) { _, reqID in
+            guard let reveal = store.pendingCompendiumTextReveal else { return }
+            bodyRevealRequest = .init(
+                id: reveal.requestID,
+                location: reveal.location,
+                length: reveal.length
+            )
+            store.consumeCompendiumTextReveal()
         }
     }
 

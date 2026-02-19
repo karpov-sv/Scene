@@ -12,6 +12,7 @@ struct SceneSummaryPanelView: View {
     @State private var isChapterRollingMemorySheetPresented: Bool = false
     @State private var chapterRollingMemoryDraft: String = ""
     @State private var chapterRollingMemoryRefreshError: String = ""
+    @State private var summaryRevealRequest: RevealableTextEditor.RevealRequest?
 
     init(scope: Binding<SummaryScope>) {
         self._scope = scope
@@ -216,9 +217,10 @@ struct SceneSummaryPanelView: View {
                     .padding(.horizontal, 8)
                     .padding(.top, 6)
 
-                TextEditor(text: summaryBinding)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
+                RevealableTextEditor(
+                    text: summaryBinding,
+                    revealRequest: summaryRevealRequest
+                )
                     .padding(8)
                     .background(Color(nsColor: .textBackgroundColor))
                     .overlay(
@@ -278,6 +280,15 @@ struct SceneSummaryPanelView: View {
             cancelSummarization()
             cancelSceneRollingMemoryRefresh()
             cancelChapterRollingMemoryRefresh()
+        }
+        .onChange(of: store.pendingSummaryTextReveal?.requestID) { _, _ in
+            guard let reveal = store.pendingSummaryTextReveal else { return }
+            summaryRevealRequest = .init(
+                id: reveal.requestID,
+                location: reveal.location,
+                length: reveal.length
+            )
+            store.consumeSummaryTextReveal()
         }
     }
 

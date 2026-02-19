@@ -333,6 +333,18 @@ final class AppStore: ObservableObject {
         let length: Int
     }
 
+    struct WorkshopMessageRevealRequest: Equatable {
+        let requestID: UUID = UUID()
+        let sessionID: UUID
+        let messageID: UUID
+    }
+
+    struct PanelTextRevealRequest: Equatable {
+        let requestID: UUID = UUID()
+        let location: Int
+        let length: Int
+    }
+
     struct ProseGenerationCandidate: Identifiable, Equatable {
         enum Status: String, Equatable {
             case queued
@@ -479,6 +491,10 @@ final class AppStore: ObservableObject {
     @Published private(set) var lastGlobalSearchQuery: String = ""
     @Published private(set) var lastGlobalSearchScope: GlobalSearchScope = .all
     @Published private(set) var pendingSceneSearchSelection: SceneSearchSelectionRequest?
+    @Published private(set) var pendingWorkshopMessageReveal: WorkshopMessageRevealRequest?
+    @Published private(set) var pendingCompendiumTextReveal: PanelTextRevealRequest?
+    @Published private(set) var pendingSummaryTextReveal: PanelTextRevealRequest?
+    @Published private(set) var pendingNotesTextReveal: PanelTextRevealRequest?
     @Published private(set) var projectCheckpoints: [ProjectCheckpointSummary] = []
 
     @Published private(set) var sceneEditorFocusRequestID: UUID = UUID()
@@ -1084,6 +1100,51 @@ final class AppStore: ObservableObject {
     func consumeSceneSearchSelectionRequest(_ requestID: UUID) {
         guard pendingSceneSearchSelection?.requestID == requestID else { return }
         pendingSceneSearchSelection = nil
+    }
+
+    func revealWorkshopMessage(sessionID: UUID, messageID: UUID) {
+        pendingWorkshopMessageReveal = WorkshopMessageRevealRequest(
+            sessionID: sessionID,
+            messageID: messageID
+        )
+    }
+
+    func consumeWorkshopMessageReveal(_ requestID: UUID) {
+        guard pendingWorkshopMessageReveal?.requestID == requestID else { return }
+        pendingWorkshopMessageReveal = nil
+    }
+
+    func revealCompendiumText(location: Int, length: Int) {
+        pendingCompendiumTextReveal = PanelTextRevealRequest(
+            location: max(0, location),
+            length: max(0, length)
+        )
+    }
+
+    func consumeCompendiumTextReveal() {
+        pendingCompendiumTextReveal = nil
+    }
+
+    func revealSummaryText(location: Int, length: Int) {
+        pendingSummaryTextReveal = PanelTextRevealRequest(
+            location: max(0, location),
+            length: max(0, length)
+        )
+    }
+
+    func consumeSummaryTextReveal() {
+        pendingSummaryTextReveal = nil
+    }
+
+    func revealNotesText(location: Int, length: Int) {
+        pendingNotesTextReveal = PanelTextRevealRequest(
+            location: max(0, location),
+            length: max(0, length)
+        )
+    }
+
+    func consumeNotesTextReveal() {
+        pendingNotesTextReveal = nil
     }
 
     func searchScenes(
@@ -7605,13 +7666,28 @@ final class AppStore: ObservableObject {
         output: inout [GlobalSearchResult]
     ) {
         for entry in project.compendium {
-            let searchableText = [
-                displayCompendiumEntryTitle(entry),
-                entry.body,
-                entry.tags.joined(separator: " ")
-            ]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n")
+            let title = displayCompendiumEntryTitle(entry)
+            let body = entry.body
+            let tags = entry.tags.joined(separator: " ")
+
+            // Build the searchable text, tracking where the body portion starts
+            var parts: [String] = []
+            if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(title)
+            }
+            let bodyOffset: Int
+            let bodyNSLength = (body as NSString).length
+            if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                bodyOffset = parts.reduce(0) { $0 + ($1 as NSString).length + 1 }
+                parts.append(body)
+            } else {
+                bodyOffset = -1
+            }
+            if !tags.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(tags)
+            }
+
+            let searchableText = parts.joined(separator: "\n")
 
             appendSearchMatches(
                 query: query,
@@ -7620,10 +7696,22 @@ final class AppStore: ObservableObject {
                 output: &output,
                 maxResults: maxResults
             ) { foundRange, searchableNSString in
-                GlobalSearchResult(
+                // Only provide body-relative location when match is fully within body
+                var loc: Int? = nil
+                var len: Int? = nil
+                if bodyOffset >= 0 {
+                    let bodyEnd = bodyOffset + bodyNSLength
+                    let matchEnd = foundRange.location + foundRange.length
+                    if foundRange.location >= bodyOffset && matchEnd <= bodyEnd {
+                        loc = foundRange.location - bodyOffset
+                        len = foundRange.length
+                    }
+                }
+
+                return GlobalSearchResult(
                     id: "compendium:\(entry.id.uuidString):\(foundRange.location)",
                     kind: .compendium,
-                    title: displayCompendiumEntryTitle(entry),
+                    title: title,
                     subtitle: "Compendium • \(entry.category.label)",
                     snippet: searchSnippet(in: searchableNSString, matchRange: foundRange),
                     chapterID: nil,
@@ -7631,8 +7719,8 @@ final class AppStore: ObservableObject {
                     compendiumEntryID: entry.id,
                     workshopSessionID: nil,
                     workshopMessageID: nil,
-                    location: foundRange.location,
-                    length: foundRange.length
+                    location: loc,
+                    length: len
                 )
             }
 
@@ -7650,8 +7738,8 @@ final class AppStore: ObservableObject {
     ) {
         for chapter in project.chapters {
             let chapterTitle = displayChapterTitle(chapter)
-            let chapterSummary = chapter.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !chapterSummary.isEmpty {
+            let chapterSummary = chapter.summary
+            if !chapterSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 appendSearchMatches(
                     query: query,
                     in: chapterSummary,
@@ -7681,8 +7769,8 @@ final class AppStore: ObservableObject {
             }
 
             for scene in chapter.scenes {
-                let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !sceneSummary.isEmpty else { continue }
+                let sceneSummary = scene.summary
+                guard !sceneSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
 
                 let sceneTitle = displaySceneTitle(scene)
                 appendSearchMatches(
@@ -7722,8 +7810,8 @@ final class AppStore: ObservableObject {
         output: inout [GlobalSearchResult]
     ) {
         let projectTitle = currentProjectName
-        let projectNotes = project.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !projectNotes.isEmpty {
+        let projectNotes = project.notes
+        if !projectNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             appendSearchMatches(
                 query: query,
                 in: projectNotes,
@@ -7754,8 +7842,8 @@ final class AppStore: ObservableObject {
 
         for chapter in project.chapters {
             let chapterTitle = displayChapterTitle(chapter)
-            let chapterNotes = chapter.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !chapterNotes.isEmpty {
+            let chapterNotes = chapter.notes
+            if !chapterNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 appendSearchMatches(
                     query: query,
                     in: chapterNotes,
@@ -7785,8 +7873,8 @@ final class AppStore: ObservableObject {
             }
 
             for scene in chapter.scenes {
-                let sceneNotes = scene.notes.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !sceneNotes.isEmpty else { continue }
+                let sceneNotes = scene.notes
+                guard !sceneNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
 
                 let sceneTitle = displaySceneTitle(scene)
                 appendSearchMatches(
@@ -7872,6 +7960,10 @@ final class AppStore: ObservableObject {
         globalSearchResults = []
         selectedGlobalSearchResultID = nil
         pendingSceneSearchSelection = nil
+        pendingWorkshopMessageReveal = nil
+        pendingCompendiumTextReveal = nil
+        pendingSummaryTextReveal = nil
+        pendingNotesTextReveal = nil
         isGlobalSearchVisible = false
         lastGlobalSearchQuery = ""
         lastGlobalSearchScope = .all
