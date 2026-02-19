@@ -1,10 +1,10 @@
 # Scene
 
-<img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" alt="Scene app icon" width="128" />
+`Scene` is a native macOS writing application built with SwiftUI for crafting book-length prose. It combines a rich text editor, binder-style chapter/scene organization, and a world-building compendium with deep AI integration — prose generation from story beats, inline rewriting, workshop chat for brainstorming, rolling memory for long-context consistency, and customizable prompt templates. Projects are self-contained `.sceneproj` bundles with built-in checkpoints, EPUB/JSON/HTML export, and support for OpenAI, Anthropic, OpenRouter, LM Studio, and custom API endpoints. Zero external dependencies.
 
-`Scene` is a standalone SwiftUI based macOS book writing tool, focused on AI text generation.
+<img src="screenshot-main.png" alt="Main writing area" width=512 />
 
-<img src="screenshot-1.png" alt=“Screenshot” width=512 />
+<img src="screenshot-workshop.png" alt="Story Workshop" width=512 />
 
 ## Features
 
