@@ -2428,6 +2428,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 }
             }()
             paragraphStyle.lineBreakMode = .byWordWrapping
+            paragraphStyle.firstLineHeadIndent = max(0, settings.paragraphIndent)
             return paragraphStyle
         }
 

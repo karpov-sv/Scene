@@ -46,6 +46,7 @@ struct SettingsSheetView: View {
 
     private enum EditorSpacingField: Hashable {
         case lineHeight
+        case paragraphIndent
         case horizontalMargin
         case verticalMargin
     }
@@ -92,6 +93,7 @@ struct SettingsSheetView: View {
     @State private var confirmClearPrompts: Bool = false
     @State private var editorFontPanelOpenRequestID: UUID?
     @State private var lineHeightDraft: String = ""
+    @State private var paragraphIndentDraft: String = ""
     @State private var hPaddingDraft: String = ""
     @State private var vPaddingDraft: String = ""
     @FocusState private var focusedEditorSpacingField: EditorSpacingField?
@@ -533,6 +535,9 @@ struct SettingsSheetView: View {
         if force || focusedEditorSpacingField != .lineHeight {
             lineHeightDraft = formattedLineHeight(appearance.lineHeightMultiple)
         }
+        if force || focusedEditorSpacingField != .paragraphIndent {
+            paragraphIndentDraft = formattedMargin(appearance.paragraphIndent)
+        }
         if force || focusedEditorSpacingField != .horizontalMargin {
             hPaddingDraft = formattedMargin(appearance.horizontalPadding)
         }
@@ -554,6 +559,16 @@ struct SettingsSheetView: View {
             appearance.lineHeightMultiple = clamped
             store.updateEditorAppearance(appearance)
             lineHeightDraft = formattedLineHeight(clamped)
+
+        case .paragraphIndent:
+            guard let parsed = parsedEditorNumber(from: paragraphIndentDraft) else {
+                paragraphIndentDraft = formattedMargin(appearance.paragraphIndent)
+                return
+            }
+            let clamped = min(max(parsed.rounded(), 0), 120)
+            appearance.paragraphIndent = clamped
+            store.updateEditorAppearance(appearance)
+            paragraphIndentDraft = formattedMargin(clamped)
 
         case .horizontalMargin:
             guard let parsed = parsedEditorNumber(from: hPaddingDraft) else {
@@ -712,6 +727,21 @@ struct SettingsSheetView: View {
                                 commitEditorSpacingField(.lineHeight)
                             }
                             Text("× ")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Paragraph indent")
+                                .frame(width: 100, alignment: .leading)
+                            Spacer(minLength: 0)
+                            TextField("", text: $paragraphIndentDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 84, alignment: .leading)
+                            .focused($focusedEditorSpacingField, equals: .paragraphIndent)
+                            .onSubmit {
+                                commitEditorSpacingField(.paragraphIndent)
+                            }
+                            Text("pt")
                                 .foregroundStyle(.secondary)
                         }
 
@@ -2006,6 +2036,7 @@ private struct EditorAppearancePreview: NSViewRepresentable {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineHeightMultiple = max(1.0, settings.lineHeightMultiple)
         paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.firstLineHeadIndent = max(0, settings.paragraphIndent)
         paragraphStyle.alignment = {
             switch settings.textAlignment {
             case .left:

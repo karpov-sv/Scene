@@ -1615,6 +1615,7 @@ final class AppStore: ObservableObject {
         let textColor = resolvedEditorTextColor(from: appearance)
         let alignment = nsTextAlignment(from: appearance.textAlignment)
         let lineHeightMultiple = max(1.0, appearance.lineHeightMultiple)
+        let paragraphIndent = max(0, appearance.paragraphIndent)
 
         var didMutateProject = false
 
@@ -1644,6 +1645,7 @@ final class AppStore: ObservableObject {
                     paragraphStyle.lineHeightMultiple = lineHeightMultiple
                     paragraphStyle.alignment = alignment
                     paragraphStyle.lineBreakMode = .byWordWrapping
+                    paragraphStyle.firstLineHeadIndent = paragraphIndent
                     attributed.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
                 }
                 attributed.endEditing()
@@ -8722,6 +8724,7 @@ final class AppStore: ObservableObject {
             adjustedStyle.lineHeightMultiple = paragraphStyle.lineHeightMultiple
             adjustedStyle.alignment = paragraphStyle.alignment
             adjustedStyle.lineBreakMode = .byWordWrapping
+            adjustedStyle.firstLineHeadIndent = paragraphStyle.firstLineHeadIndent
             mutable.addAttribute(.paragraphStyle, value: adjustedStyle, range: range)
         }
         mutable.endEditing()
@@ -8830,6 +8833,7 @@ final class AppStore: ObservableObject {
         paragraphStyle.lineHeightMultiple = max(1.0, settings.lineHeightMultiple)
         paragraphStyle.alignment = nsTextAlignment(from: settings.textAlignment)
         paragraphStyle.lineBreakMode = .byWordWrapping
+        paragraphStyle.firstLineHeadIndent = max(0, settings.paragraphIndent)
         return paragraphStyle
     }
 

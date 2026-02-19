@@ -1327,12 +1327,14 @@ struct EditorAppearanceSettings: Codable, Equatable {
     /// nil = use system background color.
     var backgroundColor: CodableRGBA?
     var textAlignment: TextAlignmentOption
+    /// First-line paragraph indent in points (0 = no indent).
+    var paragraphIndent: Double
 
     private enum CodingKeys: String, CodingKey {
         case fontFamily, fontSize, lineHeightMultiple
         case horizontalPadding, verticalPadding
         case textColor, backgroundColor
-        case textAlignment
+        case textAlignment, paragraphIndent
     }
 
     init(
@@ -1343,7 +1345,8 @@ struct EditorAppearanceSettings: Codable, Equatable {
         verticalPadding: Double,
         textColor: CodableRGBA?,
         backgroundColor: CodableRGBA?,
-        textAlignment: TextAlignmentOption = .left
+        textAlignment: TextAlignmentOption = .left,
+        paragraphIndent: Double = 24
     ) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
@@ -1353,6 +1356,7 @@ struct EditorAppearanceSettings: Codable, Equatable {
         self.textColor = textColor
         self.backgroundColor = backgroundColor
         self.textAlignment = textAlignment
+        self.paragraphIndent = paragraphIndent
     }
 
     init(from decoder: Decoder) throws {
@@ -1365,6 +1369,7 @@ struct EditorAppearanceSettings: Codable, Equatable {
         textColor = try c.decodeIfPresent(CodableRGBA.self, forKey: .textColor)
         backgroundColor = try c.decodeIfPresent(CodableRGBA.self, forKey: .backgroundColor)
         textAlignment = try c.decodeIfPresent(TextAlignmentOption.self, forKey: .textAlignment) ?? .left
+        paragraphIndent = try c.decodeIfPresent(Double.self, forKey: .paragraphIndent) ?? 24
     }
 
     static let `default` = EditorAppearanceSettings(
@@ -1375,7 +1380,8 @@ struct EditorAppearanceSettings: Codable, Equatable {
         verticalPadding: 10,
         textColor: nil,
         backgroundColor: nil,
-        textAlignment: .left
+        textAlignment: .left,
+        paragraphIndent: 24
     )
 }
 
