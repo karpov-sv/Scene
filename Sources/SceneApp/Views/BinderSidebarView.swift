@@ -518,6 +518,9 @@ struct BinderSidebarView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        beginChapterRename(chapter)
+                    }
                     .onTapGesture(count: 1) {
                         store.selectChapter(chapter.id)
                     }
@@ -554,6 +557,9 @@ struct BinderSidebarView: View {
             } else {
                 Label(sceneTitle(scene), systemImage: "doc.text")
                     .lineLimit(1)
+                    .background(DoubleClickDetector {
+                        beginSceneRename(scene)
+                    })
             }
         }
         .contextMenu {
@@ -880,6 +886,60 @@ struct BinderSidebarView: View {
     private func closeSearchInterface() {
         store.dismissGlobalSearch()
         isSearchFieldFocused = false
+    }
+}
+
+private struct DoubleClickDetector: NSViewRepresentable {
+    let onDoubleClick: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDoubleClick: onDoubleClick)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.view = view
+        context.coordinator.startMonitoring()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onDoubleClick = onDoubleClick
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopMonitoring()
+    }
+
+    @MainActor
+    class Coordinator {
+        var onDoubleClick: () -> Void
+        weak var view: NSView?
+        private var monitor: Any?
+
+        init(onDoubleClick: @escaping () -> Void) {
+            self.onDoubleClick = onDoubleClick
+        }
+
+        func startMonitoring() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                guard event.clickCount == 2 else { return event }
+                MainActor.assumeIsolated {
+                    guard let self, let view = self.view, let window = view.window,
+                          event.window === window else { return }
+                    let point = view.convert(event.locationInWindow, from: nil)
+                    if view.bounds.contains(point) {
+                        self.onDoubleClick()
+                    }
+                }
+                return event
+            }
+        }
+
+        func stopMonitoring() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
     }
 }
 
