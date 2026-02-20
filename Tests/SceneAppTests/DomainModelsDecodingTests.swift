@@ -2,6 +2,16 @@ import XCTest
 @testable import SceneApp
 
 final class DomainModelsDecodingTests: XCTestCase {
+    func testAIProviderDecodingMigratesLegacyLocalMockValue() throws {
+        let raw = #"{"provider":"localMock"}"#
+        struct Wrapper: Decodable {
+            let provider: AIProvider
+        }
+
+        let decoded = try JSONDecoder().decode(Wrapper.self, from: Data(raw.utf8))
+        XCTAssertEqual(decoded.provider, .lmStudio)
+    }
+
     func testWorkshopSessionDecodingDefaultsContextFlagsToTrue() throws {
         let raw = """
         {
@@ -50,6 +60,58 @@ final class DomainModelsDecodingTests: XCTestCase {
         """
         let fallback = try decoder.decode(GenerationSettings.self, from: Data(fallbackSelectionJSON.utf8))
         XCTAssertEqual(fallback.generationModelSelection, ["fallback-model"])
+    }
+
+    func testGenerationSettingsDecodingClampsTaskNotificationDuration() throws {
+        let decoder = JSONDecoder()
+
+        let lowJSON = """
+        {
+          "provider": "openAI",
+          "endpoint": "",
+          "apiKey": "",
+          "model": "model-a",
+          "generationModelSelection": ["model-a"],
+          "temperature": 0.8,
+          "maxTokens": 700,
+          "taskNotificationDurationSeconds": 0.1,
+          "defaultSystemPrompt": "sys"
+        }
+        """
+        let low = try decoder.decode(GenerationSettings.self, from: Data(lowJSON.utf8))
+        XCTAssertEqual(low.taskNotificationDurationSeconds, 1.0)
+
+        let highJSON = """
+        {
+          "provider": "openAI",
+          "endpoint": "",
+          "apiKey": "",
+          "model": "model-a",
+          "generationModelSelection": ["model-a"],
+          "temperature": 0.8,
+          "maxTokens": 700,
+          "taskNotificationDurationSeconds": 80.0,
+          "defaultSystemPrompt": "sys"
+        }
+        """
+        let high = try decoder.decode(GenerationSettings.self, from: Data(highJSON.utf8))
+        XCTAssertEqual(high.taskNotificationDurationSeconds, 30.0)
+    }
+
+    func testRollingWorkshopMemoryDecodingClampsNegativeMessageCount() throws {
+        let raw = """
+        {
+          "summary": "memo",
+          "summarizedMessageCount": -9,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let decoded = try decoder.decode(RollingWorkshopMemory.self, from: Data(raw.utf8))
+        XCTAssertEqual(decoded.summary, "memo")
+        XCTAssertEqual(decoded.summarizedMessageCount, 0)
     }
 
     func testStoryProjectDecodingBackfillsOptionalMapsWhenMissing() throws {
