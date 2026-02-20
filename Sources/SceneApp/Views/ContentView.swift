@@ -183,6 +183,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 260)
+            .accessibilityIdentifier("workspace.tabPicker")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -240,6 +241,7 @@ struct ContentView: View {
                 .zIndex(selectedTab == .writing ? 1 : 0)
                 .opacity(selectedTab == .writing ? 1 : 0)
                 .allowsHitTesting(selectedTab == .writing)
+                .accessibilityIdentifier("workspace.writingPanel")
 
             WorkshopChatView(
                 layout: .embeddedTrailingSessions,
@@ -248,6 +250,7 @@ struct ContentView: View {
             .zIndex(selectedTab == .workshop ? 1 : 0)
             .opacity(selectedTab == .workshop ? 1 : 0)
             .allowsHitTesting(selectedTab == .workshop)
+            .accessibilityIdentifier("workspace.workshopPanel")
         }
     }
 
@@ -298,6 +301,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("workspace.closedProjectView")
     }
 
     private func createProjectFromDialog() {

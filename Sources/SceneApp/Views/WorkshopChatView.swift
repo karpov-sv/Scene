@@ -309,6 +309,7 @@ struct WorkshopChatView: View {
                 ContentUnavailableView("No Chat Selected", systemImage: "bubble.left.and.bubble.right", description: Text("Create or select a chat session."))
             }
         }
+        .accessibilityIdentifier("workshop.chatDetail")
     }
 
     private var chatSplit: some View {
@@ -365,6 +366,7 @@ struct WorkshopChatView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Edit Rolling Memory")
+            .accessibilityIdentifier("workshop.editRollingMemoryButton")
             .help("Show and edit rolling memory for this chat.")
 
             Button {
@@ -376,6 +378,7 @@ struct WorkshopChatView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("Clear Messages")
+            .accessibilityIdentifier("workshop.clearMessagesButton")
             .help("Clear all messages in this chat.")
         }
         .padding(12)

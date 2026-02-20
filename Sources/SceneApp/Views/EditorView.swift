@@ -310,6 +310,8 @@ struct EditorView: View {
                 ContentUnavailableView("No Scene Selected", systemImage: "text.document", description: Text("Select or create a scene to start writing."))
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("editor.root")
         .sheet(item: $generationPayloadPreview) { generationPayloadPreview in
             GenerationPayloadPreviewSheet(preview: generationPayloadPreview)
         }

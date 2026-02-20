@@ -15,12 +15,18 @@ final class SceneAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
-            self.restoreLastProjectOrCreateUntitled()
+            if AppRuntime.shouldRestoreOpenProjectSession {
+                self.restoreLastProjectOrCreateUntitled()
+            } else {
+                self.openUntitledDocumentIfNeeded()
+            }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        persistOpenDocumentSession()
+        if AppRuntime.shouldPersistOpenProjectSession {
+            persistOpenDocumentSession()
+        }
     }
 
     private func restoreLastProjectOrCreateUntitled() {
@@ -57,6 +63,14 @@ final class SceneAppDelegate: NSObject, NSApplicationDelegate {
     private func closeTransientUntitledDocuments(using controller: NSDocumentController) {
         for document in controller.documents where document.fileURL == nil && !document.isDocumentEdited {
             document.close()
+        }
+    }
+
+    private func openUntitledDocumentIfNeeded() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let controller = NSDocumentController.shared
+            guard controller.documents.isEmpty else { return }
+            controller.newDocument(nil)
         }
     }
 

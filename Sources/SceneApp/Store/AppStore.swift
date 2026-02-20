@@ -9580,6 +9580,12 @@ final class AppStore: ObservableObject {
 
     private func scheduleModelDiscovery(immediate: Bool = false) {
         guard isProjectOpen else { return }
+        guard AppRuntime.shouldAutoDiscoverModels else {
+            modelDiscoveryTask?.cancel()
+            isDiscoveringModels = false
+            modelDiscoveryStatus = ""
+            return
+        }
         guard project.settings.provider.supportsModelDiscovery else {
             return
         }

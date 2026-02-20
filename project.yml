@@ -27,11 +27,32 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  SceneAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/SceneAppTests
+    dependencies:
+      - target: SceneApp
+  SceneAppUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/SceneAppUITests
+    dependencies:
+      - target: SceneApp
 schemes:
   SceneApp:
     build:
       targets:
         SceneApp: all
+    test:
+      config: Debug
+      targets:
+        - name: SceneAppTests
+        - name: SceneAppUITests
     run:
       config: Debug
     archive:

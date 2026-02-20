@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "SceneApp",
             path: "Sources/SceneApp"
+        ),
+        .testTarget(
+            name: "SceneAppTests",
+            dependencies: ["SceneApp"],
+            path: "Tests/SceneAppTests"
         )
     ]
 )
