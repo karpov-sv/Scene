@@ -262,7 +262,7 @@ struct EditorView: View {
         if isRewriteMode {
             return isRewritingSelection
         }
-        return store.isGenerating
+        return store.isProseGenerationRunning
     }
 
     private var canPreviewCurrentPayload: Bool {
@@ -667,7 +667,12 @@ struct EditorView: View {
         }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottomTrailing) {
-                if store.canRetryLastInlineProseGeneration {
+                if let state = store.inlineVariantGeneration,
+                   state.sceneID == store.selectedSceneID {
+                    InlineVariantsTrayView()
+                        .padding(.trailing, 10)
+                        .padding(.bottom, store.isGenerationPanelVisible ? 10 : 36)
+                } else if store.canRetryLastInlineProseGeneration {
                     HStack(spacing: 6) {
                         Button {
                             store.undoLastInlineProseGeneration()
@@ -827,28 +832,82 @@ struct EditorView: View {
                     .controlSize(.regular)
                     .disabled(!canPreviewCurrentPayload)
 
-                    Button {
-                        runPrimaryGenerationAction()
-                    } label: {
-                        Group {
-                            if isPrimaryGenerationRunning {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Stop")
+                    if !isRewriteMode && store.project.settings.useInlineGeneration {
+                        let segmentCornerRadius: CGFloat = 6
+                        let segmentTint: Color = isPrimaryGenerationRunning ? .red : .accentColor
+                        let menuSegmentWidth: CGFloat = 22
+                        let primaryDisabled = !canRunPrimaryAction
+                        let menuDisabled = primaryDisabled || store.isProseGenerationRunning
+                        let splitOpacity = primaryDisabled ? 0.45 : 1.0
+
+                        HStack(spacing: 0) {
+                            Button {
+                                runPrimaryGenerationAction()
+                            } label: {
+                                primaryGenerationButtonLabel
+                                    .foregroundStyle(.white.opacity(primaryDisabled ? 0.65 : 0.95))
+                                    .tint(.white.opacity(primaryDisabled ? 0.65 : 0.95))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(primaryDisabled)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: generationButtonHeight)
+
+                            Menu {
+                                Button {
+                                    store.updateInlineGenerationMode(.single)
+                                } label: {
+                                    if store.project.settings.inlineGenerationMode == .single {
+                                        Label("Inline", systemImage: "checkmark")
+                                    } else {
+                                        Text("Inline")
+                                    }
                                 }
-                            } else if isRewriteMode {
-                                Label("Rewrite", systemImage: "text.redaction")
-                            } else {
-                                Label("Generate Text", systemImage: "sparkles")
+
+                                Button {
+                                    store.updateInlineGenerationMode(.variants)
+                                } label: {
+                                    if store.project.settings.inlineGenerationMode == .variants {
+                                        Label("Variants (3)", systemImage: "checkmark")
+                                    } else {
+                                        Text("Variants (3)")
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(menuDisabled ? 0.65 : 0.95))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .disabled(menuDisabled)
+                            .help("Inline output options.")
+                            .frame(width: menuSegmentWidth, height: generationButtonHeight)
+                            .overlay(alignment: .leading) {
+                                Rectangle()
+                                    .fill(.white.opacity(0.28))
+                                    .frame(width: 1)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(height: generationButtonHeight)
+                        .frame(maxWidth: .infinity)
+                        .background(segmentTint.opacity(splitOpacity))
+                        .clipShape(RoundedRectangle(cornerRadius: segmentCornerRadius, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: segmentCornerRadius, style: .continuous)
+                                .strokeBorder(.white.opacity(0.22))
+                        }
+                    } else {
+                        Button {
+                            runPrimaryGenerationAction()
+                        } label: {
+                            primaryGenerationButtonLabel
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(isPrimaryGenerationRunning ? .red : .accentColor)
+                        .disabled(!canRunPrimaryAction)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(isPrimaryGenerationRunning ? .red : .accentColor)
-                    .disabled(!canRunPrimaryAction)
                 }
                 .frame(width: generationButtonWidth, alignment: .center)
                 .padding(8)
@@ -889,6 +948,39 @@ struct EditorView: View {
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
     }
 
+    private var inlineGenerationModeBinding: Binding<InlineGenerationMode> {
+        Binding(
+            get: { store.project.settings.inlineGenerationMode },
+            set: { store.updateInlineGenerationMode($0) }
+        )
+    }
+
+    @ViewBuilder
+    private var primaryGenerationButtonLabel: some View {
+        Group {
+            if isPrimaryGenerationRunning {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Stop")
+                }
+            } else if isRewriteMode {
+                Label("Rewrite", systemImage: "text.redaction")
+            } else if store.project.settings.useInlineGeneration {
+                switch store.project.settings.inlineGenerationMode {
+                case .single:
+                    Label("Generate", systemImage: "sparkles")
+                case .variants:
+                    Label("Variants", systemImage: "sparkles")
+                }
+            } else {
+                Label("Generate Text", systemImage: "sparkles")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .frame(height: generationButtonHeight)
+    }
+
     private func applyEditorToolbarFont(family: String, size: Double) {
         let normalizedFamily = SceneFontSelectorData.normalizedFamily(family)
         let normalizedSize = max(1, size)
@@ -909,7 +1001,7 @@ struct EditorView: View {
             return
         }
 
-        if store.isGenerating {
+        if store.isProseGenerationRunning {
             store.cancelBeatGeneration()
         } else {
             store.submitBeatGeneration()

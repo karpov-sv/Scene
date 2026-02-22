@@ -24,7 +24,7 @@ struct TextGenerationResult: Sendable {
     var usage: TokenUsage?
 }
 
-struct TextGenerationRequest: Sendable {
+struct TextGenerationRequest: Sendable, Equatable {
     var systemPrompt: String
     var userPrompt: String
     var model: String

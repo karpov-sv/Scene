@@ -113,6 +113,7 @@ final class AppStore: ObservableObject {
     private static let rewriteSceneContextChars = 2200
     private static let summarySourceChars = 2800
     private static let workshopSceneTailChars = 1800
+    private static let inlineVariantsDefaultCount = 3
     private static let rollingWorkshopMemoryMinDeltaMessages = 4
     private static let rollingWorkshopMemoryDeltaWindow = 18
     private static let rollingWorkshopMemoryMaxChars = 3200
@@ -444,6 +445,15 @@ final class AppStore: ObservableObject {
         let elapsedSeconds: Double
     }
 
+    private struct InlineVariantRunResult {
+        let candidateID: UUID
+        let text: String?
+        let usage: TokenUsage?
+        let errorMessage: String?
+        let cancelled: Bool
+        let elapsedSeconds: Double
+    }
+
     private struct PromptPreviewSceneContext {
         let sceneID: UUID?
         let sceneTitle: String
@@ -465,6 +475,58 @@ final class AppStore: ObservableObject {
         let baseContent: String
         let baseRichTextData: Data?
         var generatedText: String
+    }
+
+    struct InlineVariantCandidate: Identifiable, Equatable {
+        enum Status: String, Equatable {
+            case queued
+            case running
+            case completed
+            case failed
+            case cancelled
+
+            var isTerminal: Bool {
+                switch self {
+                case .queued, .running:
+                    return false
+                case .completed, .failed, .cancelled:
+                    return true
+                }
+            }
+        }
+
+        let id: UUID
+        var status: Status
+        var text: String
+        var usage: TokenUsage?
+        var errorMessage: String?
+        var elapsedSeconds: Double?
+    }
+
+    struct InlineVariantGenerationState: Identifiable, Equatable {
+        let id: UUID
+        let sceneID: UUID
+        let beat: String
+        let request: TextGenerationRequest
+        var candidates: [InlineVariantCandidate]
+        var selectedIndex: Int
+        var followsActiveCandidate: Bool
+        var startedAt: Date
+        var isRunning: Bool
+        var wasCancelled: Bool
+
+        var completedCount: Int {
+            candidates.filter { $0.status.isTerminal }.count
+        }
+
+        var successCount: Int {
+            candidates.filter { $0.status == .completed }.count
+        }
+
+        var selectedCandidate: InlineVariantCandidate? {
+            guard candidates.indices.contains(selectedIndex) else { return nil }
+            return candidates[selectedIndex]
+        }
     }
 
     struct TaskNotificationToast: Identifiable, Equatable {
@@ -507,6 +569,7 @@ final class AppStore: ObservableObject {
     @Published var generationStatus: String = ""
     @Published private(set) var proseLiveUsage: TokenUsage?
     @Published var proseGenerationReview: ProseGenerationReviewState?
+    @Published private(set) var inlineVariantGeneration: InlineVariantGenerationState?
     @Published var lastError: String?
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
@@ -963,6 +1026,10 @@ final class AppStore: ObservableObject {
             return []
         }
         return project.beatInputHistoryByScene[selectedSceneID.uuidString] ?? []
+    }
+
+    var isProseGenerationRunning: Bool {
+        proseRequestTask != nil || isGenerating
     }
 
     var canRetryLastWorkshopTurn: Bool {
@@ -2286,6 +2353,12 @@ final class AppStore: ObservableObject {
     func updateUseInlineGeneration(_ enabled: Bool) {
         guard project.settings.useInlineGeneration != enabled else { return }
         project.settings.useInlineGeneration = enabled
+        saveProject(debounced: true)
+    }
+
+    func updateInlineGenerationMode(_ mode: InlineGenerationMode) {
+        guard project.settings.inlineGenerationMode != mode else { return }
+        project.settings.inlineGenerationMode = mode
         saveProject(debounced: true)
     }
 
@@ -3623,6 +3696,86 @@ final class AppStore: ObservableObject {
         generationStatus = "Cancelling..."
     }
 
+    func dismissInlineVariantGeneration() {
+        inlineVariantGeneration = nil
+    }
+
+    func selectInlineVariantCandidate(index: Int) {
+        guard var state = inlineVariantGeneration else { return }
+        let clamped = min(max(index, 0), max(0, state.candidates.count - 1))
+        guard state.selectedIndex != clamped else { return }
+        state.selectedIndex = clamped
+        state.followsActiveCandidate = false
+        inlineVariantGeneration = state
+    }
+
+    func regenerateInlineVariants() {
+        guard proseRequestTask == nil else { return }
+        guard let state = inlineVariantGeneration,
+              state.sceneID == selectedSceneID else {
+            submitBeatGeneration()
+            return
+        }
+
+        let currentBeat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let beatOverride = currentBeat.isEmpty ? state.beat : currentBeat
+
+        guard let location = sceneLocation(for: state.sceneID) else { return }
+        let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+
+        proseRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.proseRequestTask = nil
+            }
+            await self.generateFromBeatInlineVariants(
+                beat: beatOverride,
+                scene: scene,
+                modelOverride: state.request.model
+            )
+        }
+    }
+
+    func acceptInlineVariantCandidate() {
+        guard proseRequestTask == nil else { return }
+        guard !isGenerating else { return }
+        guard let selectedSceneID,
+              let state = inlineVariantGeneration,
+              state.sceneID == selectedSceneID,
+              let candidate = state.selectedCandidate,
+              let location = sceneLocation(for: selectedSceneID) else {
+            return
+        }
+
+        let normalized = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            generationStatus = "No variant text to insert."
+            return
+        }
+
+        let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+        guard let base = makeGenerationAppendBase(for: selectedSceneID) else {
+            generationStatus = "Scene not found."
+            return
+        }
+
+        rememberInlineProseRegenerationState(
+            sceneID: selectedSceneID,
+            request: state.request,
+            originalSceneContent: scene.content,
+            originalSceneRichTextData: scene.contentRTFData,
+            base: base,
+            generated: normalized
+        )
+        setGeneratedTextPreview(sceneID: selectedSceneID, base: base, generated: normalized)
+
+        proseLiveUsage = normalizedTokenUsage(from: candidate.usage, request: state.request, response: normalized)
+        generationStatus = "Inserted variant."
+        beatInput = ""
+        inlineVariantGeneration = nil
+        saveProject()
+    }
+
     func retryLastInlineProseGeneration() {
         guard proseRequestTask == nil else { return }
         guard canRetryLastInlineProseGeneration else {
@@ -4776,11 +4929,12 @@ final class AppStore: ObservableObject {
 
         if project.settings.useInlineGeneration {
             let model = resolveGenerationModelSelection(modelsOverride: modelsOverride).first
-            await generateFromBeatInline(
-                beat: beat,
-                scene: scene,
-                modelOverride: model
-            )
+            switch project.settings.inlineGenerationMode {
+            case .single:
+                await generateFromBeatInlineSingle(beat: beat, scene: scene, modelOverride: model)
+            case .variants:
+                await generateFromBeatInlineVariants(beat: beat, scene: scene, modelOverride: model)
+            }
             return
         }
 
@@ -5011,7 +5165,154 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func generateFromBeatInline(
+    private func generateFromBeatInlineVariants(
+        beat: String,
+        scene: Scene,
+        modelOverride: String?
+    ) async {
+        let requestBuild = makeProseGenerationRequest(beat: beat, scene: scene, modelOverride: modelOverride)
+        let request = requestBuild.request
+        rememberBeatInputHistory(beat, for: scene.id)
+
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
+        inlineVariantGeneration = nil
+        isGenerating = true
+        generationStatus = shouldUseStreaming ? "Streaming variants..." : "Generating variants..."
+        proseLiveUsage = nil
+        let toastID = startTaskProgressToast("Generating variants…")
+
+        defer {
+            isGenerating = false
+        }
+
+        let generationID = UUID()
+        let variantCount = Self.inlineVariantsDefaultCount
+        let candidates = (0..<variantCount).map { _ in
+            InlineVariantCandidate(
+                id: UUID(),
+                status: .queued,
+                text: "",
+                usage: nil,
+                errorMessage: nil,
+                elapsedSeconds: nil
+            )
+        }
+
+        inlineVariantGeneration = InlineVariantGenerationState(
+            id: generationID,
+            sceneID: scene.id,
+            beat: beat,
+            request: request,
+            candidates: candidates,
+            selectedIndex: 0,
+            followsActiveCandidate: true,
+            startedAt: .now,
+            isRunning: true,
+            wasCancelled: false
+        )
+
+        let streamCandidates = shouldUseStreaming
+        let candidateIDs = candidates.map(\.id)
+        let total = candidates.count
+
+        for (index, candidateID) in candidateIDs.enumerated() {
+            guard !Task.isCancelled else { break }
+            markInlineVariantCandidateStarted(generationID: generationID, candidateID: candidateID, index: index)
+            generationStatus = "Generating variants (\(min(index, total))/\(total))..."
+
+            let started = Date()
+            let partialHandler: (@MainActor (String) -> Void)?
+            if streamCandidates {
+                partialHandler = { [weak self] partial in
+                    guard let self else { return }
+                    self.applyInlineVariantPartial(
+                        generationID: generationID,
+                        candidateID: candidateID,
+                        partial: partial
+                    )
+                }
+            } else {
+                partialHandler = nil
+            }
+
+            do {
+                let result = try await generateTextResult(request, onPartial: partialHandler)
+                applyInlineVariantRunResult(
+                    InlineVariantRunResult(
+                        candidateID: candidateID,
+                        text: result.text,
+                        usage: result.usage,
+                        errorMessage: nil,
+                        cancelled: false,
+                        elapsedSeconds: Date().timeIntervalSince(started)
+                    ),
+                    generationID: generationID
+                )
+            } catch is CancellationError {
+                applyInlineVariantRunResult(
+                    InlineVariantRunResult(
+                        candidateID: candidateID,
+                        text: nil,
+                        usage: nil,
+                        errorMessage: nil,
+                        cancelled: true,
+                        elapsedSeconds: Date().timeIntervalSince(started)
+                    ),
+                    generationID: generationID
+                )
+                break
+            } catch {
+                applyInlineVariantRunResult(
+                    InlineVariantRunResult(
+                        candidateID: candidateID,
+                        text: nil,
+                        usage: nil,
+                        errorMessage: error.localizedDescription,
+                        cancelled: false,
+                        elapsedSeconds: Date().timeIntervalSince(started)
+                    ),
+                    generationID: generationID
+                )
+            }
+        }
+
+        let wasCancelled = Task.isCancelled
+        if wasCancelled {
+            generationStatus = "Generation cancelled."
+            markInlineVariantCandidatesCancelled(generationID: generationID)
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
+        }
+
+        if var state = inlineVariantGeneration, state.id == generationID {
+            state.isRunning = false
+            state.wasCancelled = wasCancelled
+            inlineVariantGeneration = state
+
+            proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+
+            if wasCancelled {
+                if state.successCount > 0 {
+                    let label = state.successCount == 1 ? "variant" : "variants"
+                    generationStatus = "Generation cancelled. \(state.successCount) \(label) ready."
+                }
+            } else if state.successCount > 0 {
+                let label = state.successCount == 1 ? "variant" : "variants"
+                generationStatus = "Review \(state.successCount) \(label) and accept one."
+                finishTaskSuccessToast(toastID, "Variants ready.")
+            } else {
+                generationStatus = "No variant was generated."
+                finishTaskWarningToast(toastID, "No variants generated.")
+            }
+        } else if !wasCancelled {
+            generationStatus = "Generation finished."
+            finishTaskSuccessToast(toastID, "Variants ready.")
+        }
+
+        saveProject(debounced: true)
+    }
+
+    private func generateFromBeatInlineSingle(
         beat: String,
         scene: Scene,
         modelOverride: String?
@@ -5025,6 +5326,7 @@ final class AppStore: ObservableObject {
 
         proseGenerationReview = nil
         proseGenerationSessionContext = nil
+        inlineVariantGeneration = nil
         isGenerating = true
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
@@ -5259,6 +5561,118 @@ final class AppStore: ObservableObject {
         }
         review.isRunning = false
         proseGenerationReview = review
+    }
+
+    private func markInlineVariantCandidateStarted(
+        generationID: UUID,
+        candidateID: UUID,
+        index: Int
+    ) {
+        guard var state = inlineVariantGeneration, state.id == generationID else { return }
+        guard state.candidates.indices.contains(index), state.candidates[index].id == candidateID else { return }
+
+        state.candidates[index].status = .running
+        state.candidates[index].text = ""
+        state.candidates[index].usage = nil
+        state.candidates[index].errorMessage = nil
+        state.candidates[index].elapsedSeconds = nil
+
+        if state.followsActiveCandidate {
+            state.selectedIndex = index
+        }
+
+        inlineVariantGeneration = state
+    }
+
+    private func applyInlineVariantPartial(
+        generationID: UUID,
+        candidateID: UUID,
+        partial: String
+    ) {
+        guard var state = inlineVariantGeneration, state.id == generationID else { return }
+        guard let index = state.candidates.firstIndex(where: { $0.id == candidateID }) else { return }
+
+        state.candidates[index].status = .running
+        state.candidates[index].text = partial
+        state.candidates[index].errorMessage = nil
+        state.candidates[index].usage = partial.isEmpty
+            ? nil
+            : normalizedTokenUsage(from: nil, request: state.request, response: partial)
+        state.candidates[index].elapsedSeconds = max(0, Date().timeIntervalSince(state.startedAt))
+        state.isRunning = true
+
+        inlineVariantGeneration = state
+        proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+    }
+
+    private func applyInlineVariantRunResult(
+        _ outcome: InlineVariantRunResult,
+        generationID: UUID
+    ) {
+        guard var state = inlineVariantGeneration, state.id == generationID else { return }
+        guard let index = state.candidates.firstIndex(where: { $0.id == outcome.candidateID }) else { return }
+
+        let normalizedText = outcome.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if outcome.cancelled {
+            state.candidates[index].status = .cancelled
+            state.candidates[index].errorMessage = nil
+            // Keep partial text (if any) so the user can still accept it after cancellation.
+        } else if normalizedText.isEmpty {
+            state.candidates[index].status = .failed
+            state.candidates[index].errorMessage = outcome.errorMessage ?? "No text returned."
+            state.candidates[index].text = ""
+            state.candidates[index].usage = nil
+        } else {
+            let usage = normalizedTokenUsage(
+                from: outcome.usage,
+                request: state.request,
+                response: normalizedText
+            )
+            state.candidates[index].status = .completed
+            state.candidates[index].errorMessage = nil
+            state.candidates[index].text = normalizedText
+            state.candidates[index].usage = usage
+        }
+
+        state.candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+        state.isRunning = state.candidates.contains { !$0.status.isTerminal }
+        inlineVariantGeneration = state
+        proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+    }
+
+    private func markInlineVariantCandidatesCancelled(generationID: UUID) {
+        guard var state = inlineVariantGeneration, state.id == generationID else { return }
+        for index in state.candidates.indices where state.candidates[index].status == .running || state.candidates[index].status == .queued {
+            state.candidates[index].status = .cancelled
+            state.candidates[index].errorMessage = nil
+        }
+        state.isRunning = false
+        inlineVariantGeneration = state
+    }
+
+    private func aggregatedInlineVariantUsage(state: InlineVariantGenerationState) -> TokenUsage? {
+        var totalPrompt = 0
+        var totalCompletion = 0
+        var total = 0
+        var anyEstimated = false
+        var hasUsage = false
+
+        for candidate in state.candidates {
+            guard let usage = candidate.usage else { continue }
+            hasUsage = true
+            totalPrompt += usage.promptTokens ?? 0
+            totalCompletion += usage.completionTokens ?? 0
+            total += usage.totalTokens ?? 0
+            anyEstimated = anyEstimated || usage.isEstimated
+        }
+
+        guard hasUsage else { return nil }
+        return TokenUsage(
+            promptTokens: totalPrompt,
+            completionTokens: totalCompletion,
+            totalTokens: total,
+            isEstimated: anyEstimated
+        )
     }
 
     private func resolveGenerationModelSelection(modelsOverride: [String]?) -> [String] {

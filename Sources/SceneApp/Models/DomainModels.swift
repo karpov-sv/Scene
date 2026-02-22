@@ -1142,6 +1142,11 @@ struct RollingChapterMemory: Codable, Equatable {
     }
 }
 
+enum InlineGenerationMode: String, Codable, CaseIterable, Equatable {
+    case single
+    case variants
+}
+
 struct GenerationSettings: Codable, Equatable {
     var provider: AIProvider
     var endpoint: String
@@ -1149,6 +1154,7 @@ struct GenerationSettings: Codable, Equatable {
     var model: String
     var generationModelSelection: [String]
     var useInlineGeneration: Bool
+    var inlineGenerationMode: InlineGenerationMode
     var markRewrittenTextAsItalics: Bool
     var incrementalRewrite: Bool
     var preferCompactPromptTemplates: Bool
@@ -1175,6 +1181,7 @@ struct GenerationSettings: Codable, Equatable {
         model: String,
         generationModelSelection: [String],
         useInlineGeneration: Bool,
+        inlineGenerationMode: InlineGenerationMode,
         markRewrittenTextAsItalics: Bool,
         incrementalRewrite: Bool,
         preferCompactPromptTemplates: Bool,
@@ -1194,6 +1201,7 @@ struct GenerationSettings: Codable, Equatable {
         self.model = model
         self.generationModelSelection = generationModelSelection
         self.useInlineGeneration = useInlineGeneration
+        self.inlineGenerationMode = inlineGenerationMode
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.incrementalRewrite = incrementalRewrite
         self.preferCompactPromptTemplates = preferCompactPromptTemplates
@@ -1215,6 +1223,7 @@ struct GenerationSettings: Codable, Equatable {
         case model
         case generationModelSelection
         case useInlineGeneration
+        case inlineGenerationMode
         case markRewrittenTextAsItalics
         case incrementalRewrite
         case preferCompactPromptTemplates
@@ -1251,6 +1260,7 @@ struct GenerationSettings: Codable, Equatable {
             generationModelSelection = deduplicated
         }
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
+        inlineGenerationMode = try container.decodeIfPresent(InlineGenerationMode.self, forKey: .inlineGenerationMode) ?? .variants
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
         preferCompactPromptTemplates = try container.decodeIfPresent(Bool.self, forKey: .preferCompactPromptTemplates) ?? false
@@ -1275,6 +1285,7 @@ struct GenerationSettings: Codable, Equatable {
         model: "gpt-4o-mini",
         generationModelSelection: ["gpt-4o-mini"],
         useInlineGeneration: false,
+        inlineGenerationMode: .variants,
         markRewrittenTextAsItalics: true,
         incrementalRewrite: false,
         preferCompactPromptTemplates: false,
