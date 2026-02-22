@@ -241,6 +241,7 @@ struct ContentView: View {
                 .zIndex(selectedTab == .writing ? 1 : 0)
                 .opacity(selectedTab == .writing ? 1 : 0)
                 .allowsHitTesting(selectedTab == .writing)
+                .disabled(selectedTab != .writing)
                 .accessibilityIdentifier("workspace.writingPanel")
 
             WorkshopChatView(
@@ -250,6 +251,7 @@ struct ContentView: View {
             .zIndex(selectedTab == .workshop ? 1 : 0)
             .opacity(selectedTab == .workshop ? 1 : 0)
             .allowsHitTesting(selectedTab == .workshop)
+            .disabled(selectedTab != .workshop)
             .accessibilityIdentifier("workspace.workshopPanel")
         }
     }

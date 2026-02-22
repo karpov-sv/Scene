@@ -646,6 +646,10 @@ struct EditorView: View {
             editorAppearance: store.project.editorAppearance,
             onSelectionChange: { selection in
                 editorSelection = selection
+                store.setProseInsertionPoint(
+                    sceneID: store.selectedScene?.id,
+                    utf16Location: selection.range.location
+                )
             },
             onFormattingChange: { formatting in
                 guard !editorFormatting.isEquivalent(to: formatting) else { return }
@@ -850,6 +854,7 @@ struct EditorView: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(primaryDisabled)
+                            .contentShape(Rectangle())
                             .frame(maxWidth: .infinity)
                             .frame(height: generationButtonHeight)
 
@@ -883,6 +888,7 @@ struct EditorView: View {
                             .menuStyle(.borderlessButton)
                             .menuIndicator(.hidden)
                             .disabled(menuDisabled)
+                            .contentShape(Rectangle())
                             .help("Inline output options.")
                             .frame(width: menuSegmentWidth, height: generationButtonHeight)
                             .overlay(alignment: .leading) {
@@ -1001,6 +1007,7 @@ struct EditorView: View {
             return
         }
 
+        syncProseInsertionAnchorWithEditorSelection()
         if store.isProseGenerationRunning {
             store.cancelBeatGeneration()
         } else {
@@ -1013,11 +1020,19 @@ struct EditorView: View {
             if isRewriteMode {
                 generationPayloadPreview = try store.makeRewritePayloadPreview(selectedText: editorSelection.text)
             } else {
+                syncProseInsertionAnchorWithEditorSelection()
                 generationPayloadPreview = try store.makeProsePayloadPreview()
             }
         } catch {
             store.lastError = error.localizedDescription
         }
+    }
+
+    private func syncProseInsertionAnchorWithEditorSelection() {
+        store.setProseInsertionPoint(
+            sceneID: store.selectedScene?.id,
+            utf16Location: editorSelection.range.location
+        )
     }
 
     private func proseUsageMetricsView(_ usage: TokenUsage) -> some View {
@@ -1968,7 +1983,12 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             let selectedRange = textView.selectedRange()
             let clampedRange = clampedRangeForStorage(selectedRange, textView: textView)
             guard clampedRange.length > 0 else {
-                onSelectionChange(.empty)
+                onSelectionChange(
+                    SceneEditorSelection(
+                        range: SceneEditorRange(range: clampedRange),
+                        text: ""
+                    )
+                )
                 return
             }
 

@@ -467,6 +467,11 @@ final class AppStore: ObservableObject {
         let text: String
     }
 
+    private struct ProseInsertionAnchor {
+        let sceneID: UUID
+        let utf16Location: Int
+    }
+
     private struct InlineProseRegenerationState {
         let sceneID: UUID
         let request: TextGenerationRequest
@@ -474,6 +479,8 @@ final class AppStore: ObservableObject {
         let originalSceneRichTextData: Data?
         let baseContent: String
         let baseRichTextData: Data?
+        let trailingContent: String
+        let trailingRichTextData: Data?
         var generatedText: String
     }
 
@@ -624,6 +631,7 @@ final class AppStore: ObservableObject {
     private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
     private var inlineProseRegenerationState: InlineProseRegenerationState?
+    private var proseInsertionAnchor: ProseInsertionAnchor?
     private var toastDismissTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
@@ -2024,6 +2032,7 @@ final class AppStore: ObservableObject {
         selectedChapterID = chapterID
         let firstSceneID = project.chapters.first(where: { $0.id == chapterID })?.scenes.first?.id
         selectedSceneID = firstSceneID
+        proseInsertionAnchor = nil
         project.selectedSceneID = selectedSceneID
         saveProject(debounced: true)
     }
@@ -2032,8 +2041,21 @@ final class AppStore: ObservableObject {
         guard isProjectOpen else { return }
         selectedChapterID = chapterID
         selectedSceneID = sceneID
+        proseInsertionAnchor = nil
         project.selectedSceneID = sceneID
         saveProject(debounced: true)
+    }
+
+    func setProseInsertionPoint(sceneID: UUID?, utf16Location: Int) {
+        guard let sceneID else {
+            proseInsertionAnchor = nil
+            return
+        }
+
+        proseInsertionAnchor = ProseInsertionAnchor(
+            sceneID: sceneID,
+            utf16Location: max(0, utf16Location)
+        )
     }
 
     func isCompendiumEntrySelectedForCurrentSceneContext(_ entryID: UUID) -> Bool {
@@ -3675,6 +3697,7 @@ final class AppStore: ObservableObject {
         beatOverride: String? = nil,
         sceneIDOverride: UUID? = nil
     ) {
+        guard workspaceTab == "writing" else { return }
         guard proseRequestTask == nil else { return }
 
         proseRequestTask = Task { @MainActor [weak self] in
@@ -4181,6 +4204,7 @@ final class AppStore: ObservableObject {
     }
 
     func submitWorkshopMessage() {
+        guard workspaceTab == "workshop" else { return }
         guard workshopRequestTask == nil else { return }
 
         workshopRequestTask = Task { @MainActor [weak self] in
@@ -5427,7 +5451,9 @@ final class AppStore: ObservableObject {
 
         let base = GenerationAppendBase(
             content: state.baseContent,
-            richTextData: state.baseRichTextData
+            richTextData: state.baseRichTextData,
+            trailingContent: state.trailingContent,
+            trailingRichTextData: state.trailingRichTextData
         )
         let request = state.request
 
@@ -5712,7 +5738,8 @@ final class AppStore: ObservableObject {
     ) -> PromptRequestBuildResult {
         let activePrompt = activeProsePrompt ?? defaultPromptTemplate(for: .prose)
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
-        let sceneContext = String(scene.content.suffix(Self.proseSceneTailChars))
+        let proseContextSource = proseInsertionContextSource(for: scene)
+        let sceneContext = String(proseContextSource.suffix(Self.proseSceneTailChars))
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let promptResult = renderPromptTemplate(
@@ -5722,7 +5749,7 @@ final class AppStore: ObservableObject {
             selection: "",
             sceneID: scene.id,
             sceneExcerpt: sceneContext,
-            sceneFullText: scene.content,
+            sceneFullText: proseContextSource,
             sceneTitle: displaySceneTitle(scene),
             chapterTitle: chapterTitle(forSceneID: scene.id),
             contextSections: sceneContextSections,
@@ -5754,6 +5781,17 @@ final class AppStore: ObservableObject {
             ),
             renderWarnings: promptResult.warnings
         )
+    }
+
+    private func proseInsertionContextSource(for scene: Scene) -> String {
+        guard let anchor = proseInsertionAnchor, anchor.sceneID == scene.id else {
+            return scene.content
+        }
+
+        let sceneText = scene.content as NSString
+        let insertionLocation = min(max(0, anchor.utf16Location), sceneText.length)
+        guard insertionLocation > 0 else { return "" }
+        return sceneText.substring(to: insertionLocation)
     }
 
     private func makeRewriteRequest(
@@ -9727,6 +9765,8 @@ final class AppStore: ObservableObject {
     private struct GenerationAppendBase {
         let content: String
         let richTextData: Data?
+        let trailingContent: String
+        let trailingRichTextData: Data?
     }
 
     private struct GeneratedSceneContent {
@@ -9743,7 +9783,9 @@ final class AppStore: ObservableObject {
 
         let base = GenerationAppendBase(
             content: state.baseContent,
-            richTextData: state.baseRichTextData
+            richTextData: state.baseRichTextData,
+            trailingContent: state.trailingContent,
+            trailingRichTextData: state.trailingRichTextData
         )
         return buildGeneratedSceneContent(base: base, generated: state.generatedText).content
     }
@@ -9776,6 +9818,8 @@ final class AppStore: ObservableObject {
             originalSceneRichTextData: originalSceneRichTextData,
             baseContent: base.content,
             baseRichTextData: base.richTextData,
+            trailingContent: base.trailingContent,
+            trailingRichTextData: base.trailingRichTextData,
             generatedText: storedGenerated
         )
     }
@@ -9816,6 +9860,33 @@ final class AppStore: ObservableObject {
         }
 
         let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+        let sceneAttributed = makeAttributedSceneContent(
+            plainText: scene.content,
+            richTextData: scene.contentRTFData
+        )
+        let insertionLocation = resolvedProseInsertionLocation(
+            for: sceneID,
+            sceneUTF16Length: sceneAttributed.length
+        )
+        let isInsertionAtEnd = insertionLocation >= sceneAttributed.length
+
+        if !isInsertionAtEnd {
+            let prefixRange = NSRange(location: 0, length: insertionLocation)
+            let suffixRange = NSRange(
+                location: insertionLocation,
+                length: sceneAttributed.length - insertionLocation
+            )
+            let prefix = sceneAttributed.attributedSubstring(from: prefixRange)
+            let suffix = sceneAttributed.attributedSubstring(from: suffixRange)
+
+            return GenerationAppendBase(
+                content: prefix.string,
+                richTextData: makeRTFData(from: prefix),
+                trailingContent: suffix.string,
+                trailingRichTextData: makeRTFData(from: suffix)
+            )
+        }
+
         var current = scene.content
         var currentRichTextData = scene.contentRTFData
 
@@ -9826,10 +9897,7 @@ final class AppStore: ObservableObject {
             let textColor = resolvedEditorTextColor(from: appearance)
             let paragraphStyle = resolvedEditorParagraphStyle(from: appearance)
 
-            let attributed = makeAttributedSceneContent(
-                plainText: scene.content,
-                richTextData: scene.contentRTFData
-            )
+            let attributed = sceneAttributed
             attributed.append(
                 NSAttributedString(
                     string: "\n\n",
@@ -9843,7 +9911,12 @@ final class AppStore: ObservableObject {
             currentRichTextData = makeRTFData(from: attributed)
         }
 
-        return GenerationAppendBase(content: current, richTextData: currentRichTextData)
+        return GenerationAppendBase(
+            content: current,
+            richTextData: currentRichTextData,
+            trailingContent: "",
+            trailingRichTextData: nil
+        )
     }
 
     private func setGeneratedTextPreview(sceneID: UUID, base: GenerationAppendBase, generated: String) {
@@ -9880,10 +9953,25 @@ final class AppStore: ObservableObject {
             )
         }
 
+        let trailing = makeAttributedSceneContent(
+            plainText: base.trailingContent,
+            richTextData: base.trailingRichTextData
+        )
+        if trailing.length > 0 {
+            composed.append(trailing)
+        }
+
         return GeneratedSceneContent(
             content: composed.string,
             richTextData: makeRTFData(from: composed)
         )
+    }
+
+    private func resolvedProseInsertionLocation(for sceneID: UUID, sceneUTF16Length: Int) -> Int {
+        guard let anchor = proseInsertionAnchor, anchor.sceneID == sceneID else {
+            return sceneUTF16Length
+        }
+        return min(max(0, anchor.utf16Location), sceneUTF16Length)
     }
 
     private func applyEditorAppearanceToAttributedText(
