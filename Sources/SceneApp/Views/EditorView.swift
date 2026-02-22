@@ -159,6 +159,7 @@ struct EditorView: View {
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var sceneEditorCommand: SceneEditorCommand?
     @State private var editorSelection: SceneEditorSelection = .empty
+    @State private var hasEditorSelectionSnapshot: Bool = false
     @State private var editorFormatting: SceneEditorFormatting = .default
     @State private var isRewritingSelection: Bool = false
     @State private var rewriteTask: Task<Void, Never>?
@@ -341,6 +342,7 @@ struct EditorView: View {
         }
         .onChange(of: store.selectedSceneID) { _, _ in
             isEditingSceneTitle = false
+            hasEditorSelectionSnapshot = false
             applyPendingSceneSearchSelectionIfNeeded()
         }
         .onChange(of: store.sceneHistorySheetRequestID) { _, _ in
@@ -644,8 +646,10 @@ struct EditorView: View {
             shouldAutoScrollExternalUpdates: store.isGenerating,
             incrementalRewriteSessionActive: isRewritingSelection && store.incrementalRewrite,
             editorAppearance: store.project.editorAppearance,
+            generatedTextHighlightRange: store.inlineGeneratedTextHighlightRange,
             onSelectionChange: { selection in
                 editorSelection = selection
+                hasEditorSelectionSnapshot = true
                 store.setProseInsertionPoint(
                     sceneID: store.selectedScene?.id,
                     utf16Location: selection.range.location
@@ -1029,9 +1033,13 @@ struct EditorView: View {
     }
 
     private func syncProseInsertionAnchorWithEditorSelection() {
+        let fallbackLocation = (store.selectedScene?.content as NSString?)?.length ?? 0
+        let location = hasEditorSelectionSnapshot
+            ? editorSelection.range.location
+            : fallbackLocation
         store.setProseInsertionPoint(
             sceneID: store.selectedScene?.id,
-            utf16Location: editorSelection.range.location
+            utf16Location: location
         )
     }
 
@@ -1259,6 +1267,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
     let shouldAutoScrollExternalUpdates: Bool
     let incrementalRewriteSessionActive: Bool
     let editorAppearance: EditorAppearanceSettings
+    let generatedTextHighlightRange: NSRange?
     let onSelectionChange: (SceneEditorSelection) -> Void
     let onFormattingChange: (SceneEditorFormatting) -> Void
     let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
@@ -1427,6 +1436,11 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             to: textView,
             scrollView: scrollView
         )
+        context.coordinator.applyGeneratedTextHighlight(
+            range: generatedTextHighlightRange,
+            in: textView
+        )
+        context.coordinator.reconcileStreamingViewport(in: textView)
 
         scrollView.documentView = textView
         return scrollView
@@ -1452,6 +1466,11 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             to: textView,
             scrollView: nsView
         )
+        context.coordinator.applyGeneratedTextHighlight(
+            range: generatedTextHighlightRange,
+            in: textView
+        )
+        context.coordinator.reconcileStreamingViewport(in: textView)
         context.coordinator.requestFocusIfNeeded(
             requestID: focusRequestID,
             textView: textView
@@ -1472,6 +1491,16 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
+        private enum StreamingScrollMode {
+            case none
+            case followBottom
+            case preserveViewport
+        }
+
+        private struct ViewportAnchor {
+            let origin: NSPoint
+        }
+
         private let onSelectionChange: (SceneEditorSelection) -> Void
         private let onFormattingChange: (SceneEditorFormatting) -> Void
         private let onUndoRedoAvailabilityChange: (Bool, Bool) -> Void
@@ -1491,6 +1520,10 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         private var rewriteUndoSessionActive: Bool = false
         private var lastGenerationStreamingState: Bool = false
         private var lastIncrementalRewriteState: Bool = false
+        private var streamingScrollMode: StreamingScrollMode = .none
+        private var streamingPreservedAnchor: ViewportAnchor?
+        private var deferredStreamingViewportWorkItem: DispatchWorkItem?
+        private var highlightedGeneratedRange: NSRange?
         var lastFocusRequestID: UUID = UUID()
         private var pendingFocusRequestID: UUID?
         init(
@@ -1544,6 +1577,12 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 incrementalRewriteActive: incrementalRewriteSessionActive,
                 hasPendingRewriteReplaceCommand: hasPendingRewriteReplaceCommand
             )
+            if !shouldAutoScrollExternalUpdates {
+                streamingScrollMode = .none
+                streamingPreservedAnchor = nil
+                deferredStreamingViewportWorkItem?.cancel()
+                deferredStreamingViewportWorkItem = nil
+            }
 
             let textChanged = textView.string != plainText
             let refreshRequested = lastAppliedContentRefreshID != contentRefreshID
@@ -1564,29 +1603,144 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 }
             } else if textChanged {
                 let scrollView = textView.enclosingScrollView
-                let previousOrigin = scrollView?.contentView.bounds.origin
                 let wasAtBottom = scrollView.map(isAtBottom(_:)) ?? false
-                let shouldScrollToBottom = shouldAutoScrollExternalUpdates && wasAtBottom
+                if shouldAutoScrollExternalUpdates {
+                    if streamingScrollMode == .none {
+                        streamingScrollMode = wasAtBottom ? .followBottom : .preserveViewport
+                    } else if streamingScrollMode == .followBottom,
+                              !wasAtBottom,
+                              let scrollView {
+                        // User scrolled up between streaming updates: stop auto-follow.
+                        streamingScrollMode = .preserveViewport
+                        streamingPreservedAnchor = captureViewportAnchor(in: scrollView)
+                    } else if streamingScrollMode == .preserveViewport,
+                              wasAtBottom {
+                        // User returned to bottom while streaming: resume auto-follow.
+                        streamingScrollMode = .followBottom
+                        streamingPreservedAnchor = nil
+                    }
+                }
+                if streamingScrollMode == .preserveViewport,
+                   let scrollView {
+                    streamingPreservedAnchor = captureViewportAnchor(in: scrollView)
+                }
+
+                let shouldScrollToBottom = shouldAutoScrollExternalUpdates && streamingScrollMode == .followBottom
+                let preserveSelectionDuringStreaming = shouldAutoScrollExternalUpdates && streamingScrollMode == .preserveViewport
 
                 applyExternalTextDelta(
                     to: textView,
                     newText: plainText,
-                    moveCaretToEnd: shouldScrollToBottom
+                    moveCaretToEnd: shouldScrollToBottom,
+                    preserveSelection: preserveSelectionDuringStreaming
                 )
-
-                if let scrollView {
-                    if shouldScrollToBottom {
-                        scrollToBottom(scrollView)
-                    } else if let previousOrigin {
-                        restoreScrollOrigin(scrollView, previousOrigin)
-                    }
-                }
             }
             isApplyingProgrammaticChange = false
             lastSceneID = sceneID
             lastAppliedContentRefreshID = contentRefreshID
             publishSelection(from: textView)
             publishUndoRedoState(from: textView)
+        }
+
+        func applyGeneratedTextHighlight(
+            range: NSRange?,
+            in textView: NSTextView
+        ) {
+            guard let layoutManager = textView.layoutManager else { return }
+
+            let highlightColor = NSColor.controlAccentColor.withAlphaComponent(0.16)
+
+            if let highlightedGeneratedRange,
+               let range {
+                let clampedPrevious = clampedRangeForStorage(highlightedGeneratedRange, textView: textView)
+                let clampedNew = clampedRangeForStorage(range, textView: textView)
+
+                if clampedNew.length == 0 {
+                    if clampedPrevious.length > 0 {
+                        layoutManager.removeTemporaryAttribute(
+                            .backgroundColor,
+                            forCharacterRange: clampedPrevious
+                        )
+                    }
+                    self.highlightedGeneratedRange = nil
+                    return
+                }
+
+                if clampedPrevious.location == clampedNew.location {
+                    let previousEnd = clampedPrevious.location + clampedPrevious.length
+                    let newEnd = clampedNew.location + clampedNew.length
+
+                    if newEnd > previousEnd {
+                        let addedRange = NSRange(location: previousEnd, length: newEnd - previousEnd)
+                        layoutManager.addTemporaryAttribute(
+                            .backgroundColor,
+                            value: highlightColor,
+                            forCharacterRange: addedRange
+                        )
+                    } else if newEnd < previousEnd {
+                        let removedRange = NSRange(location: newEnd, length: previousEnd - newEnd)
+                        layoutManager.removeTemporaryAttribute(
+                            .backgroundColor,
+                            forCharacterRange: removedRange
+                        )
+                    }
+
+                    self.highlightedGeneratedRange = clampedNew
+                    return
+                }
+            }
+
+            if let highlightedGeneratedRange {
+                let clampedPrevious = clampedRangeForStorage(highlightedGeneratedRange, textView: textView)
+                if clampedPrevious.length > 0 {
+                    layoutManager.removeTemporaryAttribute(
+                        .backgroundColor,
+                        forCharacterRange: clampedPrevious
+                    )
+                }
+                self.highlightedGeneratedRange = nil
+            }
+
+            guard let range else { return }
+
+            let clamped = clampedRangeForStorage(range, textView: textView)
+            guard clamped.length > 0 else { return }
+
+            layoutManager.addTemporaryAttribute(
+                .backgroundColor,
+                value: highlightColor,
+                forCharacterRange: clamped
+            )
+            highlightedGeneratedRange = clamped
+        }
+
+        func reconcileStreamingViewport(in textView: NSTextView) {
+            guard let scrollView = textView.enclosingScrollView else { return }
+
+            deferredStreamingViewportWorkItem?.cancel()
+            deferredStreamingViewportWorkItem = nil
+
+            switch streamingScrollMode {
+            case .followBottom:
+                scrollToBottom(scrollView)
+                let workItem = DispatchWorkItem { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
+                    self.scrollToBottom(scrollView)
+                }
+                deferredStreamingViewportWorkItem = workItem
+                DispatchQueue.main.async(execute: workItem)
+            case .preserveViewport:
+                guard let anchor = streamingPreservedAnchor else { return }
+                restoreViewportAnchor(scrollView, anchor)
+                let workItem = DispatchWorkItem { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
+                    self.restoreViewportAnchor(scrollView, anchor)
+                }
+                deferredStreamingViewportWorkItem = workItem
+                DispatchQueue.main.async(execute: workItem)
+            case .none:
+                break
+            }
         }
 
         private func updateUndoGroupingState(
@@ -2314,7 +2468,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         private func applyExternalTextDelta(
             to textView: NSTextView,
             newText: String,
-            moveCaretToEnd: Bool
+            moveCaretToEnd: Bool,
+            preserveSelection: Bool
         ) {
             guard let textStorage = textView.textStorage else { return }
             let previousSelection = clampedRangeForStorage(textView.selectedRange(), textView: textView)
@@ -2366,6 +2521,8 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             if moveCaretToEnd {
                 let selectionLocation = replacedRange.location + replacementAttributedText.length
                 textView.setSelectedRange(NSRange(location: selectionLocation, length: 0))
+            } else if preserveSelection {
+                // Avoid steering viewport to insertion point during streamed external updates.
             } else {
                 let adjustedSelection = adjustedSelectionRange(
                     previousSelection,
@@ -2373,7 +2530,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                     replacementLength: replacementAttributedText.length,
                     finalLength: textStorage.length
                 )
-                textView.setSelectedRange(adjustedSelection)
+                if adjustedSelection != previousSelection {
+                    textView.setSelectedRange(adjustedSelection)
+                }
             }
             textView.didChangeText()
         }
@@ -2409,44 +2568,42 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
         }
 
         private func isAtBottom(_ scrollView: NSScrollView) -> Bool {
-            if let textView = scrollView.documentView as? NSTextView,
-               let textContainer = textView.textContainer {
-                textView.layoutManager?.ensureLayout(for: textContainer)
+            let clipView = scrollView.contentView
+            let maxOffsetY = max(0, clipView.documentRect.height - clipView.bounds.height)
+            if maxOffsetY <= 1 {
+                return true
             }
 
-            let clipView = scrollView.contentView
-            let visibleBottom = clipView.bounds.maxY
-            let contentBottom = scrollView.documentView?.bounds.maxY ?? visibleBottom
-            let tolerance: CGFloat = 20
-            return contentBottom - visibleBottom <= tolerance
+            let y = clipView.bounds.origin.y
+            let isFlipped = scrollView.documentView?.isFlipped ?? true
+            let distanceToBottom = isFlipped ? (maxOffsetY - y) : y
+            let tolerance: CGFloat = 6
+            if distanceToBottom <= tolerance {
+                return true
+            }
+
+            if let scroller = scrollView.verticalScroller {
+                return scroller.floatValue >= 0.997
+            }
+            return false
         }
 
         private func scrollToBottom(_ scrollView: NSScrollView) {
-            if let textView = scrollView.documentView as? NSTextView,
-               let textContainer = textView.textContainer {
-                textView.layoutManager?.ensureLayout(for: textContainer)
-            }
-
-            let clipView = scrollView.contentView
-            let contentHeight = scrollView.documentView?.bounds.height ?? clipView.bounds.height
-            let visibleHeight = clipView.bounds.height
-            let maxOffsetY = max(0, contentHeight - visibleHeight)
-            clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: maxOffsetY))
-            scrollView.reflectScrolledClipView(clipView)
+            guard let textView = scrollView.documentView as? NSTextView else { return }
+            let textLength = (textView.string as NSString).length
+            textView.scrollRangeToVisible(NSRange(location: textLength, length: 0))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
-        private func restoreScrollOrigin(_ scrollView: NSScrollView, _ previousOrigin: NSPoint) {
-            if let textView = scrollView.documentView as? NSTextView,
-               let textContainer = textView.textContainer {
-                textView.layoutManager?.ensureLayout(for: textContainer)
-            }
+        private func captureViewportAnchor(in scrollView: NSScrollView) -> ViewportAnchor {
+            ViewportAnchor(origin: scrollView.contentView.bounds.origin)
+        }
 
+        private func restoreViewportAnchor(_ scrollView: NSScrollView, _ anchor: ViewportAnchor) {
             let clipView = scrollView.contentView
-            let contentHeight = scrollView.documentView?.bounds.height ?? clipView.bounds.height
-            let visibleHeight = clipView.bounds.height
-            let maxOffsetY = max(0, contentHeight - visibleHeight)
-            let clampedY = max(0, min(previousOrigin.y, maxOffsetY))
-            clipView.setBoundsOrigin(NSPoint(x: previousOrigin.x, y: clampedY))
+            let proposedRect = NSRect(origin: anchor.origin, size: clipView.bounds.size)
+            let constrainedOrigin = clipView.constrainBoundsRect(proposedRect).origin
+            clipView.scroll(to: constrainedOrigin)
             scrollView.reflectScrolledClipView(clipView)
         }
 

@@ -1082,6 +1082,28 @@ final class AppStore: ObservableObject {
         return !state.generatedText.isEmpty
     }
 
+    var inlineGeneratedTextHighlightRange: NSRange? {
+        guard let selectedSceneID,
+              let state = inlineProseRegenerationState,
+              state.sceneID == selectedSceneID,
+              let scene = selectedScene else {
+            return nil
+        }
+
+        if !isGenerating {
+            guard scene.content == inlineProseRegenerationExpectedContent(for: state) else {
+                return nil
+            }
+        }
+
+        let location = (state.baseContent as NSString).length
+        let sceneLength = (scene.content as NSString).length
+        let trailingLength = (state.trailingContent as NSString).length
+        let length = max(0, sceneLength - location - trailingLength)
+        guard length > 0 else { return nil }
+        return NSRange(location: location, length: length)
+    }
+
     var canDeleteLastWorkshopAssistantMessage: Bool {
         guard !workshopIsGenerating else { return false }
         guard let session = selectedWorkshopSession else { return false }
