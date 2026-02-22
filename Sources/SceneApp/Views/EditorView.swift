@@ -1659,46 +1659,6 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
 
             let highlightColor = NSColor.controlAccentColor.withAlphaComponent(0.16)
 
-            if let highlightedGeneratedRange,
-               let range {
-                let clampedPrevious = clampedRangeForStorage(highlightedGeneratedRange, textView: textView)
-                let clampedNew = clampedRangeForStorage(range, textView: textView)
-
-                if clampedNew.length == 0 {
-                    if clampedPrevious.length > 0 {
-                        layoutManager.removeTemporaryAttribute(
-                            .backgroundColor,
-                            forCharacterRange: clampedPrevious
-                        )
-                    }
-                    self.highlightedGeneratedRange = nil
-                    return
-                }
-
-                if clampedPrevious.location == clampedNew.location {
-                    let previousEnd = clampedPrevious.location + clampedPrevious.length
-                    let newEnd = clampedNew.location + clampedNew.length
-
-                    if newEnd > previousEnd {
-                        let addedRange = NSRange(location: previousEnd, length: newEnd - previousEnd)
-                        layoutManager.addTemporaryAttribute(
-                            .backgroundColor,
-                            value: highlightColor,
-                            forCharacterRange: addedRange
-                        )
-                    } else if newEnd < previousEnd {
-                        let removedRange = NSRange(location: newEnd, length: previousEnd - newEnd)
-                        layoutManager.removeTemporaryAttribute(
-                            .backgroundColor,
-                            forCharacterRange: removedRange
-                        )
-                    }
-
-                    self.highlightedGeneratedRange = clampedNew
-                    return
-                }
-            }
-
             if let highlightedGeneratedRange {
                 let clampedPrevious = clampedRangeForStorage(highlightedGeneratedRange, textView: textView)
                 if clampedPrevious.length > 0 {

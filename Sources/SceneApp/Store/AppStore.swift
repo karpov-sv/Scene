@@ -10261,16 +10261,48 @@ final class AppStore: ObservableObject {
     private func normalizeMarkdownFonts(_ attributed: NSAttributedString, baseFont: NSFont) -> NSAttributedString {
         let mutable = NSMutableAttributedString(attributedString: attributed)
         let fullRange = NSRange(location: 0, length: mutable.length)
+        let inlineIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
+        let italicMask = 1
+        let boldMask = 1 << 1
 
-        mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+        guard fullRange.length > 0 else { return mutable }
+
+        mutable.beginEditing()
+        mutable.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
             let adjustedFont: NSFont
-            if let parsedFont = value as? NSFont {
-                adjustedFont = mapMarkdownFontTraits(parsedFont, onto: baseFont)
+            if let parsedFont = attributes[.font] as? NSFont {
+                var mapped = mapMarkdownFontTraits(parsedFont, onto: baseFont)
+                if let inlineIntent = attributes[inlineIntentKey] as? NSNumber {
+                    let intentMask = inlineIntent.intValue
+                    if (intentMask & boldMask) != 0 {
+                        mapped = NSFontManager.shared.convert(mapped, toHaveTrait: .boldFontMask)
+                    }
+                    if (intentMask & italicMask) != 0 {
+                        mapped = NSFontManager.shared.convert(mapped, toHaveTrait: .italicFontMask)
+                    }
+                }
+                adjustedFont = mapped
             } else {
-                adjustedFont = baseFont
+                if let inlineIntent = attributes[inlineIntentKey] as? NSNumber {
+                    let intentMask = inlineIntent.intValue
+                    var mapped = baseFont
+                    if (intentMask & boldMask) != 0 {
+                        mapped = NSFontManager.shared.convert(mapped, toHaveTrait: .boldFontMask)
+                    }
+                    if (intentMask & italicMask) != 0 {
+                        mapped = NSFontManager.shared.convert(mapped, toHaveTrait: .italicFontMask)
+                    }
+                    adjustedFont = mapped
+                } else {
+                    adjustedFont = baseFont
+                }
             }
             mutable.addAttribute(.font, value: adjustedFont, range: range)
+            if attributes[inlineIntentKey] != nil {
+                mutable.removeAttribute(inlineIntentKey, range: range)
+            }
         }
+        mutable.endEditing()
 
         return mutable
     }
