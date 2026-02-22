@@ -2532,13 +2532,16 @@ final class AppStore: ObservableObject {
         _ message: String,
         style: TaskNotificationToast.Style,
         updating toastID: UUID? = nil,
-        autoDismiss: Bool
+        autoDismiss: Bool,
+        respectSettings: Bool = true
     ) -> UUID? {
-        guard project.settings.enableTaskNotifications else {
-            if let toastID {
-                dismissTaskNotificationToast(toastID)
+        if respectSettings {
+            guard project.settings.enableTaskNotifications else {
+                if let toastID {
+                    dismissTaskNotificationToast(toastID)
+                }
+                return nil
             }
-            return nil
         }
 
         let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2577,6 +2580,28 @@ final class AppStore: ObservableObject {
         }
 
         return id
+    }
+
+    func consumeLastErrorAsToast() {
+        guard let message = lastError?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !message.isEmpty else {
+            lastError = nil
+            return
+        }
+
+        let lowered = message.lowercased()
+        let style: TaskNotificationToast.Style = (lowered.contains("cancel") || lowered.contains("cancellationerror"))
+            ? .cancelled
+            : .error
+
+        _ = showTaskNotification(
+            message,
+            style: style,
+            updating: nil,
+            autoDismiss: true,
+            respectSettings: false
+        )
+        lastError = nil
     }
 
     @discardableResult
@@ -3867,7 +3892,7 @@ final class AppStore: ObservableObject {
             return
         }
         guard let selectedSceneID,
-              var state = inlineProseRegenerationState,
+              let state = inlineProseRegenerationState,
               state.sceneID == selectedSceneID,
               let location = sceneLocation(for: selectedSceneID) else {
             return
@@ -3882,8 +3907,7 @@ final class AppStore: ObservableObject {
             forKey: project.chapters[location.chapterIndex].id.uuidString
         )
 
-        state.generatedText = ""
-        inlineProseRegenerationState = state
+        inlineProseRegenerationState = nil
 
         generationStatus = "Generation undone."
         proseLiveUsage = nil

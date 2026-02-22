@@ -49,13 +49,6 @@ struct ContentView: View {
         nonmutating set { store.writingSidePanel = newValue.rawValue }
     }
 
-    private var hasErrorBinding: Binding<Bool> {
-        Binding(
-            get: { store.lastError != nil },
-            set: { if !$0 { store.lastError = nil } }
-        )
-    }
-
     var body: some View {
         rootContent
             .focusedSceneValue(\.projectMenuActions, projectMenuActions)
@@ -63,7 +56,7 @@ struct ContentView: View {
             .focusedSceneValue(\.viewMenuActions, viewMenuActions)
             .focusedSceneValue(\.checkpointMenuActions, checkpointMenuActions)
             .overlay(alignment: .bottomTrailing) {
-                if store.isProjectOpen {
+                if !store.taskNotificationToasts.isEmpty {
                     TaskNotificationToastStack(
                         toasts: store.taskNotificationToasts,
                         onDismiss: { store.dismissTaskNotificationToast($0) }
@@ -80,14 +73,12 @@ struct ContentView: View {
                 CheckpointRestoreSheet()
                     .environmentObject(store)
             }
-            .alert("Error", isPresented: hasErrorBinding) {
-                Button("OK", role: .cancel) {
-                    store.lastError = nil
-                }
-            } message: {
-                Text(store.lastError ?? "Unknown error")
+            .onChange(of: store.lastError) { _, newValue in
+                guard newValue != nil else { return }
+                store.consumeLastErrorAsToast()
             }
             .onAppear {
+                store.consumeLastErrorAsToast()
                 restoreSidebarStateFromStorage()
                 restoreBinderVisibilityFromStorage()
                 restoreGenerationPanelVisibilityFromStorage()
@@ -779,7 +770,7 @@ private struct TaskNotificationToastRow: View {
         case .error:
             return .red
         case .cancelled:
-            return .gray
+            return .red
         }
     }
 }
