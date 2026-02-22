@@ -139,6 +139,12 @@ struct SceneFileCommands: Commands {
             .keyboardShortcut("6", modifiers: .command)
             .disabled(viewActions?.canUseViewActions != true)
 
+            Button("Toggle Scene Plan") {
+                viewActions?.togglePlan()
+            }
+            .keyboardShortcut("9", modifiers: .command)
+            .disabled(viewActions?.canUseViewActions != true)
+
             Button("Toggle Conversations") {
                 viewActions?.toggleConversations()
             }

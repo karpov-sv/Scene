@@ -336,6 +336,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <REQUEST_TYPE>Continue scene from beat.</REQUEST_TYPE>
 	        {{state}}
 	        <BEAT>{{beat}}</BEAT>
+	        {{prose_plan_block}}
 	        <SCENE_TAIL>{{scene_tail(chars=2400)}}</SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
@@ -364,6 +365,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
+	        {{prose_plan_block}}
 	        <SCENE_TAIL>{{scene_tail(chars=2000)}}</SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
@@ -392,6 +394,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
+	        {{prose_plan_block}}
 	        <EXISTING_SCENE_TAIL>{{scene_tail(chars=2600)}}</EXISTING_SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
@@ -563,6 +566,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{beat}}
 	        >>>
 
+	        {{prose_plan_block}}
+
 	        SCENE_TAIL:
 	        <<<
 	        {{scene_tail(chars=2400)}}
@@ -609,6 +614,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{beat}}
 	        >>>
 
+	        {{prose_plan_block}}
+
 	        SCENE_TAIL:
 	        <<<
 	        {{scene_tail(chars=2000)}}
@@ -654,6 +661,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<
 	        {{beat}}
 	        >>>
+
+	        {{prose_plan_block}}
 
 	        EXISTING_SCENE_TAIL:
 	        <<<
@@ -1120,6 +1129,23 @@ enum InlineGenerationMode: String, Codable, CaseIterable, Equatable {
     case variants
 }
 
+enum ProseGenerationStrategy: String, Codable, CaseIterable, Equatable {
+    case direct
+    case planThenDraft
+    case planOnly
+
+    var label: String {
+        switch self {
+        case .direct:
+            return "Direct Draft"
+        case .planThenDraft:
+            return "Plan + Draft"
+        case .planOnly:
+            return "Plan Only"
+        }
+    }
+}
+
 struct GenerationSettings: Codable, Equatable {
     var provider: AIProvider
     var endpoint: String
@@ -1128,6 +1154,7 @@ struct GenerationSettings: Codable, Equatable {
     var generationModelSelection: [String]
     var useInlineGeneration: Bool
     var inlineGenerationMode: InlineGenerationMode
+    var proseGenerationStrategy: ProseGenerationStrategy
     var cleanUpCaretInsertionEchoes: Bool
     var markRewrittenTextAsItalics: Bool
     var incrementalRewrite: Bool
@@ -1156,6 +1183,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: [String],
         useInlineGeneration: Bool,
         inlineGenerationMode: InlineGenerationMode,
+        proseGenerationStrategy: ProseGenerationStrategy,
         cleanUpCaretInsertionEchoes: Bool,
         markRewrittenTextAsItalics: Bool,
         incrementalRewrite: Bool,
@@ -1177,6 +1205,7 @@ struct GenerationSettings: Codable, Equatable {
         self.generationModelSelection = generationModelSelection
         self.useInlineGeneration = useInlineGeneration
         self.inlineGenerationMode = inlineGenerationMode
+        self.proseGenerationStrategy = proseGenerationStrategy
         self.cleanUpCaretInsertionEchoes = cleanUpCaretInsertionEchoes
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.incrementalRewrite = incrementalRewrite
@@ -1200,6 +1229,7 @@ struct GenerationSettings: Codable, Equatable {
         case generationModelSelection
         case useInlineGeneration
         case inlineGenerationMode
+        case proseGenerationStrategy
         case cleanUpCaretInsertionEchoes
         case markRewrittenTextAsItalics
         case incrementalRewrite
@@ -1238,6 +1268,7 @@ struct GenerationSettings: Codable, Equatable {
         }
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
         inlineGenerationMode = try container.decodeIfPresent(InlineGenerationMode.self, forKey: .inlineGenerationMode) ?? .variants
+        proseGenerationStrategy = try container.decodeIfPresent(ProseGenerationStrategy.self, forKey: .proseGenerationStrategy) ?? .direct
         cleanUpCaretInsertionEchoes = try container.decodeIfPresent(Bool.self, forKey: .cleanUpCaretInsertionEchoes) ?? true
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
@@ -1264,6 +1295,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: ["gpt-4o-mini"],
         useInlineGeneration: false,
         inlineGenerationMode: .variants,
+        proseGenerationStrategy: .direct,
         cleanUpCaretInsertionEchoes: true,
         markRewrittenTextAsItalics: true,
         incrementalRewrite: false,

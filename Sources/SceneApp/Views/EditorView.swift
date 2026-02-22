@@ -259,6 +259,16 @@ struct EditorView: View {
         isRewriteMode ? store.rewritePrompts : store.prosePrompts
     }
 
+    private var hasSelectedSceneProsePlan: Bool {
+        !store.selectedSceneProsePlanDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var shouldAutoActivateScenePlanPanel: Bool {
+        guard !isRewriteMode else { return false }
+        guard store.workspaceTab == "writing" else { return false }
+        return hasSelectedSceneProsePlan
+    }
+
     private var isPrimaryGenerationRunning: Bool {
         if isRewriteMode {
             return isRewritingSelection
@@ -344,6 +354,16 @@ struct EditorView: View {
             isEditingSceneTitle = false
             hasEditorSelectionSnapshot = false
             applyPendingSceneSearchSelectionIfNeeded()
+            autoActivateScenePlanPanelIfNeeded()
+        }
+        .onChange(of: hasSelectedSceneProsePlan) { _, _ in
+            autoActivateScenePlanPanelIfNeeded()
+        }
+        .onChange(of: store.workspaceTab) { _, _ in
+            autoActivateScenePlanPanelIfNeeded()
+        }
+        .onChange(of: isRewriteMode) { _, _ in
+            autoActivateScenePlanPanelIfNeeded()
         }
         .onChange(of: store.sceneHistorySheetRequestID) { _, _ in
             presentSceneHistoryIfRequested()
@@ -351,6 +371,7 @@ struct EditorView: View {
         .onAppear {
             applyPendingSceneSearchSelectionIfNeeded()
             presentSceneHistoryIfRequested()
+            autoActivateScenePlanPanelIfNeeded()
         }
     }
 
@@ -1024,8 +1045,14 @@ struct EditorView: View {
         if store.isProseGenerationRunning {
             store.cancelBeatGeneration()
         } else {
-            store.submitBeatGeneration()
+            store.submitBeatGeneration(strategyOverride: .direct)
         }
+    }
+
+    private func autoActivateScenePlanPanelIfNeeded() {
+        guard shouldAutoActivateScenePlanPanel else { return }
+        guard store.writingSidePanel != "plan" else { return }
+        store.writingSidePanel = "plan"
     }
 
     private func previewCurrentGenerationPayload() {

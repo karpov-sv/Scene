@@ -39,6 +39,7 @@ final class DomainModelsDecodingTests: XCTestCase {
           "apiKey": "",
           "model": "fallback-model",
           "generationModelSelection": [" model-a ", "model-a", "", "model-b"],
+          "proseGenerationStrategy": "planThenDraft",
           "temperature": 0.8,
           "maxTokens": 700,
           "defaultSystemPrompt": "sys"
@@ -46,6 +47,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         """
         let normalized = try decoder.decode(GenerationSettings.self, from: Data(explicitSelectionJSON.utf8))
         XCTAssertEqual(normalized.generationModelSelection, ["model-a", "model-b"])
+        XCTAssertEqual(normalized.proseGenerationStrategy, .planThenDraft)
 
         let fallbackSelectionJSON = """
         {
@@ -60,6 +62,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         """
         let fallback = try decoder.decode(GenerationSettings.self, from: Data(fallbackSelectionJSON.utf8))
         XCTAssertEqual(fallback.generationModelSelection, ["fallback-model"])
+        XCTAssertEqual(fallback.proseGenerationStrategy, .direct)
     }
 
     func testGenerationSettingsDecodingClampsTaskNotificationDuration() throws {

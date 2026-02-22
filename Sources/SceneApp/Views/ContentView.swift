@@ -22,6 +22,7 @@ struct ContentView: View {
         case compendium
         case summary
         case notes
+        case plan
         case conversations
     }
 
@@ -200,6 +201,13 @@ struct ContentView: View {
             .help(notesToggleHelpText)
 
             Button {
+                togglePlanPanel()
+            } label: {
+                Image(systemName: writingSidePanel == .plan ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
+            }
+            .help(planToggleHelpText)
+
+            Button {
                 toggleConversationsPanel()
             } label: {
                 Image(systemName: writingSidePanel == .conversations ? "text.bubble.fill" : "text.bubble")
@@ -258,6 +266,9 @@ struct ContentView: View {
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
         case .notes:
             NotesPanelView(scope: $notesScope)
+                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
+        case .plan:
+            ScenePlanPanelView()
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
         case .conversations:
             WorkshopConversationsSidebarView { _ in
@@ -334,6 +345,10 @@ struct ContentView: View {
         writingSidePanel == .notes ? "Hide Notes" : "Show Notes"
     }
 
+    private var planToggleHelpText: String {
+        writingSidePanel == .plan ? "Hide Scene Plan" : "Show Scene Plan"
+    }
+
     private var conversationsToggleHelpText: String {
         writingSidePanel == .conversations ? "Hide Conversations" : "Show Conversations"
     }
@@ -393,6 +408,7 @@ struct ContentView: View {
             toggleCompendium: toggleCompendiumPanel,
             toggleSummary: toggleSummaryPanel,
             toggleNotes: toggleNotesPanel,
+            togglePlan: togglePlanPanel,
             toggleConversations: toggleConversationsPanel,
             toggleTextGeneration: toggleGenerationPanel,
             canUseViewActions: store.isProjectOpen
@@ -524,6 +540,10 @@ struct ContentView: View {
 
     private func toggleNotesPanel() {
         writingSidePanel = writingSidePanel == .notes ? .none : .notes
+    }
+
+    private func togglePlanPanel() {
+        writingSidePanel = writingSidePanel == .plan ? .none : .plan
     }
 
     private func toggleConversationsPanel() {
