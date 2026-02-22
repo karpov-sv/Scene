@@ -333,13 +333,10 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: cinematicProseID,
 	        title: "Continue from Scene Beat",
 	        userTemplate: """
-	        <REQUEST_TYPE>continue_scene_from_beat</REQUEST_TYPE>
-	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Continue scene from beat.</REQUEST_TYPE>
 	        {{state}}
 	        <BEAT>{{beat}}</BEAT>
-	        <SCENE_TAIL chars="2400">{{scene_tail(chars=2400)}}</SCENE_TAIL>
+	        <SCENE_TAIL>{{scene_tail(chars=2400)}}</SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
@@ -363,14 +360,11 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryExpansionProseID,
 	        title: "Expand from Scene Summary",
 	        userTemplate: """
-	        <REQUEST_TYPE>draft_scene_from_beats</REQUEST_TYPE>
-	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Draft scene from summary and guidance.</REQUEST_TYPE>
 	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
-	        <SCENE_TAIL chars="2000">{{scene_tail(chars=2000)}}</SCENE_TAIL>
+	        <SCENE_TAIL>{{scene_tail(chars=2000)}}</SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
@@ -394,14 +388,11 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryContinuationProseID,
 	        title: "Continue Following Scene Summary",
 	        userTemplate: """
-	        <REQUEST_TYPE>continue_scene</REQUEST_TYPE>
-	        <PROJECT_TITLE>{{project_title}}</PROJECT_TITLE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Continue scene following summary.</REQUEST_TYPE>
 	        {{state}}
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
-	        <EXISTING_SCENE_TAIL chars="2600">{{scene_tail(chars=2600)}}</EXISTING_SCENE_TAIL>
+	        <EXISTING_SCENE_TAIL>{{scene_tail(chars=2600)}}</EXISTING_SCENE_TAIL>
 	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
@@ -426,9 +417,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Rewrite",
 	        userTemplate: """
-	        <REQUEST_TYPE>rewrite_excerpt_preserve_meaning</REQUEST_TYPE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Rewrite selection while preserving meaning.</REQUEST_TYPE>
 	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
@@ -457,9 +446,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Expand",
 	        userTemplate: """
-	        <REQUEST_TYPE>style_rewrite_excerpt</REQUEST_TYPE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Expand selection with richer style.</REQUEST_TYPE>
 	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
@@ -489,9 +476,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Shorten",
 	        userTemplate: """
-	        <REQUEST_TYPE>shorten_excerpt</REQUEST_TYPE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
+	        <REQUEST_TYPE>Shorten selection while preserving meaning.</REQUEST_TYPE>
 	        {{state}}
 	        <SELECTION>{{selection}}</SELECTION>
 	        <SELECTION_CONTEXT>{{selection_context}}</SELECTION_CONTEXT>
@@ -520,10 +505,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .summary,
 	        title: "Summary",
 	        userTemplate: """
-	        <REQUEST_TYPE>summarize_memory</REQUEST_TYPE>
+	        <REQUEST_TYPE>Summarize source material into narrative memory.</REQUEST_TYPE>
 	        <SCOPE>{{summary_scope}}</SCOPE>
-	        <CHAPTER_TITLE>{{chapter_title}}</CHAPTER_TITLE>
-	        <SCENE_TITLE>{{scene_title}}</SCENE_TITLE>
 	        {{state}}
 	        <SOURCE_MATERIAL>{{source}}</SOURCE_MATERIAL>
 	        <SUPPORTING_CONTEXT_BACKGROUND>{{context}}</SUPPORTING_CONTEXT_BACKGROUND>
@@ -548,8 +531,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .workshop,
 	        title: "Story Workshop",
 	        userTemplate: """
-	        <REQUEST_TYPE>variants_next_paragraph</REQUEST_TYPE>
-	        <CHAT_NAME>{{chat_name}}</CHAT_NAME>
+	        <REQUEST_TYPE>Provide workshop guidance and next paragraph options.</REQUEST_TYPE>
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        {{state}}
 	        <CURRENT_SCENE chars="1800">{{scene_tail(chars=1800)}}</CURRENT_SCENE>
@@ -572,10 +554,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: cinematicProseCompactID,
 	        title: "Continue from Scene Beat (Compact)",
 	        userTemplate: """
-	        REQUEST: continue_scene_from_beat
-	        PROJECT: {{project_title}}
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Continue scene from beat.
 
 	        {{state}}
 
@@ -584,7 +563,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{beat}}
 	        >>>
 
-	        SCENE_TAIL (chars=2400):
+	        SCENE_TAIL:
 	        <<<
 	        {{scene_tail(chars=2400)}}
 	        >>>
@@ -616,10 +595,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryExpansionProseCompactID,
 	        title: "Expand from Scene Summary (Compact)",
 	        userTemplate: """
-	        REQUEST: draft_scene_from_beats
-	        PROJECT: {{project_title}}
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Draft scene from summary and guidance.
 
 	        {{state}}
 
@@ -633,7 +609,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{beat}}
 	        >>>
 
-	        SCENE_TAIL (chars=2000):
+	        SCENE_TAIL:
 	        <<<
 	        {{scene_tail(chars=2000)}}
 	        >>>
@@ -665,10 +641,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        id: summaryContinuationProseCompactID,
 	        title: "Continue Following Scene Summary (Compact)",
 	        userTemplate: """
-	        REQUEST: continue_scene
-	        PROJECT: {{project_title}}
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Continue scene following summary.
 
 	        {{state}}
 
@@ -682,7 +655,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{beat}}
 	        >>>
 
-	        EXISTING_SCENE_TAIL (chars=2600):
+	        EXISTING_SCENE_TAIL:
 	        <<<
 	        {{scene_tail(chars=2600)}}
 	        >>>
@@ -715,9 +688,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Rewrite (Compact)",
 	        userTemplate: """
-	        REQUEST: rewrite_excerpt_preserve_meaning
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Rewrite selection while preserving meaning.
 
 	        {{state}}
 
@@ -763,9 +734,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Expand (Compact)",
 	        userTemplate: """
-	        REQUEST: style_rewrite_excerpt
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Expand selection with richer style.
 
 	        {{state}}
 
@@ -812,9 +781,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .rewrite,
 	        title: "Shorten (Compact)",
 	        userTemplate: """
-	        REQUEST: shorten_excerpt
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
+	        REQUEST: Shorten selection while preserving meaning.
 
 	        {{state}}
 
@@ -860,10 +827,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .summary,
 	        title: "Summary (Compact)",
 	        userTemplate: """
-	        REQUEST: summarize_memory
+	        REQUEST: Summarize source material into narrative memory.
 	        SCOPE: {{summary_scope}}
-	        CHAPTER: {{chapter_title}}
-	        SCENE: {{scene_title}}
 
 	        {{state}}
 
@@ -897,8 +862,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        category: .workshop,
 	        title: "Story Workshop (Compact)",
 	        userTemplate: """
-	        REQUEST: variants_next_paragraph
-	        CHAT_NAME: {{chat_name}}
+	        REQUEST: Provide workshop guidance and next paragraph options.
 
 	        CONTEXT_BACKGROUND:
 	        <<<

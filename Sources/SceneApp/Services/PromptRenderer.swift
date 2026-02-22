@@ -36,6 +36,7 @@ struct PromptRenderer {
         var warnings: [String] = []
         var rendered = replaceCanonicalTokens(in: normalizedTemplate, context: resolvedContext, warnings: &warnings)
         rendered = replaceLegacyVariables(in: rendered, context: resolvedContext)
+        rendered = stripTemplatePresentationMetadata(in: rendered)
 
         return Result(
             renderedText: rendered,
@@ -122,6 +123,21 @@ struct PromptRenderer {
             let token = "{\(key)}"
             output = output.replacingOccurrences(of: token, with: context.variables[key] ?? "")
         }
+        return output
+    }
+
+    private func stripTemplatePresentationMetadata(in text: String) -> String {
+        var output = text
+        output = output.replacingOccurrences(
+            of: #"(?i)\s*\(\s*chars\s*=\s*\d+\s*\)"#,
+            with: "",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
+            of: #"(?i)\s+chars\s*=\s*"\d+""#,
+            with: "",
+            options: .regularExpression
+        )
         return output
     }
 

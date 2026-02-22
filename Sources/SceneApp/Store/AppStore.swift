@@ -5824,8 +5824,12 @@ final class AppStore: ObservableObject {
         let activePrompt = activeProsePrompt ?? defaultPromptTemplate(for: .prose)
         let insertionContext = proseInsertionContext(for: scene)
         let proseContextSource = insertionContext.prefix
-        let sceneContext = String(proseContextSource.suffix(Self.proseSceneTailChars))
         let caretWindow = proseCaretWindowContext(for: insertionContext)
+        let isCaretInsertion = caretWindow != nil
+        let sceneContext = isCaretInsertion
+            ? ""
+            : String(proseContextSource.suffix(Self.proseSceneTailChars))
+        let sceneFullText = isCaretInsertion ? "" : proseContextSource
         let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
         let insertionBlock = proseInsertionDirectiveBlock(for: caretWindow)
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5837,23 +5841,26 @@ final class AppStore: ObservableObject {
             selection: "",
             sceneID: scene.id,
             sceneExcerpt: sceneContext,
-            sceneFullText: proseContextSource,
+            sceneFullText: sceneFullText,
             sceneTitle: displaySceneTitle(scene),
             chapterTitle: chapterTitle(forSceneID: scene.id),
             contextSections: sceneContextSections,
             conversation: "",
             conversationTurns: [],
             summaryScope: "",
-            source: sceneContext,
+            source: isCaretInsertion ? (caretWindow?.combined ?? "") : sceneContext,
             extraVariables: [
                 "scene_summary": sceneSummary,
                 "scene_before_caret": caretWindow?.before ?? "",
                 "scene_after_caret": caretWindow?.after ?? "",
                 "scene_caret_window": caretWindow?.combined ?? "",
                 "scene_insertion_block": insertionBlock,
-                "is_caret_insertion": caretWindow == nil ? "false" : "true"
+                "is_caret_insertion": isCaretInsertion ? "true" : "false"
             ]
         )
+        let renderedUserPrompt = isCaretInsertion
+            ? removingSceneTailSectionsForCaretInsertion(promptResult.renderedText)
+            : promptResult.renderedText
 
         var systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
@@ -5870,7 +5877,7 @@ final class AppStore: ObservableObject {
         return PromptRequestBuildResult(
             request: TextGenerationRequest(
                 systemPrompt: systemPrompt,
-                userPrompt: promptResult.renderedText,
+                userPrompt: renderedUserPrompt,
                 model: selectedModel,
                 temperature: project.settings.temperature,
                 maxTokens: project.settings.maxTokens
@@ -5959,10 +5966,41 @@ final class AppStore: ObservableObject {
         """
         Insertion mode rules:
         - If INSERT_AT_CARET is present, BEFORE_CARET and AFTER_CARET are immutable boundaries.
-        - Return only newly generated insertion text intended to go between these boundaries.
-        - Do not repeat, quote, paraphrase, or include text from BEFORE_CARET or AFTER_CARET.
-        - Do not return labels, tags, or explanations.
+        - Return only insertion text intended to go between these boundaries.
         """
+    }
+
+    private func removingSceneTailSectionsForCaretInsertion(_ prompt: String) -> String {
+        var output = prompt
+
+        // XML-style section blocks.
+        output = output.replacingOccurrences(
+            of: #"(?is)<SCENE_TAIL(?:\s+[^>]*)?>.*?</SCENE_TAIL>\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+        output = output.replacingOccurrences(
+            of: #"(?is)<EXISTING_SCENE_TAIL(?:\s+[^>]*)?>.*?</EXISTING_SCENE_TAIL>\s*"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // Compact fenced sections.
+        output = output.replacingOccurrences(
+            of: #"(?ims)^[ \t]*(?:EXISTING_)?SCENE_TAIL(?:\s*\(\s*chars\s*=\s*\d+\s*\))?:[ \t]*\n[ \t]*<<<\n.*?\n[ \t]*>>>[ \t]*(?:\n|$)"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // Inline token fallback for custom templates.
+        output = output.replacingOccurrences(
+            of: #"(?i)\{\{\s*scene_tail\(\s*chars\s*=\s*\d+\s*\)\s*\}\}"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        output = output.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func utf16Prefix(_ text: String, maxChars: Int) -> String {

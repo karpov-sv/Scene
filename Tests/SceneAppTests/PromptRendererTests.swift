@@ -110,4 +110,26 @@ final class PromptRendererTests: XCTestCase {
         XCTAssertTrue(result.warnings.contains("Unknown template variable `{{missing}}`."))
         XCTAssertTrue(result.warnings.contains("Unknown template function `{{unknown_fn(...)}}`."))
     }
+
+    func testTemplateCharsMetadataIsRemovedFromRenderedText() {
+        let context = PromptRenderer.Context(sceneFullText: "abcdef")
+
+        let result = renderer.render(
+            template: "SCENE_TAIL (chars=2400): {{scene_tail(chars=4)}}",
+            context: context
+        )
+
+        XCTAssertEqual(result.renderedText, "SCENE_TAIL: cdef")
+    }
+
+    func testTemplateCharsAttributeIsRemovedFromRenderedText() {
+        let context = PromptRenderer.Context(sceneFullText: "abcdef")
+
+        let result = renderer.render(
+            template: "<SCENE_TAIL chars=\"2400\">{{scene_tail(chars=4)}}</SCENE_TAIL>",
+            context: context
+        )
+
+        XCTAssertEqual(result.renderedText, "<SCENE_TAIL>cdef</SCENE_TAIL>")
+    }
 }
