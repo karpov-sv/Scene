@@ -700,6 +700,15 @@ struct EditorView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .help("Regenerate the last inline-generated text segment.")
+
+                        Button {
+                            store.acceptLastInlineProseGeneration()
+                        } label: {
+                            Label("Accept", systemImage: "checkmark")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Keep generated text and dismiss overlay controls.")
                     }
                     .padding(.trailing, 10)
                     .padding(.bottom, store.isGenerationPanelVisible ? 10 : 36)
@@ -1628,9 +1637,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 let shouldScrollToBottom = shouldAutoScrollExternalUpdates && streamingScrollMode == .followBottom
                 let preserveSelectionDuringStreaming = shouldAutoScrollExternalUpdates && streamingScrollMode == .preserveViewport
 
-                applyExternalTextDelta(
+                applyExternalAttributedDelta(
                     to: textView,
-                    newText: plainText,
+                    newContent: Self.makeAttributedContent(plainText: plainText, richTextData: richTextData),
                     moveCaretToEnd: shouldScrollToBottom,
                     preserveSelection: preserveSelectionDuringStreaming
                 )
@@ -2465,9 +2474,9 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             return ranges.count
         }
 
-        private func applyExternalTextDelta(
+        private func applyExternalAttributedDelta(
             to textView: NSTextView,
-            newText: String,
+            newContent: NSAttributedString,
             moveCaretToEnd: Bool,
             preserveSelection: Bool
         ) {
@@ -2475,7 +2484,7 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
             let previousSelection = clampedRangeForStorage(textView.selectedRange(), textView: textView)
 
             let currentString = textView.string as NSString
-            let targetString = newText as NSString
+            let targetString = newContent.string as NSString
             let currentLength = currentString.length
             let targetLength = targetString.length
 
@@ -2501,18 +2510,14 @@ private struct SceneRichTextEditorView: NSViewRepresentable {
                 location: commonPrefix,
                 length: targetLength - commonPrefix - commonSuffix
             )
-            let replacementText = targetString.substring(with: insertedRange)
+            let replacementAttributedText = insertedRange.length > 0
+                ? newContent.attributedSubstring(from: insertedRange)
+                : NSAttributedString()
+            let replacementText = replacementAttributedText.string
 
             guard textView.shouldChangeText(in: replacedRange, replacementString: replacementText) else {
                 return
             }
-
-            let replacementAttributes = baseAttributesForReplacement(in: replacedRange, textView: textView)
-
-            let replacementAttributedText = NSAttributedString(
-                string: replacementText,
-                attributes: replacementAttributes
-            )
 
             textStorage.beginEditing()
             textStorage.replaceCharacters(in: replacedRange, with: replacementAttributedText)

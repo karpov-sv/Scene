@@ -645,7 +645,7 @@ final class AppStore: ObservableObject {
     private var documentSaveInProgress: Bool = false
     private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
-    private var inlineProseRegenerationState: InlineProseRegenerationState?
+    @Published private var inlineProseRegenerationState: InlineProseRegenerationState?
     private var proseInsertionAnchor: ProseInsertionAnchor?
     private var toastDismissTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -3912,6 +3912,11 @@ final class AppStore: ObservableObject {
         generationStatus = "Generation undone."
         proseLiveUsage = nil
         saveProject(debounced: true)
+    }
+
+    func acceptLastInlineProseGeneration() {
+        guard !isGenerating else { return }
+        inlineProseRegenerationState = nil
     }
 
     func dismissProseGenerationReview() {
@@ -10227,18 +10232,30 @@ final class AppStore: ObservableObject {
     }
 
     private func makeGeneratedMarkdownAttributedText(from text: String, baseFont: NSFont) -> NSAttributedString {
+        let normalizedText = normalizedGeneratedMarkdownForInsertion(text)
         let markdownOptions = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
 
-        if let parsed = try? AttributedString(markdown: text, options: markdownOptions) {
+        if let parsed = try? AttributedString(markdown: normalizedText, options: markdownOptions) {
             return normalizeMarkdownFonts(
                 NSAttributedString(parsed),
                 baseFont: baseFont
             )
         }
 
-        return NSAttributedString(string: text, attributes: [.font: baseFont])
+        return NSAttributedString(string: normalizedText, attributes: [.font: baseFont])
+    }
+
+    private func normalizedGeneratedMarkdownForInsertion(_ text: String) -> String {
+        let normalizedLineEndings = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        return normalizedLineEndings.replacingOccurrences(
+            of: #"\n[ \t]*\n+"#,
+            with: "\n",
+            options: .regularExpression
+        )
     }
 
     private func normalizeMarkdownFonts(_ attributed: NSAttributedString, baseFont: NSFont) -> NSAttributedString {
