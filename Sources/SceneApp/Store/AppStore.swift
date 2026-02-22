@@ -457,6 +457,16 @@ final class AppStore: ObservableObject {
         let text: String
     }
 
+    private struct InlineProseRegenerationState {
+        let sceneID: UUID
+        let request: TextGenerationRequest
+        let originalSceneContent: String
+        let originalSceneRichTextData: Data?
+        let baseContent: String
+        let baseRichTextData: Data?
+        var generatedText: String
+    }
+
     struct TaskNotificationToast: Identifiable, Equatable {
         enum Style: Equatable {
             case progress
@@ -550,6 +560,7 @@ final class AppStore: ObservableObject {
     private var documentSaveInProgress: Bool = false
     private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
+    private var inlineProseRegenerationState: InlineProseRegenerationState?
     private var toastDismissTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
@@ -958,6 +969,27 @@ final class AppStore: ObservableObject {
         guard !workshopIsGenerating else { return false }
         guard let session = selectedWorkshopSession else { return false }
         return session.messages.lastIndex(where: { $0.role == .user }) != nil
+    }
+
+    var canRetryLastInlineProseGeneration: Bool {
+        guard project.settings.useInlineGeneration else { return false }
+        guard !isGenerating else { return false }
+        guard let selectedSceneID,
+              let state = inlineProseRegenerationState,
+              state.sceneID == selectedSceneID else {
+            return false
+        }
+        guard let scene = selectedScene else { return false }
+        return scene.content == inlineProseRegenerationExpectedContent(for: state)
+    }
+
+    var canUndoLastInlineProseGeneration: Bool {
+        guard !isGenerating else { return false }
+        guard canRetryLastInlineProseGeneration,
+              let state = inlineProseRegenerationState else {
+            return false
+        }
+        return !state.generatedText.isEmpty
     }
 
     var canDeleteLastWorkshopAssistantMessage: Bool {
@@ -2949,6 +2981,7 @@ final class AppStore: ObservableObject {
         proseLiveUsage = nil
         proseGenerationReview = nil
         proseGenerationSessionContext = nil
+        inlineProseRegenerationState = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -3195,10 +3228,16 @@ final class AppStore: ObservableObject {
             return
         }
 
+        let previousContent = project.chapters[location.chapterIndex].scenes[location.sceneIndex].content
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = content
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
+        clearInlineProseRegenerationStateIfManualEdit(
+            sceneID: selectedSceneID,
+            previousContent: previousContent,
+            updatedContent: content
+        )
         project.rollingSceneMemoryByScene.removeValue(forKey: selectedSceneID.uuidString)
         project.rollingChapterMemoryByChapter.removeValue(
             forKey: project.chapters[location.chapterIndex].id.uuidString
@@ -3582,6 +3621,53 @@ final class AppStore: ObservableObject {
     func cancelBeatGeneration() {
         proseRequestTask?.cancel()
         generationStatus = "Cancelling..."
+    }
+
+    func retryLastInlineProseGeneration() {
+        guard proseRequestTask == nil else { return }
+        guard canRetryLastInlineProseGeneration else {
+            generationStatus = "Regeneration is unavailable."
+            return
+        }
+        guard let state = inlineProseRegenerationState else { return }
+
+        proseRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.proseRequestTask = nil
+            }
+            await self.regenerateInlineProse(using: state)
+        }
+    }
+
+    func undoLastInlineProseGeneration() {
+        guard !isGenerating else { return }
+        guard canUndoLastInlineProseGeneration else {
+            generationStatus = "Nothing to undo."
+            return
+        }
+        guard let selectedSceneID,
+              var state = inlineProseRegenerationState,
+              state.sceneID == selectedSceneID,
+              let location = sceneLocation(for: selectedSceneID) else {
+            return
+        }
+
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = state.originalSceneContent
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = state.originalSceneRichTextData
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+        project.chapters[location.chapterIndex].updatedAt = .now
+        project.rollingSceneMemoryByScene.removeValue(forKey: selectedSceneID.uuidString)
+        project.rollingChapterMemoryByChapter.removeValue(
+            forKey: project.chapters[location.chapterIndex].id.uuidString
+        )
+
+        state.generatedText = ""
+        inlineProseRegenerationState = state
+
+        generationStatus = "Generation undone."
+        proseLiveUsage = nil
+        saveProject(debounced: true)
     }
 
     func dismissProseGenerationReview() {
@@ -4949,12 +5035,32 @@ final class AppStore: ObservableObject {
         }
 
         let generationBase = makeGenerationAppendBase(for: scene.id)
+        if let base = generationBase {
+            rememberInlineProseRegenerationState(
+                sceneID: scene.id,
+                request: request,
+                originalSceneContent: scene.content,
+                originalSceneRichTextData: scene.contentRTFData,
+                base: base,
+                generated: "",
+                allowEmptyGeneratedText: true
+            )
+        }
 
         let generationPartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
             generationPartialHandler = { [weak self] partial in
                 guard let self, let base = generationBase else { return }
                 self.setGeneratedTextPreview(sceneID: scene.id, base: base, generated: partial)
+                self.rememberInlineProseRegenerationState(
+                    sceneID: scene.id,
+                    request: request,
+                    originalSceneContent: scene.content,
+                    originalSceneRichTextData: scene.contentRTFData,
+                    base: base,
+                    generated: partial,
+                    allowEmptyGeneratedText: true
+                )
                 self.generationStatus = "Streaming..."
                 self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
             }
@@ -4967,17 +5073,28 @@ final class AppStore: ObservableObject {
                 request,
                 onPartial: generationPartialHandler
             )
-            let text = result.text
-
-            if shouldUseStreaming, let base = generationBase {
-                let normalized = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                setGeneratedTextPreview(sceneID: scene.id, base: base, generated: normalized)
-            } else {
-                appendGeneratedText(text)
+            let normalized = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                throw AIServiceError.badResponse("No completion content in response")
             }
 
-            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: text)
-            generationStatus = "Generated \(text.count) characters."
+            if let base = generationBase {
+                setGeneratedTextPreview(sceneID: scene.id, base: base, generated: normalized)
+                rememberInlineProseRegenerationState(
+                    sceneID: scene.id,
+                    request: request,
+                    originalSceneContent: scene.content,
+                    originalSceneRichTextData: scene.contentRTFData,
+                    base: base,
+                    generated: normalized
+                )
+            } else {
+                appendGeneratedText(normalized)
+                clearInlineProseRegenerationState(for: scene.id)
+            }
+
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalized)
+            generationStatus = "Generated \(normalized.count) characters."
             beatInput = ""
             saveProject()
             finishTaskSuccessToast(toastID, "Generation completed.")
@@ -4990,6 +5107,93 @@ final class AppStore: ObservableObject {
             lastError = error.localizedDescription
             generationStatus = "Generation failed."
             finishTaskErrorToast(toastID, "Generation failed.")
+        }
+    }
+
+    private func regenerateInlineProse(using state: InlineProseRegenerationState) async {
+        guard project.settings.useInlineGeneration else {
+            generationStatus = "Enable inline generation to retry."
+            return
+        }
+
+        guard let location = sceneLocation(for: state.sceneID) else {
+            generationStatus = "Select a scene first."
+            return
+        }
+        let sceneContentAtRunStart = project.chapters[location.chapterIndex].scenes[location.sceneIndex].content
+        let sceneRichTextDataAtRunStart = project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData
+
+        let base = GenerationAppendBase(
+            content: state.baseContent,
+            richTextData: state.baseRichTextData
+        )
+        let request = state.request
+
+        proseGenerationReview = nil
+        proseGenerationSessionContext = nil
+        isGenerating = true
+        generationStatus = shouldUseStreaming ? "Re-streaming..." : "Regenerating..."
+        proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
+        let toastID = startTaskProgressToast("Regenerating text…")
+
+        defer {
+            isGenerating = false
+        }
+
+        let generationPartialHandler: (@MainActor (String) -> Void)?
+        if shouldUseStreaming {
+            generationPartialHandler = { [weak self] partial in
+                guard let self else { return }
+                self.setGeneratedTextPreview(sceneID: state.sceneID, base: base, generated: partial)
+                self.rememberInlineProseRegenerationState(
+                    sceneID: state.sceneID,
+                    request: request,
+                    originalSceneContent: sceneContentAtRunStart,
+                    originalSceneRichTextData: sceneRichTextDataAtRunStart,
+                    base: base,
+                    generated: partial,
+                    allowEmptyGeneratedText: true
+                )
+                self.generationStatus = "Re-streaming..."
+                self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
+            }
+        } else {
+            generationPartialHandler = nil
+        }
+
+        do {
+            let result = try await generateTextResult(
+                request,
+                onPartial: generationPartialHandler
+            )
+            let normalized = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                throw AIServiceError.badResponse("No completion content in response")
+            }
+
+            setGeneratedTextPreview(sceneID: state.sceneID, base: base, generated: normalized)
+            rememberInlineProseRegenerationState(
+                sceneID: state.sceneID,
+                request: request,
+                originalSceneContent: sceneContentAtRunStart,
+                originalSceneRichTextData: sceneRichTextDataAtRunStart,
+                base: base,
+                generated: normalized
+            )
+
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalized)
+            generationStatus = "Regenerated \(normalized.count) characters."
+            saveProject()
+            finishTaskSuccessToast(toastID, "Regeneration completed.")
+        } catch is CancellationError {
+            generationStatus = "Generation cancelled."
+            saveProject()
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
+        } catch {
+            proseLiveUsage = nil
+            lastError = error.localizedDescription
+            generationStatus = "Generation failed."
+            finishTaskErrorToast(toastID, "Regeneration failed.")
         }
     }
 
@@ -5802,6 +6006,7 @@ final class AppStore: ObservableObject {
         proseLiveUsage = nil
         proseGenerationReview = nil
         proseGenerationSessionContext = nil
+        inlineProseRegenerationState = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
         isDiscoveringModels = false
@@ -9113,6 +9318,66 @@ final class AppStore: ObservableObject {
     private struct GeneratedSceneContent {
         let content: String
         let richTextData: Data?
+    }
+
+    private func inlineProseRegenerationExpectedContent(
+        for state: InlineProseRegenerationState
+    ) -> String {
+        if state.generatedText.isEmpty {
+            return state.originalSceneContent
+        }
+
+        let base = GenerationAppendBase(
+            content: state.baseContent,
+            richTextData: state.baseRichTextData
+        )
+        return buildGeneratedSceneContent(base: base, generated: state.generatedText).content
+    }
+
+    private func rememberInlineProseRegenerationState(
+        sceneID: UUID,
+        request: TextGenerationRequest,
+        originalSceneContent: String,
+        originalSceneRichTextData: Data?,
+        base: GenerationAppendBase,
+        generated: String,
+        allowEmptyGeneratedText: Bool = false
+    ) {
+        let storedGenerated: String
+        if allowEmptyGeneratedText {
+            storedGenerated = generated
+        } else {
+            let normalized = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                clearInlineProseRegenerationState(for: sceneID)
+                return
+            }
+            storedGenerated = normalized
+        }
+
+        inlineProseRegenerationState = InlineProseRegenerationState(
+            sceneID: sceneID,
+            request: request,
+            originalSceneContent: originalSceneContent,
+            originalSceneRichTextData: originalSceneRichTextData,
+            baseContent: base.content,
+            baseRichTextData: base.richTextData,
+            generatedText: storedGenerated
+        )
+    }
+
+    private func clearInlineProseRegenerationState(for sceneID: UUID) {
+        guard inlineProseRegenerationState?.sceneID == sceneID else { return }
+        inlineProseRegenerationState = nil
+    }
+
+    private func clearInlineProseRegenerationStateIfManualEdit(
+        sceneID: UUID,
+        previousContent: String,
+        updatedContent: String
+    ) {
+        guard previousContent != updatedContent else { return }
+        clearInlineProseRegenerationState(for: sceneID)
     }
 
     private func appendGeneratedText(_ generatedText: String) {

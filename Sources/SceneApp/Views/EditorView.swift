@@ -666,6 +666,32 @@ struct EditorView: View {
             store.updateSelectedSceneContent(plainText, richTextData: richTextData)
         }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottomTrailing) {
+                if store.canRetryLastInlineProseGeneration {
+                    HStack(spacing: 6) {
+                        Button {
+                            store.undoLastInlineProseGeneration()
+                        } label: {
+                            Label("Undo", systemImage: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(!store.canUndoLastInlineProseGeneration)
+                        .help("Undo the generated text segment.")
+
+                        Button {
+                            store.retryLastInlineProseGeneration()
+                        } label: {
+                            Label("Regenerate", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Regenerate the last inline-generated text segment.")
+                    }
+                    .padding(.trailing, 10)
+                    .padding(.bottom, store.isGenerationPanelVisible ? 10 : 36)
+                }
+            }
     }
 
     private var generationPanel: some View {
