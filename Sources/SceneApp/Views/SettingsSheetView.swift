@@ -219,6 +219,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var cleanUpCaretInsertionEchoesBinding: Binding<Bool> {
+        Binding(
+            get: { store.project.settings.cleanUpCaretInsertionEchoes },
+            set: { store.updateCleanUpCaretInsertionEchoes($0) }
+        )
+    }
+
     private var preferCompactPromptTemplatesBinding: Binding<Bool> {
         Binding(
             get: { store.project.settings.preferCompactPromptTemplates },
@@ -1103,6 +1110,16 @@ struct SettingsSheetView: View {
                                 .help("Generate directly into scene text using the first selected model instead of opening multi-model review.")
                         }
 
+                        HStack(spacing: 8) {
+                            Text("Cleanup caret insertion echoes")
+                            Spacer(minLength: 0)
+                            Toggle("", isOn: cleanUpCaretInsertionEchoesBinding)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .accessibilityLabel("Cleanup caret insertion echoes")
+                                .help("Trim copied BEFORE/AFTER boundary fragments from caret-insertion outputs.")
+                        }
+
                         Text("When inline generation is on, generation appends/streams directly into the scene and skips the multi-model candidate review.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -1678,6 +1695,10 @@ struct SettingsSheetView: View {
                 .init(token: "{{scene_summary}}", meaning: "Current scene summary text (user-written or generated)."),
                 .init(token: "{{scene}}", meaning: "Current scene excerpt for continuity."),
                 .init(token: "{{scene_tail(chars=2400)}}", meaning: "Tail of full scene text; `chars` is configurable (recommended range: ~1200-3000)."),
+                .init(token: "{{scene_before_caret}} / {{scene_after_caret}}", meaning: "Small left/right windows around insertion caret (empty when appending at scene end)."),
+                .init(token: "{{scene_caret_window}}", meaning: "Combined before/after-caret block for insertion-aware prompts."),
+                .init(token: "{{scene_insertion_block}}", meaning: "Standalone insertion guidance + before/after-caret context block (empty when appending at scene end)."),
+                .init(token: "{{is_caret_insertion}}", meaning: "`true` when generating in the middle of scene; otherwise `false`."),
                 .init(token: "{{state}}", meaning: "Structured scene-local narrative state block with only filled values."),
                 .init(token: "{{state_pov}} / {{state_tense}} / {{state_location}}", meaning: "Scene-local narrative state fields."),
                 .init(token: "{{state_time}} / {{state_goal}} / {{state_emotion}}", meaning: "Scene-local narrative state fields."),

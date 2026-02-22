@@ -340,6 +340,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{state}}
 	        <BEAT>{{beat}}</BEAT>
 	        <SCENE_TAIL chars="2400">{{scene_tail(chars=2400)}}</SCENE_TAIL>
+	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
 	        systemTemplate: """
@@ -370,6 +371,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
 	        <SCENE_TAIL chars="2000">{{scene_tail(chars=2000)}}</SCENE_TAIL>
+	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
 	        systemTemplate: """
@@ -400,6 +402,7 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
 	        <OPTIONAL_GUIDANCE>{{beat}}</OPTIONAL_GUIDANCE>
 	        <EXISTING_SCENE_TAIL chars="2600">{{scene_tail(chars=2600)}}</EXISTING_SCENE_TAIL>
+	        {{scene_insertion_block}}
 	        <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
 	        """,
 	        systemTemplate: """
@@ -586,6 +589,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{scene_tail(chars=2400)}}
 	        >>>
 
+	        {{scene_insertion_block}}
+
 	        CONTEXT_BACKGROUND:
 	        <<<
 	        {{context}}
@@ -633,6 +638,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        {{scene_tail(chars=2000)}}
 	        >>>
 
+	        {{scene_insertion_block}}
+
 	        CONTEXT_BACKGROUND:
 	        <<<
 	        {{context}}
@@ -679,6 +686,8 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
 	        <<<
 	        {{scene_tail(chars=2600)}}
 	        >>>
+
+	        {{scene_insertion_block}}
 
 	        CONTEXT_BACKGROUND:
 	        <<<
@@ -1155,6 +1164,7 @@ struct GenerationSettings: Codable, Equatable {
     var generationModelSelection: [String]
     var useInlineGeneration: Bool
     var inlineGenerationMode: InlineGenerationMode
+    var cleanUpCaretInsertionEchoes: Bool
     var markRewrittenTextAsItalics: Bool
     var incrementalRewrite: Bool
     var preferCompactPromptTemplates: Bool
@@ -1182,6 +1192,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: [String],
         useInlineGeneration: Bool,
         inlineGenerationMode: InlineGenerationMode,
+        cleanUpCaretInsertionEchoes: Bool,
         markRewrittenTextAsItalics: Bool,
         incrementalRewrite: Bool,
         preferCompactPromptTemplates: Bool,
@@ -1202,6 +1213,7 @@ struct GenerationSettings: Codable, Equatable {
         self.generationModelSelection = generationModelSelection
         self.useInlineGeneration = useInlineGeneration
         self.inlineGenerationMode = inlineGenerationMode
+        self.cleanUpCaretInsertionEchoes = cleanUpCaretInsertionEchoes
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.incrementalRewrite = incrementalRewrite
         self.preferCompactPromptTemplates = preferCompactPromptTemplates
@@ -1224,6 +1236,7 @@ struct GenerationSettings: Codable, Equatable {
         case generationModelSelection
         case useInlineGeneration
         case inlineGenerationMode
+        case cleanUpCaretInsertionEchoes
         case markRewrittenTextAsItalics
         case incrementalRewrite
         case preferCompactPromptTemplates
@@ -1261,6 +1274,7 @@ struct GenerationSettings: Codable, Equatable {
         }
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
         inlineGenerationMode = try container.decodeIfPresent(InlineGenerationMode.self, forKey: .inlineGenerationMode) ?? .variants
+        cleanUpCaretInsertionEchoes = try container.decodeIfPresent(Bool.self, forKey: .cleanUpCaretInsertionEchoes) ?? true
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
         preferCompactPromptTemplates = try container.decodeIfPresent(Bool.self, forKey: .preferCompactPromptTemplates) ?? false
@@ -1286,6 +1300,7 @@ struct GenerationSettings: Codable, Equatable {
         generationModelSelection: ["gpt-4o-mini"],
         useInlineGeneration: false,
         inlineGenerationMode: .variants,
+        cleanUpCaretInsertionEchoes: true,
         markRewrittenTextAsItalics: true,
         incrementalRewrite: false,
         preferCompactPromptTemplates: false,

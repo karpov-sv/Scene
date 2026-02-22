@@ -110,6 +110,10 @@ final class AppStore: ObservableObject {
     private static let projectTransferType = "scene-project"
     private static let builtInPromptIDs = Set(PromptTemplate.builtInTemplates.map(\.id))
     private static let proseSceneTailChars = 2400
+    private static let proseCaretLeftContextChars = 1600
+    private static let proseCaretRightContextChars = 700
+    private static let proseInsertionEchoScanChars = 1200
+    private static let proseInsertionEchoMinChars = 24
     private static let rewriteSceneContextChars = 2200
     private static let summarySourceChars = 2800
     private static let workshopSceneTailChars = 1800
@@ -465,6 +469,17 @@ final class AppStore: ObservableObject {
     private struct ChapterMemorySourceChunk {
         let label: String
         let text: String
+    }
+
+    private struct ProseInsertionContext {
+        let prefix: String
+        let suffix: String
+    }
+
+    private struct ProseCaretWindowContext {
+        let before: String
+        let after: String
+        let combined: String
     }
 
     private struct ProseInsertionAnchor {
@@ -2384,6 +2399,12 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func updateCleanUpCaretInsertionEchoes(_ enabled: Bool) {
+        guard project.settings.cleanUpCaretInsertionEchoes != enabled else { return }
+        project.settings.cleanUpCaretInsertionEchoes = enabled
+        saveProject(debounced: true)
+    }
+
     func updateMarkRewrittenTextAsItalics(_ enabled: Bool) {
         guard project.settings.markRewrittenTextAsItalics != enabled else { return }
         project.settings.markRewrittenTextAsItalics = enabled
@@ -3770,15 +3791,16 @@ final class AppStore: ObservableObject {
             return
         }
 
-        let normalized = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
-            generationStatus = "No variant text to insert."
-            return
-        }
-
         let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
         guard let base = makeGenerationAppendBase(for: selectedSceneID) else {
             generationStatus = "Scene not found."
+            return
+        }
+
+        let normalized = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = sanitizedGeneratedInsertionText(normalized, base: base)
+        guard !sanitized.isEmpty else {
+            generationStatus = "No variant text to insert."
             return
         }
 
@@ -3788,11 +3810,11 @@ final class AppStore: ObservableObject {
             originalSceneContent: scene.content,
             originalSceneRichTextData: scene.contentRTFData,
             base: base,
-            generated: normalized
+            generated: sanitized
         )
-        setGeneratedTextPreview(sceneID: selectedSceneID, base: base, generated: normalized)
+        setGeneratedTextPreview(sceneID: selectedSceneID, base: base, generated: sanitized)
 
-        proseLiveUsage = normalizedTokenUsage(from: candidate.usage, request: state.request, response: normalized)
+        proseLiveUsage = normalizedTokenUsage(from: candidate.usage, request: state.request, response: sanitized)
         generationStatus = "Inserted variant."
         beatInput = ""
         inlineVariantGeneration = nil
@@ -5404,23 +5426,30 @@ final class AppStore: ObservableObject {
                 throw AIServiceError.badResponse("No completion content in response")
             }
 
+            let insertedText: String
             if let base = generationBase {
-                setGeneratedTextPreview(sceneID: scene.id, base: base, generated: normalized)
+                let sanitized = sanitizedGeneratedInsertionText(normalized, base: base)
+                guard !sanitized.isEmpty else {
+                    throw AIServiceError.badResponse("No completion content in response")
+                }
+                insertedText = sanitized
+                setGeneratedTextPreview(sceneID: scene.id, base: base, generated: sanitized)
                 rememberInlineProseRegenerationState(
                     sceneID: scene.id,
                     request: request,
                     originalSceneContent: scene.content,
                     originalSceneRichTextData: scene.contentRTFData,
                     base: base,
-                    generated: normalized
+                    generated: sanitized
                 )
             } else {
+                insertedText = normalized
                 appendGeneratedText(normalized)
                 clearInlineProseRegenerationState(for: scene.id)
             }
 
-            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalized)
-            generationStatus = "Generated \(normalized.count) characters."
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: insertedText)
+            generationStatus = "Generated \(insertedText.count) characters."
             beatInput = ""
             saveProject()
             finishTaskSuccessToast(toastID, "Generation completed.")
@@ -5499,18 +5528,23 @@ final class AppStore: ObservableObject {
                 throw AIServiceError.badResponse("No completion content in response")
             }
 
-            setGeneratedTextPreview(sceneID: state.sceneID, base: base, generated: normalized)
+            let sanitized = sanitizedGeneratedInsertionText(normalized, base: base)
+            guard !sanitized.isEmpty else {
+                throw AIServiceError.badResponse("No completion content in response")
+            }
+
+            setGeneratedTextPreview(sceneID: state.sceneID, base: base, generated: sanitized)
             rememberInlineProseRegenerationState(
                 sceneID: state.sceneID,
                 request: request,
                 originalSceneContent: sceneContentAtRunStart,
                 originalSceneRichTextData: sceneRichTextDataAtRunStart,
                 base: base,
-                generated: normalized
+                generated: sanitized
             )
 
-            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: normalized)
-            generationStatus = "Regenerated \(normalized.count) characters."
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: sanitized)
+            generationStatus = "Regenerated \(sanitized.count) characters."
             saveProject()
             finishTaskSuccessToast(toastID, "Regeneration completed.")
         } catch is CancellationError {
@@ -5737,9 +5771,12 @@ final class AppStore: ObservableObject {
         modelOverride: String? = nil
     ) -> PromptRequestBuildResult {
         let activePrompt = activeProsePrompt ?? defaultPromptTemplate(for: .prose)
-        let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
-        let proseContextSource = proseInsertionContextSource(for: scene)
+        let insertionContext = proseInsertionContext(for: scene)
+        let proseContextSource = insertionContext.prefix
         let sceneContext = String(proseContextSource.suffix(Self.proseSceneTailChars))
+        let caretWindow = proseCaretWindowContext(for: insertionContext)
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
+        let insertionBlock = proseInsertionDirectiveBlock(for: caretWindow)
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let promptResult = renderPromptTemplate(
@@ -5758,13 +5795,21 @@ final class AppStore: ObservableObject {
             summaryScope: "",
             source: sceneContext,
             extraVariables: [
-                "scene_summary": sceneSummary
+                "scene_summary": sceneSummary,
+                "scene_before_caret": caretWindow?.before ?? "",
+                "scene_after_caret": caretWindow?.after ?? "",
+                "scene_caret_window": caretWindow?.combined ?? "",
+                "scene_insertion_block": insertionBlock,
+                "is_caret_insertion": caretWindow == nil ? "false" : "true"
             ]
         )
 
-        let systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        var systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? project.settings.defaultSystemPrompt
             : activePrompt.systemTemplate
+        if caretWindow != nil {
+            systemPrompt += "\n\n\(proseInsertionSystemPromptRules)"
+        }
 
         let fallbackModel = resolvedPrimaryModel()
         let selectedModel = modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -5783,15 +5828,106 @@ final class AppStore: ObservableObject {
         )
     }
 
-    private func proseInsertionContextSource(for scene: Scene) -> String {
+    private func proseInsertionContext(for scene: Scene) -> ProseInsertionContext {
         guard let anchor = proseInsertionAnchor, anchor.sceneID == scene.id else {
-            return scene.content
+            return ProseInsertionContext(prefix: scene.content, suffix: "")
         }
 
         let sceneText = scene.content as NSString
         let insertionLocation = min(max(0, anchor.utf16Location), sceneText.length)
-        guard insertionLocation > 0 else { return "" }
-        return sceneText.substring(to: insertionLocation)
+        let prefix = insertionLocation > 0 ? sceneText.substring(to: insertionLocation) : ""
+        let suffixLength = max(0, sceneText.length - insertionLocation)
+        let suffix = suffixLength > 0
+            ? sceneText.substring(with: NSRange(location: insertionLocation, length: suffixLength))
+            : ""
+        return ProseInsertionContext(prefix: prefix, suffix: suffix)
+    }
+
+    private func proseCaretWindowContext(for insertion: ProseInsertionContext) -> ProseCaretWindowContext? {
+        let normalizedSuffix = insertion.suffix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSuffix.isEmpty else { return nil }
+
+        let before = utf16Suffix(insertion.prefix, maxChars: Self.proseCaretLeftContextChars)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let after = utf16Prefix(insertion.suffix, maxChars: Self.proseCaretRightContextChars)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !before.isEmpty || !after.isEmpty else { return nil }
+
+        var sections: [String] = []
+        if !before.isEmpty {
+            sections.append("Before caret:\n\(before)")
+        }
+        if !after.isEmpty {
+            sections.append("After caret:\n\(after)")
+        }
+
+        return ProseCaretWindowContext(
+            before: before,
+            after: after,
+            combined: sections.joined(separator: "\n\n")
+        )
+    }
+
+    private func proseInsertionDirectiveBlock(for caretWindow: ProseCaretWindowContext?) -> String {
+        guard let caretWindow else { return "" }
+
+        if project.settings.preferCompactPromptTemplates {
+            return """
+            INSERT_AT_CARET:
+            INSTRUCTION:
+            <<<
+            Generate only the new inserted passage between BEFORE_CARET and AFTER_CARET. Preserve continuity and flow. Do not repeat, quote, paraphrase, or include text from BEFORE_CARET or AFTER_CARET in the output. Return only newly generated insertion text.
+            >>>
+
+            BEFORE_CARET:
+            <<<
+            \(caretWindow.before)
+            >>>
+
+            AFTER_CARET:
+            <<<
+            \(caretWindow.after)
+            >>>
+            """
+        }
+
+        return """
+        <INSERT_AT_CARET>
+        <INSTRUCTION>Generate only the new inserted passage between BEFORE_CARET and AFTER_CARET. Preserve continuity and flow. Do not repeat, quote, paraphrase, or include text from BEFORE_CARET or AFTER_CARET in the output. Return only newly generated insertion text.</INSTRUCTION>
+        <BEFORE_CARET>
+        \(caretWindow.before)
+        </BEFORE_CARET>
+        <AFTER_CARET>
+        \(caretWindow.after)
+        </AFTER_CARET>
+        </INSERT_AT_CARET>
+        """
+    }
+
+    private var proseInsertionSystemPromptRules: String {
+        """
+        Insertion mode rules:
+        - If INSERT_AT_CARET is present, BEFORE_CARET and AFTER_CARET are immutable boundaries.
+        - Return only newly generated insertion text intended to go between these boundaries.
+        - Do not repeat, quote, paraphrase, or include text from BEFORE_CARET or AFTER_CARET.
+        - Do not return labels, tags, or explanations.
+        """
+    }
+
+    private func utf16Prefix(_ text: String, maxChars: Int) -> String {
+        guard maxChars > 0 else { return "" }
+        let nsText = text as NSString
+        let length = min(nsText.length, maxChars)
+        guard length > 0 else { return "" }
+        return nsText.substring(with: NSRange(location: 0, length: length))
+    }
+
+    private func utf16Suffix(_ text: String, maxChars: Int) -> String {
+        guard maxChars > 0 else { return "" }
+        let nsText = text as NSString
+        let length = min(nsText.length, maxChars)
+        guard length > 0 else { return "" }
+        return nsText.substring(with: NSRange(location: nsText.length - length, length: length))
     }
 
     private func makeRewriteRequest(
@@ -9846,12 +9982,57 @@ final class AppStore: ObservableObject {
         }
 
         let trimmedIncoming = generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedIncoming.isEmpty else { return }
+        let sanitizedIncoming = sanitizedGeneratedInsertionText(trimmedIncoming, base: base)
+        guard !sanitizedIncoming.isEmpty else { return }
 
-        let updatedContent = buildGeneratedSceneContent(base: base, generated: trimmedIncoming)
+        let updatedContent = buildGeneratedSceneContent(base: base, generated: sanitizedIncoming)
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = updatedContent.content
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = updatedContent.richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+    }
+
+    private func sanitizedGeneratedInsertionText(_ generated: String, base: GenerationAppendBase) -> String {
+        let trimmed = generated.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard project.settings.cleanUpCaretInsertionEchoes else { return trimmed }
+        guard !base.trailingContent.isEmpty else { return trimmed }
+
+        var output = trimmed
+        output = trimmingLeadingInsertionEcho(in: output, matchingSuffixOf: base.content)
+        output = trimmingTrailingInsertionEcho(in: output, matchingPrefixOf: base.trailingContent)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func trimmingLeadingInsertionEcho(in text: String, matchingSuffixOf source: String) -> String {
+        let nsText = text as NSString
+        let nsSource = source as NSString
+        let maxOverlap = min(nsText.length, nsSource.length, Self.proseInsertionEchoScanChars)
+        guard maxOverlap >= Self.proseInsertionEchoMinChars else { return text }
+
+        for length in stride(from: maxOverlap, through: Self.proseInsertionEchoMinChars, by: -1) {
+            let sourceRange = NSRange(location: nsSource.length - length, length: length)
+            let textRange = NSRange(location: 0, length: length)
+            if nsSource.substring(with: sourceRange) == nsText.substring(with: textRange) {
+                return nsText.substring(from: length)
+            }
+        }
+        return text
+    }
+
+    private func trimmingTrailingInsertionEcho(in text: String, matchingPrefixOf source: String) -> String {
+        let nsText = text as NSString
+        let nsSource = source as NSString
+        let maxOverlap = min(nsText.length, nsSource.length, Self.proseInsertionEchoScanChars)
+        guard maxOverlap >= Self.proseInsertionEchoMinChars else { return text }
+
+        for length in stride(from: maxOverlap, through: Self.proseInsertionEchoMinChars, by: -1) {
+            let textRange = NSRange(location: nsText.length - length, length: length)
+            let sourceRange = NSRange(location: 0, length: length)
+            if nsText.substring(with: textRange) == nsSource.substring(with: sourceRange) {
+                return nsText.substring(to: nsText.length - length)
+            }
+        }
+        return text
     }
 
     private func makeGenerationAppendBase(for sceneID: UUID) -> GenerationAppendBase? {
