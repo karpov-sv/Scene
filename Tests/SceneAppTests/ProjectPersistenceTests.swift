@@ -50,6 +50,16 @@ final class ProjectPersistenceTests: XCTestCase {
             XCTAssertEqual(loaded.sceneContextCompendiumSelection, fixture.project.sceneContextCompendiumSelection)
             XCTAssertEqual(loaded.sceneContextSceneSummarySelection, fixture.project.sceneContextSceneSummarySelection)
             XCTAssertEqual(loaded.sceneContextChapterSummarySelection, fixture.project.sceneContextChapterSummarySelection)
+            XCTAssertEqual(loaded.storyGraphEdges.count, fixture.project.storyGraphEdges.count)
+            for (loadedEdge, fixtureEdge) in zip(loaded.storyGraphEdges, fixture.project.storyGraphEdges) {
+                XCTAssertEqual(loadedEdge.id, fixtureEdge.id)
+                XCTAssertEqual(loadedEdge.fromCompendiumID, fixtureEdge.fromCompendiumID)
+                XCTAssertEqual(loadedEdge.toCompendiumID, fixtureEdge.toCompendiumID)
+                XCTAssertEqual(loadedEdge.relation, fixtureEdge.relation)
+                XCTAssertEqual(loadedEdge.weight, fixtureEdge.weight, accuracy: 0.0001)
+                XCTAssertEqual(loadedEdge.note, fixtureEdge.note)
+                XCTAssertEqual(loadedEdge.updatedAt.timeIntervalSince1970, fixtureEdge.updatedAt.timeIntervalSince1970, accuracy: 1.0)
+            }
             XCTAssertEqual(loaded.workshopSessions.count, fixture.project.workshopSessions.count)
             for (loadedSession, fixtureSession) in zip(loaded.workshopSessions, fixture.project.workshopSessions) {
                 XCTAssertEqual(loadedSession.id, fixtureSession.id)

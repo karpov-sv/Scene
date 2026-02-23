@@ -135,6 +135,16 @@ enum SceneTestFixtures {
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
             sceneNarrativeStates: [:],
+            storyGraphEdges: [
+                StoryGraphEdge(
+                    id: UUID(uuidString: "00000000-0000-0000-0000-000000000941")!,
+                    fromCompendiumID: compendiumTitleEntryID,
+                    toCompendiumID: compendiumBodyEntryID,
+                    relation: .reveals,
+                    weight: 0.7,
+                    note: "Hero uncovers hidden lore."
+                )
+            ],
             rollingWorkshopMemoryBySession: [:],
             rollingSceneMemoryByScene: [
                 sceneTwoID.uuidString: RollingSceneMemory(summary: "scene memory", sourceContentHash: "hash")

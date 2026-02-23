@@ -290,6 +290,73 @@ struct CompendiumEntry: Codable, Identifiable, Equatable {
     }
 }
 
+enum StoryGraphRelation: String, Codable, CaseIterable, Equatable, Identifiable {
+    case causes
+    case reveals
+    case contradicts
+    case escalates
+    case echoes
+    case misleads
+    case symbolizes
+    case blocks
+    case enables
+
+    var id: String { rawValue }
+
+    var label: String {
+        rawValue.uppercased()
+    }
+}
+
+struct StoryGraphEdge: Codable, Identifiable, Equatable {
+    var id: UUID
+    var fromCompendiumID: UUID
+    var toCompendiumID: UUID
+    var relation: StoryGraphRelation
+    var weight: Double
+    var note: String
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        fromCompendiumID: UUID,
+        toCompendiumID: UUID,
+        relation: StoryGraphRelation,
+        weight: Double = 1.0,
+        note: String = "",
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.fromCompendiumID = fromCompendiumID
+        self.toCompendiumID = toCompendiumID
+        self.relation = relation
+        self.weight = min(max(weight, 0), 1)
+        self.note = note
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case fromCompendiumID
+        case toCompendiumID
+        case relation
+        case weight
+        case note
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        fromCompendiumID = try container.decode(UUID.self, forKey: .fromCompendiumID)
+        toCompendiumID = try container.decode(UUID.self, forKey: .toCompendiumID)
+        relation = try container.decodeIfPresent(StoryGraphRelation.self, forKey: .relation) ?? .causes
+        weight = min(max(try container.decodeIfPresent(Double.self, forKey: .weight) ?? 1.0, 0), 1)
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+}
+
 	struct PromptTemplate: Codable, Identifiable, Equatable {
     var id: UUID
     var category: PromptCategory
@@ -1465,6 +1532,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
     var sceneNarrativeStates: [String: SceneNarrativeState]
+    var storyGraphEdges: [StoryGraphEdge]
     var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]
     var rollingSceneMemoryByScene: [String: RollingSceneMemory]
     var rollingChapterMemoryByChapter: [String: RollingChapterMemory]
@@ -1494,6 +1562,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
         sceneNarrativeStates: [String: SceneNarrativeState],
+        storyGraphEdges: [StoryGraphEdge],
         rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory],
         rollingSceneMemoryByScene: [String: RollingSceneMemory],
         rollingChapterMemoryByChapter: [String: RollingChapterMemory],
@@ -1522,6 +1591,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
         self.sceneNarrativeStates = sceneNarrativeStates
+        self.storyGraphEdges = storyGraphEdges
         self.rollingWorkshopMemoryBySession = rollingWorkshopMemoryBySession
         self.rollingSceneMemoryByScene = rollingSceneMemoryByScene
         self.rollingChapterMemoryByChapter = rollingChapterMemoryByChapter
@@ -1552,6 +1622,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
         case sceneNarrativeStates
+        case storyGraphEdges
         case rollingWorkshopMemoryBySession
         case rollingSceneMemoryByScene
         case rollingChapterMemoryByChapter
@@ -1584,6 +1655,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
         sceneNarrativeStates = try container.decodeIfPresent([String: SceneNarrativeState].self, forKey: .sceneNarrativeStates) ?? [:]
+        storyGraphEdges = try container.decodeIfPresent([StoryGraphEdge].self, forKey: .storyGraphEdges) ?? []
         rollingWorkshopMemoryBySession = try container.decodeIfPresent([String: RollingWorkshopMemory].self, forKey: .rollingWorkshopMemoryBySession) ?? [:]
         rollingSceneMemoryByScene = try container.decodeIfPresent([String: RollingSceneMemory].self, forKey: .rollingSceneMemoryByScene) ?? [:]
         rollingChapterMemoryByChapter = try container.decodeIfPresent([String: RollingChapterMemory].self, forKey: .rollingChapterMemoryByChapter) ?? [:]
@@ -1646,6 +1718,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],
             sceneNarrativeStates: [:],
+            storyGraphEdges: [],
             rollingWorkshopMemoryBySession: [:],
             rollingSceneMemoryByScene: [:],
             rollingChapterMemoryByChapter: [:],

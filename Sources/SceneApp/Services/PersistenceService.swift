@@ -360,6 +360,7 @@ final class ProjectPersistence {
         var sceneContextSceneSummarySelection: [String: [UUID]]?
         var sceneContextChapterSummarySelection: [String: [UUID]]?
         var sceneNarrativeStates: [String: SceneNarrativeState]?
+        var storyGraphEdges: [StoryGraphEdge]?
         var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]?
         var rollingSceneMemoryByScene: [String: RollingSceneMemory]?
         var rollingChapterMemoryByChapter: [String: RollingChapterMemory]?
@@ -664,6 +665,7 @@ final class ProjectPersistence {
             sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
             sceneNarrativeStates: manifest.sceneNarrativeStates ?? [:],
+            storyGraphEdges: manifest.storyGraphEdges ?? [],
             rollingWorkshopMemoryBySession: manifest.rollingWorkshopMemoryBySession ?? [:],
             rollingSceneMemoryByScene: manifest.rollingSceneMemoryByScene ?? [:],
             rollingChapterMemoryByChapter: manifest.rollingChapterMemoryByChapter ?? [:],
@@ -803,6 +805,7 @@ final class ProjectPersistence {
             sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,
             sceneNarrativeStates: project.sceneNarrativeStates,
+            storyGraphEdges: project.storyGraphEdges,
             rollingWorkshopMemoryBySession: project.rollingWorkshopMemoryBySession,
             rollingSceneMemoryByScene: project.rollingSceneMemoryByScene,
             rollingChapterMemoryByChapter: project.rollingChapterMemoryByChapter,

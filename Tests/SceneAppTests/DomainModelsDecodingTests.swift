@@ -122,6 +122,15 @@ final class DomainModelsDecodingTests: XCTestCase {
         project.sceneContextSceneSummarySelection = [UUID().uuidString: [UUID()]]
         project.sceneContextChapterSummarySelection = [UUID().uuidString: [UUID()]]
         project.sceneNarrativeStates = [UUID().uuidString: SceneNarrativeState(pov: "third")]
+        project.storyGraphEdges = [
+            StoryGraphEdge(
+                fromCompendiumID: UUID(),
+                toCompendiumID: UUID(),
+                relation: .causes,
+                weight: 0.6,
+                note: "test edge"
+            )
+        ]
         project.rollingSceneMemoryByScene = [UUID().uuidString: RollingSceneMemory(summary: "mem", sourceContentHash: "x")]
         project.rollingChapterMemoryByChapter = [UUID().uuidString: RollingChapterMemory(summary: "mem", sourceFingerprint: "x")]
 
@@ -137,6 +146,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         object.removeValue(forKey: "sceneContextSceneSummarySelection")
         object.removeValue(forKey: "sceneContextChapterSummarySelection")
         object.removeValue(forKey: "sceneNarrativeStates")
+        object.removeValue(forKey: "storyGraphEdges")
         object.removeValue(forKey: "rollingSceneMemoryByScene")
         object.removeValue(forKey: "rollingChapterMemoryByChapter")
 
@@ -146,6 +156,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(decoded.sceneContextSceneSummarySelection, [:])
         XCTAssertEqual(decoded.sceneContextChapterSummarySelection, [:])
         XCTAssertEqual(decoded.sceneNarrativeStates, [:])
+        XCTAssertEqual(decoded.storyGraphEdges, [])
         XCTAssertEqual(decoded.rollingSceneMemoryByScene, [:])
         XCTAssertEqual(decoded.rollingChapterMemoryByChapter, [:])
     }

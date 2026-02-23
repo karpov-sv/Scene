@@ -39,7 +39,7 @@ struct ScenePlanPanelView: View {
             Text("Scene Plan")
                 .font(.headline)
 
-            Text("Plan beats first, then draft prose from the plan.")
+            Text("Plan beats first, then draft prose from the plan. Use graph planning to derive paths from compendium nodes and graph edges.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -53,26 +53,41 @@ struct ScenePlanPanelView: View {
             }
 
             HStack(spacing: 8) {
-                Button("Update Plan") {
+                Button {
                     store.submitProsePlanUpdate()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
                 }
+                .buttonStyle(.borderless)
+                .help("Update Plan")
                 .disabled(store.isProseGenerationRunning || store.selectedScene == nil)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
-                Button("Draft from Plan") {
+                Button {
+                    store.submitGraphPathPlanUpdate()
+                } label: {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                }
+                .buttonStyle(.borderless)
+                .help("Plan from Graph")
+                .disabled(store.isProseGenerationRunning || store.selectedScene == nil)
+
+                Button {
                     store.submitDraftFromSelectedScenePlan()
+                } label: {
+                    Image(systemName: "long.text.page.and.pencil")
                 }
+                .buttonStyle(.borderless)
+                .help("Draft from Plan")
                 .disabled(store.isProseGenerationRunning || !store.canDraftFromSelectedScenePlan || store.selectedScene == nil)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
-                Button("Clear Plan", role: .destructive) {
+                Button {
                     store.clearSelectedSceneProsePlanDraft()
+                } label: {
+                    Image(systemName: "trash.slash")
                 }
+                .buttonStyle(.borderless)
+                .help("Clear Plan")
                 .disabled(store.selectedSceneProsePlanDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
                 Spacer(minLength: 0)
 

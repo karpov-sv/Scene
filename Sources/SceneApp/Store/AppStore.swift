@@ -117,6 +117,11 @@ final class AppStore: ObservableObject {
     private static let rewriteSceneContextChars = 2200
     private static let summarySourceChars = 2800
     private static let workshopSceneTailChars = 1800
+    private static let graphPlannerNodeMaxCount = 140
+    private static let graphPlannerEdgeMaxCount = 280
+    private static let graphPlannerNodeSummaryChars = 220
+    private static let graphPlannerNodesChars = 12000
+    private static let graphPlannerEdgesChars = 14000
     private static let inlineVariantsDefaultCount = 3
     private static let rollingWorkshopMemoryMinDeltaMessages = 4
     private static let rollingWorkshopMemoryDeltaWindow = 18
@@ -425,6 +430,12 @@ final class AppStore: ObservableObject {
         let compendium: String
         let sceneSummaries: String
         let chapterSummaries: String
+    }
+
+    private struct GraphPlannerContext {
+        let nodes: String
+        let edges: String
+        let frontier: String
     }
 
     private struct ProseGenerationSessionContext {
@@ -3736,6 +3747,7 @@ final class AppStore: ObservableObject {
         guard let selectedCompendiumID else { return }
         project.compendium.removeAll { $0.id == selectedCompendiumID }
         removeCompendiumEntryFromSceneContextSelections(selectedCompendiumID)
+        removeStoryGraphEdgesReferencingCompendiumEntry(selectedCompendiumID)
         self.selectedCompendiumID = project.compendium.first?.id
         saveProject()
     }
@@ -3745,6 +3757,7 @@ final class AppStore: ObservableObject {
             removeCompendiumEntryFromSceneContextSelections(entry.id)
         }
         project.compendium.removeAll()
+        project.storyGraphEdges.removeAll()
         selectedCompendiumID = nil
         saveProject()
     }
@@ -3822,6 +3835,30 @@ final class AppStore: ObservableObject {
 
     func submitProsePlanUpdate() {
         submitBeatGeneration(strategyOverride: .planOnly)
+    }
+
+    func submitGraphPathPlanUpdate() {
+        guard workspaceTab == "writing" else { return }
+        guard proseRequestTask == nil else { return }
+        guard let scene = selectedScene else {
+            generationStatus = "Select a scene first."
+            return
+        }
+
+        let beat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = resolveGenerationModelSelection(modelsOverride: nil).first
+
+        proseRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.proseRequestTask = nil
+            }
+            await self.generateGraphPathPlan(
+                beat: beat,
+                scene: scene,
+                modelOverride: model
+            )
+        }
     }
 
     func submitDraftFromSelectedScenePlan() {
@@ -6014,6 +6051,307 @@ final class AppStore: ObservableObject {
         """
     }
 
+    private func compactSingleLine(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func graphNodeTypeLabel(for entry: CompendiumEntry) -> String {
+        switch entry.category {
+        case .characters:
+            return "entity.character"
+        case .locations:
+            return "entity.location"
+        case .items:
+            return "entity.object"
+        case .lore:
+            return "concept"
+        case .notes:
+            return "situation"
+        }
+    }
+
+    private func graphNodeSummary(for entry: CompendiumEntry) -> String {
+        let body = compactSingleLine(entry.body)
+        if !body.isEmpty {
+            return String(body.prefix(Self.graphPlannerNodeSummaryChars))
+        }
+        if !entry.tags.isEmpty {
+            let tagLine = compactSingleLine(entry.tags.joined(separator: ", "))
+            return String(tagLine.prefix(Self.graphPlannerNodeSummaryChars))
+        }
+        return "No details yet."
+    }
+
+    private func buildCompendiumGraphPlannerContext(
+        for sceneID: UUID?,
+        mentionSourceText: String
+    ) -> GraphPlannerContext {
+        guard !project.compendium.isEmpty else {
+            return GraphPlannerContext(
+                nodes: "No compendium nodes available.",
+                edges: "No graph edges available.",
+                frontier: "No active nodes."
+            )
+        }
+
+        let mentionEntries = resolveMentionContext(from: mentionSourceText).compendiumEntries
+        let selectedEntryIDs = compendiumContextIDs(for: sceneID)
+        var frontierIDs: [UUID] = []
+        var frontierSeen = Set<UUID>()
+        for id in selectedEntryIDs where frontierSeen.insert(id).inserted {
+            frontierIDs.append(id)
+        }
+        for entry in mentionEntries where frontierSeen.insert(entry.id).inserted {
+            frontierIDs.append(entry.id)
+        }
+        if let selectedCompendiumID, frontierSeen.insert(selectedCompendiumID).inserted {
+            frontierIDs.append(selectedCompendiumID)
+        }
+
+        let compendiumByID = Dictionary(uniqueKeysWithValues: project.compendium.map { ($0.id, $0) })
+        let validIDs = Set(compendiumByID.keys)
+        let validEdges = project.storyGraphEdges.filter { edge in
+            validIDs.contains(edge.fromCompendiumID)
+                && validIDs.contains(edge.toCompendiumID)
+                && edge.fromCompendiumID != edge.toCompendiumID
+        }
+
+        var nodeIDs: [UUID] = []
+        var nodeSeen = Set<UUID>()
+        func appendNodeID(_ id: UUID) {
+            guard nodeSeen.insert(id).inserted else { return }
+            guard validIDs.contains(id) else { return }
+            nodeIDs.append(id)
+        }
+
+        for id in frontierIDs {
+            appendNodeID(id)
+        }
+
+        let frontierSet = Set(frontierIDs)
+        for edge in validEdges where frontierSet.contains(edge.fromCompendiumID) || frontierSet.contains(edge.toCompendiumID) {
+            appendNodeID(edge.fromCompendiumID)
+            appendNodeID(edge.toCompendiumID)
+        }
+
+        for entry in project.compendium {
+            appendNodeID(entry.id)
+        }
+
+        if nodeIDs.count > Self.graphPlannerNodeMaxCount {
+            nodeIDs = Array(nodeIDs.prefix(Self.graphPlannerNodeMaxCount))
+        }
+
+        let nodeRefByID = Dictionary(
+            uniqueKeysWithValues: nodeIDs.enumerated().map { (index, id) in
+                (id, "N\(index + 1)")
+            }
+        )
+
+        let nodeLines = nodeIDs.compactMap { nodeID -> String? in
+            guard let entry = compendiumByID[nodeID], let ref = nodeRefByID[nodeID] else { return nil }
+            let title = compactSingleLine(entry.title).isEmpty ? "Untitled" : compactSingleLine(entry.title)
+            let type = graphNodeTypeLabel(for: entry)
+            let summary = graphNodeSummary(for: entry)
+            let tags = entry.tags.isEmpty
+                ? ""
+                : " [tags: \(compactSingleLine(entry.tags.joined(separator: ", ")))]"
+            return "\(ref) [\(type)] \(title)\(tags): \(summary)"
+        }
+
+        var edgeLines: [String] = []
+        for edge in validEdges {
+            guard let fromRef = nodeRefByID[edge.fromCompendiumID],
+                  let toRef = nodeRefByID[edge.toCompendiumID] else {
+                continue
+            }
+            let note = compactSingleLine(edge.note)
+            let noteSuffix = note.isEmpty ? "" : " | \(String(note.prefix(120)))"
+            let weight = String(format: "%.2f", min(max(edge.weight, 0), 1))
+            edgeLines.append("\(fromRef) --\(edge.relation.label)(w=\(weight))--> \(toRef)\(noteSuffix)")
+            if edgeLines.count >= Self.graphPlannerEdgeMaxCount {
+                break
+            }
+        }
+
+        var frontierLines: [String] = []
+        let normalizedFrontier = frontierIDs.filter { nodeRefByID[$0] != nil }
+        for id in normalizedFrontier {
+            guard let ref = nodeRefByID[id], let entry = compendiumByID[id] else { continue }
+            let title = compactSingleLine(entry.title).isEmpty ? "Untitled" : compactSingleLine(entry.title)
+            frontierLines.append("\(ref): \(title)")
+        }
+        if frontierLines.isEmpty {
+            for id in nodeIDs.prefix(4) {
+                guard let ref = nodeRefByID[id], let entry = compendiumByID[id] else { continue }
+                let title = compactSingleLine(entry.title).isEmpty ? "Untitled" : compactSingleLine(entry.title)
+                frontierLines.append("\(ref): \(title)")
+            }
+        }
+
+        let nodesText = nodeLines.joined(separator: "\n")
+        let edgesText = edgeLines.isEmpty ? "No graph edges available." : edgeLines.joined(separator: "\n")
+        let frontierText = frontierLines.isEmpty ? "No active nodes." : frontierLines.joined(separator: "\n")
+
+        return GraphPlannerContext(
+            nodes: String(nodesText.prefix(Self.graphPlannerNodesChars)),
+            edges: String(edgesText.prefix(Self.graphPlannerEdgesChars)),
+            frontier: frontierText
+        )
+    }
+
+    private func makeGraphPathPlanRequest(
+        beat: String,
+        scene: Scene,
+        modelOverride: String? = nil
+    ) -> PromptRequestBuildResult {
+        let insertionContext = proseInsertionContext(for: scene)
+        let proseContextSource = insertionContext.prefix
+        let caretWindow = proseCaretWindowContext(for: insertionContext)
+        let isCaretInsertion = caretWindow != nil
+        let sceneContext = isCaretInsertion
+            ? ""
+            : String(proseContextSource.suffix(Self.proseSceneTailChars))
+        let sceneFullText = isCaretInsertion ? "" : proseContextSource
+        let sceneContextSections = buildCompendiumContextSections(for: scene.id, mentionSourceText: beat)
+        let insertionBlock = proseInsertionDirectiveBlock(for: caretWindow)
+        let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let graphContext = buildCompendiumGraphPlannerContext(
+            for: scene.id,
+            mentionSourceText: beat
+        )
+
+        let userTemplate: String
+        if project.settings.preferCompactPromptTemplates {
+            userTemplate = """
+            REQUEST: Select a short narrative path from the story graph.
+
+            {{state}}
+
+            CURRENT_GUIDANCE:
+            <<<
+            {{beat}}
+            >>>
+
+            SCENE_SUMMARY:
+            <<<
+            {{scene_summary}}
+            >>>
+
+            SCENE_TAIL:
+            <<<
+            {{scene_tail(chars=2000)}}
+            >>>
+
+            ACTIVE_GRAPH_FRONTIER:
+            <<<
+            {{graph_frontier}}
+            >>>
+
+            GRAPH_NODES:
+            <<<
+            {{graph_nodes}}
+            >>>
+
+            GRAPH_EDGES:
+            <<<
+            {{graph_edges}}
+            >>>
+
+            {{scene_insertion_block}}
+
+            CONTEXT_BACKGROUND:
+            <<<
+            {{context}}
+            >>>
+            """
+        } else {
+            userTemplate = """
+            <REQUEST_TYPE>Select short narrative path from story graph.</REQUEST_TYPE>
+            {{state}}
+            <CURRENT_GUIDANCE>{{beat}}</CURRENT_GUIDANCE>
+            <SCENE_SUMMARY>{{scene_summary}}</SCENE_SUMMARY>
+            <SCENE_TAIL>{{scene_tail(chars=2000)}}</SCENE_TAIL>
+            <ACTIVE_GRAPH_FRONTIER>{{graph_frontier}}</ACTIVE_GRAPH_FRONTIER>
+            <GRAPH_NODES>{{graph_nodes}}</GRAPH_NODES>
+            <GRAPH_EDGES>{{graph_edges}}</GRAPH_EDGES>
+            {{scene_insertion_block}}
+            <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
+            """
+        }
+
+        let promptResult = renderPromptTemplate(
+            template: userTemplate,
+            fallbackTemplate: userTemplate,
+            beat: beat,
+            selection: "",
+            sceneID: scene.id,
+            sceneExcerpt: sceneContext,
+            sceneFullText: sceneFullText,
+            sceneTitle: displaySceneTitle(scene),
+            chapterTitle: chapterTitle(forSceneID: scene.id),
+            contextSections: sceneContextSections,
+            conversation: "",
+            conversationTurns: [],
+            summaryScope: "",
+            source: isCaretInsertion ? (caretWindow?.combined ?? "") : sceneContext,
+            extraVariables: [
+                "scene_summary": sceneSummary,
+                "scene_before_caret": caretWindow?.before ?? "",
+                "scene_after_caret": caretWindow?.after ?? "",
+                "scene_caret_window": caretWindow?.combined ?? "",
+                "scene_insertion_block": insertionBlock,
+                "is_caret_insertion": isCaretInsertion ? "true" : "false",
+                "graph_frontier": graphContext.frontier,
+                "graph_nodes": graphContext.nodes,
+                "graph_edges": graphContext.edges
+            ]
+        )
+
+        let renderedUserPrompt = isCaretInsertion
+            ? removingSceneTailSectionsForCaretInsertion(promptResult.renderedText)
+            : promptResult.renderedText
+
+        var systemPrompt = """
+        You are a narrative path planner operating on a story graph.
+
+        Authoritative rules:
+        - Do not write prose.
+        - Return a 3-6 step numbered PATH.
+        - Use node references from GRAPH_NODES (e.g. N3) when relevant.
+        - Prefer causal progression and tension escalation.
+        - Include at least one reveal, contradiction, or misdirection.
+        - Do not resolve the main conflict completely.
+        - Return only the path list with no commentary.
+        """
+
+        if caretWindow != nil {
+            systemPrompt += """
+
+            \(proseInsertionSystemPromptRules)
+            - If INSERT_AT_CARET is present, plan only the inserted bridge between BEFORE_CARET and AFTER_CARET.
+            """
+        }
+
+        let fallbackModel = resolvedPrimaryModel()
+        let selectedModel = modelOverride?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? modelOverride!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : fallbackModel
+
+        return PromptRequestBuildResult(
+            request: TextGenerationRequest(
+                systemPrompt: systemPrompt,
+                userPrompt: renderedUserPrompt,
+                model: selectedModel,
+                temperature: project.settings.temperature,
+                maxTokens: project.settings.maxTokens
+            ),
+            renderWarnings: promptResult.warnings
+        )
+    }
+
     private func makeProsePlanRequest(
         beat: String,
         scene: Scene,
@@ -6179,6 +6517,59 @@ final class AppStore: ObservableObject {
             text: planText,
             renderWarnings: requestBuild.renderWarnings
         )
+    }
+
+    private func generateGraphPathPlan(
+        beat: String,
+        scene: Scene,
+        modelOverride: String?
+    ) async {
+        generationStatus = "Planning from graph..."
+        let toastID = startTaskProgressToast("Generating graph path plan…")
+
+        do {
+            let requestBuild = makeGraphPathPlanRequest(
+                beat: beat,
+                scene: scene,
+                modelOverride: modelOverride
+            )
+            let request = requestBuild.request
+
+            proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
+
+            let partialHandler: (@MainActor (String) -> Void)?
+            if shouldUseStreaming {
+                partialHandler = { [weak self] partial in
+                    guard let self else { return }
+                    self.setProsePlanDraft(partial, for: scene.id)
+                    self.generationStatus = "Planning from graph..."
+                    self.proseLiveUsage = self.normalizedTokenUsage(from: nil, request: request, response: partial)
+                }
+            } else {
+                partialHandler = nil
+            }
+
+            let result = try await generateTextResult(request, onPartial: partialHandler)
+            let planText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !planText.isEmpty else {
+                throw AIServiceError.badResponse("No graph path content in response")
+            }
+
+            setProsePlanDraft(planText, for: scene.id)
+            proseLiveUsage = normalizedTokenUsage(from: result.usage, request: request, response: planText)
+            rememberBeatInputHistory(beat, for: scene.id)
+            generationStatus = "Graph path plan updated."
+            saveProject(debounced: true)
+            finishTaskSuccessToast(toastID, "Graph path plan updated.")
+        } catch is CancellationError {
+            generationStatus = "Generation cancelled."
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
+        } catch {
+            proseLiveUsage = nil
+            lastError = error.localizedDescription
+            generationStatus = "Graph path plan failed."
+            finishTaskErrorToast(toastID, "Graph path plan failed.")
+        }
     }
 
     private func makeProseGenerationRequest(
@@ -6710,6 +7101,12 @@ final class AppStore: ObservableObject {
         merged.compendium = mergeIdentifiedCollection(
             current: merged.compendium,
             source: checkpointProject.compendium,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.storyGraphEdges = mergeIdentifiedCollection(
+            current: merged.storyGraphEdges,
+            source: checkpointProject.storyGraphEdges,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
@@ -10205,6 +10602,12 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func removeStoryGraphEdgesReferencingCompendiumEntry(_ entryID: UUID) {
+        project.storyGraphEdges.removeAll { edge in
+            edge.fromCompendiumID == entryID || edge.toCompendiumID == entryID
+        }
+    }
+
     private func removeSceneSummaryFromSceneContextSelections(_ sceneID: UUID) {
         let keys = project.sceneContextSceneSummarySelection.keys
         for key in keys {
@@ -10268,6 +10671,27 @@ final class AppStore: ObservableObject {
             }
         }
         project.sceneNarrativeStates = sanitized
+    }
+
+    private func sanitizeStoryGraphEdges() {
+        let validCompendiumIDs = Set(project.compendium.map(\.id))
+        var sanitized: [StoryGraphEdge] = []
+        var seenEdgeIDs = Set<UUID>()
+
+        for edge in project.storyGraphEdges {
+            guard seenEdgeIDs.insert(edge.id).inserted else { continue }
+            guard validCompendiumIDs.contains(edge.fromCompendiumID),
+                  validCompendiumIDs.contains(edge.toCompendiumID) else {
+                continue
+            }
+            guard edge.fromCompendiumID != edge.toCompendiumID else { continue }
+
+            var normalized = edge
+            normalized.weight = min(max(edge.weight, 0), 1)
+            sanitized.append(normalized)
+        }
+
+        project.storyGraphEdges = sanitized
     }
 
     private func sanitizeInputHistories() {
@@ -10843,6 +11267,7 @@ final class AppStore: ObservableObject {
         guard isProjectOpen else { return }
         sanitizeSceneContextSelections()
         sanitizeSceneNarrativeStates()
+        sanitizeStoryGraphEdges()
         sanitizeInputHistories()
         sanitizeRollingMemories()
 
