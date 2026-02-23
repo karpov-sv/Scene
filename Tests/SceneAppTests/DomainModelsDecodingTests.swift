@@ -122,6 +122,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         project.sceneContextSceneSummarySelection = [UUID().uuidString: [UUID()]]
         project.sceneContextChapterSummarySelection = [UUID().uuidString: [UUID()]]
         project.sceneNarrativeStates = [UUID().uuidString: SceneNarrativeState(pov: "third")]
+        project.sceneProsePlanDraftByScene = [UUID().uuidString: "Plan draft"]
         project.storyGraphEdges = [
             StoryGraphEdge(
                 fromCompendiumID: UUID(),
@@ -146,6 +147,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         object.removeValue(forKey: "sceneContextSceneSummarySelection")
         object.removeValue(forKey: "sceneContextChapterSummarySelection")
         object.removeValue(forKey: "sceneNarrativeStates")
+        object.removeValue(forKey: "sceneProsePlanDraftByScene")
         object.removeValue(forKey: "storyGraphEdges")
         object.removeValue(forKey: "rollingSceneMemoryByScene")
         object.removeValue(forKey: "rollingChapterMemoryByChapter")
@@ -156,6 +158,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(decoded.sceneContextSceneSummarySelection, [:])
         XCTAssertEqual(decoded.sceneContextChapterSummarySelection, [:])
         XCTAssertEqual(decoded.sceneNarrativeStates, [:])
+        XCTAssertEqual(decoded.sceneProsePlanDraftByScene, [:])
         XCTAssertEqual(decoded.storyGraphEdges, [])
         XCTAssertEqual(decoded.rollingSceneMemoryByScene, [:])
         XCTAssertEqual(decoded.rollingChapterMemoryByChapter, [:])

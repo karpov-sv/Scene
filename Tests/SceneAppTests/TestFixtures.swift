@@ -131,6 +131,9 @@ enum SceneTestFixtures {
             workshopInputHistoryBySession: [:],
             selectedWorkshopPromptID: PromptTemplate.defaultWorkshopTemplate.id,
             beatInputHistoryByScene: [:],
+            sceneProsePlanDraftByScene: [
+                sceneOneID.uuidString: "1. Arrive at station\n2. Meet contact"
+            ],
             sceneContextCompendiumSelection: [:],
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],

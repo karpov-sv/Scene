@@ -69,4 +69,27 @@ final class AppStoreContextTests: XCTestCase {
         XCTAssertTrue(store.workshopUseSceneContext)
         XCTAssertTrue(store.workshopUseCompendiumContext)
     }
+
+    func testScenePlanDraftPersistsIntoProjectStatePerScene() throws {
+        let (store, ids) = SceneTestFixtures.makeStoreFromFixture()
+        store.selectScene(ids.sceneOneID, chapterID: ids.chapterOneID)
+
+        store.updateSelectedSceneProsePlanDraft("1. Enter station\n2. Spot courier")
+
+        XCTAssertEqual(
+            store.project.sceneProsePlanDraftByScene[ids.sceneOneID.uuidString],
+            "1. Enter station\n2. Spot courier"
+        )
+        XCTAssertEqual(store.selectedSceneProsePlanDraft, "1. Enter station\n2. Spot courier")
+
+        store.selectScene(ids.sceneTwoID, chapterID: ids.chapterOneID)
+        XCTAssertEqual(store.selectedSceneProsePlanDraft, "")
+
+        store.selectScene(ids.sceneOneID, chapterID: ids.chapterOneID)
+        XCTAssertEqual(store.selectedSceneProsePlanDraft, "1. Enter station\n2. Spot courier")
+
+        store.clearSelectedSceneProsePlanDraft()
+        XCTAssertNil(store.project.sceneProsePlanDraftByScene[ids.sceneOneID.uuidString])
+        XCTAssertEqual(store.selectedSceneProsePlanDraft, "")
+    }
 }

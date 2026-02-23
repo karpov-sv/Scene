@@ -715,6 +715,7 @@ final class AppStore: ObservableObject {
         self.isProjectOpen = true
 
         ensureProjectBaseline()
+        syncProsePlanDraftsFromProject()
 
         selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
         if let selectedSceneID,
@@ -2458,11 +2459,13 @@ final class AppStore: ObservableObject {
     func updateSelectedSceneProsePlanDraft(_ value: String) {
         guard let selectedSceneID else { return }
         setProsePlanDraft(value, for: selectedSceneID)
+        saveProject(debounced: true)
     }
 
     func clearSelectedSceneProsePlanDraft() {
         guard let selectedSceneID else { return }
         setProsePlanDraft("", for: selectedSceneID)
+        saveProject(debounced: true)
     }
 
     func updateCleanUpCaretInsertionEchoes(_ enabled: Bool) {
@@ -3156,6 +3159,7 @@ final class AppStore: ObservableObject {
         importedProject.sceneNarrativeStates = [:]
         importedProject.workshopInputHistoryBySession = [:]
         importedProject.beatInputHistoryByScene = [:]
+        importedProject.sceneProsePlanDraftByScene = [:]
         importedProject.rollingWorkshopMemoryBySession = [:]
         importedProject.rollingSceneMemoryByScene = [:]
         importedProject.rollingChapterMemoryByChapter = [:]
@@ -3188,7 +3192,6 @@ final class AppStore: ObservableObject {
         proseLiveUsage = nil
         proseGenerationReview = nil
         proseGenerationSessionContext = nil
-        prosePlanDraftByScene = [:]
         inlineProseRegenerationState = nil
         workshopLiveUsage = nil
         availableRemoteModels = []
@@ -3197,6 +3200,7 @@ final class AppStore: ObservableObject {
         resetGlobalSearchState()
 
         ensureProjectBaseline()
+        syncProsePlanDraftsFromProject()
         selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
         if let selectedSceneID,
            let location = sceneLocation(for: selectedSceneID) {
@@ -6097,6 +6101,26 @@ final class AppStore: ObservableObject {
         return prosePlanDraftByScene[sceneID] ?? ""
     }
 
+    private func syncProsePlanDraftsFromProject() {
+        var decoded: [UUID: String] = [:]
+        for (sceneKey, draft) in project.sceneProsePlanDraftByScene {
+            guard let sceneID = UUID(uuidString: sceneKey) else { continue }
+            guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            decoded[sceneID] = draft
+        }
+        prosePlanDraftByScene = decoded
+        syncProjectProsePlanDraftsFromRuntime()
+    }
+
+    private func syncProjectProsePlanDraftsFromRuntime() {
+        var encoded: [String: String] = [:]
+        for (sceneID, draft) in prosePlanDraftByScene {
+            guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            encoded[sceneID.uuidString] = draft
+        }
+        project.sceneProsePlanDraftByScene = encoded
+    }
+
     private func setProsePlanDraft(_ value: String, for sceneID: UUID?) {
         guard let sceneID else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6105,6 +6129,7 @@ final class AppStore: ObservableObject {
         } else {
             prosePlanDraftByScene[sceneID] = value
         }
+        syncProjectProsePlanDraftsFromRuntime()
     }
 
     private func prosePlanBlock(for plan: String) -> String {
@@ -7154,6 +7179,7 @@ final class AppStore: ObservableObject {
         project = merged
 
         ensureProjectBaseline()
+        syncProsePlanDraftsFromProject()
         ensureValidSelections()
         refreshGlobalSearchResults()
         sceneRichTextRefreshID = UUID()
@@ -7295,6 +7321,12 @@ final class AppStore: ObservableObject {
         merged.beatInputHistoryByScene = mergeDictionaryEntries(
             current: merged.beatInputHistoryByScene,
             source: checkpointProject.beatInputHistoryByScene,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.sceneProsePlanDraftByScene = mergeDictionaryEntries(
+            current: merged.sceneProsePlanDraftByScene,
+            source: checkpointProject.sceneProsePlanDraftByScene,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
@@ -7560,6 +7592,7 @@ final class AppStore: ObservableObject {
         modelDiscoveryStatus = ""
 
         ensureProjectBaseline()
+        syncProsePlanDraftsFromProject()
 
         selectedSceneID = project.selectedSceneID ?? project.chapters.first?.scenes.first?.id
         if let selectedSceneID,
@@ -10682,6 +10715,7 @@ final class AppStore: ObservableObject {
         project.sceneContextChapterSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneNarrativeStates.removeValue(forKey: sceneID.uuidString)
         project.rollingSceneMemoryByScene.removeValue(forKey: sceneID.uuidString)
+        setProsePlanDraft("", for: sceneID)
     }
 
     private func removeCompendiumEntryFromSceneContextSelections(_ entryID: UUID) {
@@ -10809,6 +10843,17 @@ final class AppStore: ObservableObject {
         }
 
         project.storyGraphEdges = sanitized
+    }
+
+    private func sanitizeProsePlanDrafts() {
+        let validSceneIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
+        var sanitized: [UUID: String] = [:]
+        for (sceneID, draft) in prosePlanDraftByScene where validSceneIDs.contains(sceneID) {
+            guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            sanitized[sceneID] = draft
+        }
+        prosePlanDraftByScene = sanitized
+        syncProjectProsePlanDraftsFromRuntime()
     }
 
     private func sanitizeInputHistories() {
@@ -11389,6 +11434,7 @@ final class AppStore: ObservableObject {
         sanitizeSceneContextSelections()
         sanitizeSceneNarrativeStates()
         sanitizeStoryGraphEdges()
+        sanitizeProsePlanDrafts()
         sanitizeInputHistories()
         sanitizeRollingMemories()
 

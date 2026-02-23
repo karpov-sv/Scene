@@ -50,6 +50,7 @@ final class ProjectPersistenceTests: XCTestCase {
             XCTAssertEqual(loaded.sceneContextCompendiumSelection, fixture.project.sceneContextCompendiumSelection)
             XCTAssertEqual(loaded.sceneContextSceneSummarySelection, fixture.project.sceneContextSceneSummarySelection)
             XCTAssertEqual(loaded.sceneContextChapterSummarySelection, fixture.project.sceneContextChapterSummarySelection)
+            XCTAssertEqual(loaded.sceneProsePlanDraftByScene, fixture.project.sceneProsePlanDraftByScene)
             XCTAssertEqual(loaded.storyGraphEdges.count, fixture.project.storyGraphEdges.count)
             for (loadedEdge, fixtureEdge) in zip(loaded.storyGraphEdges, fixture.project.storyGraphEdges) {
                 XCTAssertEqual(loadedEdge.id, fixtureEdge.id)
