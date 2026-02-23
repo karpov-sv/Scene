@@ -3241,6 +3241,7 @@ final class AppStore: ObservableObject {
         for sceneID in removedSceneIDs {
             removeSceneSummaryFromSceneContextSelections(sceneID)
             removeSceneContextSelection(for: sceneID)
+            removeStoryGraphEdgesForScene(sceneID)
         }
 
         if project.chapters.isEmpty {
@@ -3321,6 +3322,7 @@ final class AppStore: ObservableObject {
         }
         removeSceneSummaryFromSceneContextSelections(sceneID)
         removeSceneContextSelection(for: sceneID)
+        removeStoryGraphEdgesForScene(sceneID)
 
         if !project.chapters.contains(where: { !$0.scenes.isEmpty }) {
             if project.chapters.isEmpty {
@@ -3800,15 +3802,16 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
-    func storyGraphEdgesLinked(to entryID: UUID?) -> [StoryGraphEdge] {
-        guard let entryID else { return [] }
+    func storyGraphEdges(for sceneID: UUID?) -> [StoryGraphEdge] {
+        guard let sceneID else { return [] }
         return project.storyGraphEdges.filter { edge in
-            edge.fromCompendiumID == entryID || edge.toCompendiumID == entryID
+            edge.sceneID == sceneID
         }
     }
 
     @discardableResult
     func addStoryGraphEdge(
+        sceneID: UUID,
         fromCompendiumID fromID: UUID,
         toCompendiumID toID: UUID,
         relation: StoryGraphRelation,
@@ -3822,6 +3825,7 @@ final class AppStore: ObservableObject {
         }
 
         let edge = StoryGraphEdge(
+            sceneID: sceneID,
             fromCompendiumID: fromID,
             toCompendiumID: toID,
             relation: relation,
@@ -6203,7 +6207,8 @@ final class AppStore: ObservableObject {
         let compendiumByID = Dictionary(uniqueKeysWithValues: project.compendium.map { ($0.id, $0) })
         let validIDs = Set(compendiumByID.keys)
         let validEdges = project.storyGraphEdges.filter { edge in
-            validIDs.contains(edge.fromCompendiumID)
+            edge.sceneID == sceneID
+                && validIDs.contains(edge.fromCompendiumID)
                 && validIDs.contains(edge.toCompendiumID)
                 && edge.fromCompendiumID != edge.toCompendiumID
         }
@@ -10698,6 +10703,12 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func removeStoryGraphEdgesForScene(_ sceneID: UUID) {
+        project.storyGraphEdges.removeAll { edge in
+            edge.sceneID == sceneID
+        }
+    }
+
     private func removeSceneSummaryFromSceneContextSelections(_ sceneID: UUID) {
         let keys = project.sceneContextSceneSummarySelection.keys
         for key in keys {
@@ -10765,6 +10776,15 @@ final class AppStore: ObservableObject {
 
     private func sanitizeStoryGraphEdges() {
         let validCompendiumIDs = Set(project.compendium.map(\.id))
+        let validSceneIDs = project.chapters.flatMap(\.scenes).map(\.id)
+        let validSceneIDSet = Set(validSceneIDs)
+        let fallbackSceneID: UUID? = {
+            if let selectedSceneID = project.selectedSceneID,
+               validSceneIDSet.contains(selectedSceneID) {
+                return selectedSceneID
+            }
+            return validSceneIDs.first
+        }()
         var sanitized: [StoryGraphEdge] = []
         var seenEdgeIDs = Set<UUID>()
 
@@ -10777,6 +10797,13 @@ final class AppStore: ObservableObject {
             guard edge.fromCompendiumID != edge.toCompendiumID else { continue }
 
             var normalized = edge
+            if let sceneID = edge.sceneID, validSceneIDSet.contains(sceneID) {
+                normalized.sceneID = sceneID
+            } else if let fallbackSceneID {
+                normalized.sceneID = fallbackSceneID
+            } else {
+                continue
+            }
             normalized.weight = min(max(edge.weight, 0), 1)
             sanitized.append(normalized)
         }

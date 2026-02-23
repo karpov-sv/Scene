@@ -8,6 +8,7 @@ final class AppStoreStoryGraphTests: XCTestCase {
         let initialCount = store.project.storyGraphEdges.count
 
         let newEdgeID = store.addStoryGraphEdge(
+            sceneID: ids.sceneOneID,
             fromCompendiumID: ids.compendiumBodyEntryID,
             toCompendiumID: ids.compendiumTagEntryID,
             relation: .escalates,
@@ -19,6 +20,7 @@ final class AppStoreStoryGraphTests: XCTestCase {
         XCTAssertEqual(store.project.storyGraphEdges.count, initialCount + 1)
 
         let edge = try XCTUnwrap(store.project.storyGraphEdges.first(where: { $0.id == edgeID }))
+        XCTAssertEqual(edge.sceneID, ids.sceneOneID)
         XCTAssertEqual(edge.fromCompendiumID, ids.compendiumBodyEntryID)
         XCTAssertEqual(edge.toCompendiumID, ids.compendiumTagEntryID)
         XCTAssertEqual(edge.relation, .escalates)
@@ -31,6 +33,7 @@ final class AppStoreStoryGraphTests: XCTestCase {
         let initialCount = store.project.storyGraphEdges.count
 
         let edgeID = store.addStoryGraphEdge(
+            sceneID: ids.sceneOneID,
             fromCompendiumID: ids.compendiumTitleEntryID,
             toCompendiumID: ids.compendiumTitleEntryID,
             relation: .causes
@@ -54,6 +57,7 @@ final class AppStoreStoryGraphTests: XCTestCase {
         )
 
         let edge = try XCTUnwrap(store.project.storyGraphEdges.first(where: { $0.id == edgeID }))
+        XCTAssertEqual(edge.sceneID, ids.sceneOneID)
         XCTAssertEqual(edge.relation, .blocks)
         XCTAssertEqual(edge.weight, 0.0, accuracy: 0.0001)
         XCTAssertEqual(edge.note, "blocked by duty")
@@ -74,5 +78,24 @@ final class AppStoreStoryGraphTests: XCTestCase {
                     || edge.toCompendiumID == ids.compendiumTitleEntryID
             }
         )
+    }
+
+    func testStoryGraphEdgesAreScopedByScene() throws {
+        let (store, ids) = SceneTestFixtures.makeStoreFromFixture()
+
+        _ = store.addStoryGraphEdge(
+            sceneID: ids.sceneTwoID,
+            fromCompendiumID: ids.compendiumBodyEntryID,
+            toCompendiumID: ids.compendiumTagEntryID,
+            relation: .escalates
+        )
+
+        let sceneOneEdges = store.storyGraphEdges(for: ids.sceneOneID)
+        let sceneTwoEdges = store.storyGraphEdges(for: ids.sceneTwoID)
+
+        XCTAssertEqual(sceneOneEdges.count, 1)
+        XCTAssertEqual(sceneTwoEdges.count, 1)
+        XCTAssertTrue(sceneOneEdges.allSatisfy { $0.sceneID == ids.sceneOneID })
+        XCTAssertTrue(sceneTwoEdges.allSatisfy { $0.sceneID == ids.sceneTwoID })
     }
 }

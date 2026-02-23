@@ -310,6 +310,7 @@ enum StoryGraphRelation: String, Codable, CaseIterable, Equatable, Identifiable 
 
 struct StoryGraphEdge: Codable, Identifiable, Equatable {
     var id: UUID
+    var sceneID: UUID?
     var fromCompendiumID: UUID
     var toCompendiumID: UUID
     var relation: StoryGraphRelation
@@ -319,6 +320,7 @@ struct StoryGraphEdge: Codable, Identifiable, Equatable {
 
     init(
         id: UUID = UUID(),
+        sceneID: UUID? = nil,
         fromCompendiumID: UUID,
         toCompendiumID: UUID,
         relation: StoryGraphRelation,
@@ -327,6 +329,7 @@ struct StoryGraphEdge: Codable, Identifiable, Equatable {
         updatedAt: Date = .now
     ) {
         self.id = id
+        self.sceneID = sceneID
         self.fromCompendiumID = fromCompendiumID
         self.toCompendiumID = toCompendiumID
         self.relation = relation
@@ -337,6 +340,7 @@ struct StoryGraphEdge: Codable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id
+        case sceneID
         case fromCompendiumID
         case toCompendiumID
         case relation
@@ -348,6 +352,7 @@ struct StoryGraphEdge: Codable, Identifiable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        sceneID = try container.decodeIfPresent(UUID.self, forKey: .sceneID)
         fromCompendiumID = try container.decode(UUID.self, forKey: .fromCompendiumID)
         toCompendiumID = try container.decode(UUID.self, forKey: .toCompendiumID)
         relation = try container.decodeIfPresent(StoryGraphRelation.self, forKey: .relation) ?? .causes

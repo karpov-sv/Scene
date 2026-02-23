@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct ScenePlanPanelView: View {
+    private struct SceneGraphEdgesSheetRequest: Identifiable {
+        let sceneID: UUID
+        var id: UUID { sceneID }
+    }
+
     @EnvironmentObject private var store: AppStore
-    @State private var showingStoryGraphEdgesSheet = false
+    @State private var storyGraphSheetRequest: SceneGraphEdgesSheetRequest?
 
     private var planBinding: Binding<String> {
         Binding(
@@ -33,8 +38,8 @@ struct ScenePlanPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showingStoryGraphEdgesSheet) {
-            StoryGraphEdgesSheet()
+        .sheet(item: $storyGraphSheetRequest) { request in
+            StoryGraphEdgesSheet(sceneID: request.sceneID)
                 .environmentObject(store)
         }
     }
@@ -77,12 +82,14 @@ struct ScenePlanPanelView: View {
                 .disabled(store.isProseGenerationRunning || store.selectedScene == nil)
 
                 Button {
-                    showingStoryGraphEdgesSheet = true
+                    guard let selectedSceneID = store.selectedSceneID else { return }
+                    storyGraphSheetRequest = SceneGraphEdgesSheetRequest(sceneID: selectedSceneID)
                 } label: {
                     Image(systemName: "list.bullet")
                 }
                 .buttonStyle(.borderless)
                 .help("Story Graph Edges")
+                .disabled(store.selectedSceneID == nil)
 
                 Button {
                     store.submitDraftFromSelectedScenePlan()
@@ -131,9 +138,23 @@ private struct StoryGraphEdgesSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
 
+    let sceneID: UUID
+
     @State private var draftFromID: UUID?
     @State private var draftRelation: StoryGraphRelation = .causes
     @State private var draftToID: UUID?
+    @State private var draftWeight: Double = 1.0
+    @State private var draftNote: String = ""
+
+    private var sceneTitle: String {
+        for chapter in store.project.chapters {
+            if let scene = chapter.scenes.first(where: { $0.id == sceneID }) {
+                let trimmed = scene.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? "Untitled Scene" : trimmed
+            }
+        }
+        return "Unknown Scene"
+    }
 
     private var sortedCompendiumEntries: [CompendiumEntry] {
         store.project.compendium.sorted { lhs, rhs in
@@ -152,8 +173,8 @@ private struct StoryGraphEdgesSheet: View {
         return sortedCompendiumEntries.filter { $0.id != draftFromID }
     }
 
-    private var sortedEdges: [StoryGraphEdge] {
-        store.project.storyGraphEdges.sorted { lhs, rhs in
+    private var sceneEdges: [StoryGraphEdge] {
+        store.storyGraphEdges(for: sceneID).sorted { lhs, rhs in
             let lhsFrom = entryTitle(for: lhs.fromCompendiumID)
             let rhsFrom = entryTitle(for: rhs.fromCompendiumID)
             let fromComparison = lhsFrom.localizedCaseInsensitiveCompare(rhsFrom)
@@ -178,18 +199,20 @@ private struct StoryGraphEdgesSheet: View {
     }
 
     private var canAddEdge: Bool {
-        guard let fromID = draftFromID,
-              let toID = draftToID else {
-            return false
-        }
+        guard let fromID = draftFromID, let toID = draftToID else { return false }
         return fromID != toID
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Story Graph Edges")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Story Graph Edges")
+                        .font(.headline)
+                    Text("Scene: \(sceneTitle)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer(minLength: 0)
 
@@ -235,6 +258,24 @@ private struct StoryGraphEdgesSheet: View {
                     .pickerStyle(.menu)
                     .controlSize(.small)
                     .frame(maxWidth: .infinity)
+                }
+
+                HStack(spacing: 8) {
+                    Text("Weight")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Slider(value: $draftWeight, in: 0 ... 1, step: 0.05)
+
+                    Text(String(format: "%.2f", draftWeight))
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+
+                    TextField("Optional note", text: $draftNote)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
 
                     Button("Add") {
                         addDraftEdge()
@@ -247,45 +288,23 @@ private struct StoryGraphEdgesSheet: View {
 
             Divider()
 
-            if sortedEdges.isEmpty {
+            if sceneEdges.isEmpty {
                 ContentUnavailableView(
                     "No Graph Edges",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Create an edge to connect compendium nodes.")
+                    description: Text("Create scene-specific edges for graph planning.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(sortedEdges) { edge in
-                        HStack(spacing: 8) {
-                            Text(entryTitle(for: edge.fromCompendiumID))
-                                .lineLimit(1)
-                            Image(systemName: "arrow.right")
-                                .foregroundStyle(.secondary)
-                            Text(edge.relation.label)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "arrow.right")
-                                .foregroundStyle(.secondary)
-                            Text(entryTitle(for: edge.toCompendiumID))
-                                .lineLimit(1)
-
-                            Spacer(minLength: 0)
-
-                            Button(role: .destructive) {
-                                store.deleteStoryGraphEdge(edge.id)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.borderless)
-                            .help("Delete Edge")
-                        }
+                    ForEach(sceneEdges) { edge in
+                        storyGraphEdgeRow(edge)
                     }
                 }
-                .listStyle(.inset)
+                .listStyle(.plain)
             }
         }
-        .frame(minWidth: 780, minHeight: 460)
+        .frame(minWidth: 900, minHeight: 520)
         .onAppear {
             syncDraftSelection()
         }
@@ -297,16 +316,129 @@ private struct StoryGraphEdgesSheet: View {
         }
     }
 
+    private func storyGraphEdgeRow(_ edge: StoryGraphEdge) -> some View {
+        HStack(spacing: 8) {
+            Picker("From", selection: fromCompendiumBinding(for: edge.id)) {
+                ForEach(sortedCompendiumEntries) { entry in
+                    Text(entryTitle(entry)).tag(Optional(entry.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
+            .labelsHidden()
+
+            Picker("Relation", selection: relationBinding(for: edge.id)) {
+                ForEach(StoryGraphRelation.allCases) { relation in
+                    Text(relation.label).tag(relation)
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: 150)
+            .labelsHidden()
+
+            Picker("To", selection: toCompendiumBinding(for: edge.id)) {
+                ForEach(sortedCompendiumEntries) { entry in
+                    Text(entryTitle(entry)).tag(Optional(entry.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
+            .labelsHidden()
+
+            Slider(value: weightBinding(for: edge.id), in: 0 ... 1, step: 0.05)
+                .frame(width: 100)
+                .help(String(format: "Weight: %.2f", edge.weight))
+
+            TextField("Optional note", text: noteBinding(for: edge.id))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+
+            Button(role: .destructive) {
+                store.deleteStoryGraphEdge(edge.id)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Delete Edge")
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func edge(for edgeID: UUID) -> StoryGraphEdge? {
+        store.project.storyGraphEdges.first(where: { $0.id == edgeID })
+    }
+
+    private func fromCompendiumBinding(for edgeID: UUID) -> Binding<UUID?> {
+        Binding(
+            get: { edge(for: edgeID)?.fromCompendiumID },
+            set: { newFromID in
+                guard let newFromID, let edge = edge(for: edgeID) else { return }
+                store.updateStoryGraphEdgeEndpoints(
+                    edgeID,
+                    fromCompendiumID: newFromID,
+                    toCompendiumID: edge.toCompendiumID
+                )
+            }
+        )
+    }
+
+    private func toCompendiumBinding(for edgeID: UUID) -> Binding<UUID?> {
+        Binding(
+            get: { edge(for: edgeID)?.toCompendiumID },
+            set: { newToID in
+                guard let newToID, let edge = edge(for: edgeID) else { return }
+                store.updateStoryGraphEdgeEndpoints(
+                    edgeID,
+                    fromCompendiumID: edge.fromCompendiumID,
+                    toCompendiumID: newToID
+                )
+            }
+        )
+    }
+
+    private func relationBinding(for edgeID: UUID) -> Binding<StoryGraphRelation> {
+        Binding(
+            get: { edge(for: edgeID)?.relation ?? .causes },
+            set: { relation in
+                store.updateStoryGraphEdgeRelation(edgeID, relation: relation)
+            }
+        )
+    }
+
+    private func weightBinding(for edgeID: UUID) -> Binding<Double> {
+        Binding(
+            get: { edge(for: edgeID)?.weight ?? 1.0 },
+            set: { weight in
+                store.updateStoryGraphEdgeWeight(edgeID, weight: weight)
+            }
+        )
+    }
+
+    private func noteBinding(for edgeID: UUID) -> Binding<String> {
+        Binding(
+            get: { edge(for: edgeID)?.note ?? "" },
+            set: { note in
+                store.updateStoryGraphEdgeNote(edgeID, note: note)
+            }
+        )
+    }
+
     private func addDraftEdge() {
-        guard let fromID = draftFromID,
-              let toID = draftToID else {
+        guard let fromID = draftFromID, let toID = draftToID else {
             return
         }
         _ = store.addStoryGraphEdge(
+            sceneID: sceneID,
             fromCompendiumID: fromID,
             toCompendiumID: toID,
-            relation: draftRelation
+            relation: draftRelation,
+            weight: draftWeight,
+            note: draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+        draftNote = ""
         syncDraftSelection()
     }
 

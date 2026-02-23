@@ -138,6 +138,7 @@ enum SceneTestFixtures {
             storyGraphEdges: [
                 StoryGraphEdge(
                     id: UUID(uuidString: "00000000-0000-0000-0000-000000000941")!,
+                    sceneID: sceneOneID,
                     fromCompendiumID: compendiumTitleEntryID,
                     toCompendiumID: compendiumBodyEntryID,
                     relation: .reveals,

@@ -53,6 +53,7 @@ final class ProjectPersistenceTests: XCTestCase {
             XCTAssertEqual(loaded.storyGraphEdges.count, fixture.project.storyGraphEdges.count)
             for (loadedEdge, fixtureEdge) in zip(loaded.storyGraphEdges, fixture.project.storyGraphEdges) {
                 XCTAssertEqual(loadedEdge.id, fixtureEdge.id)
+                XCTAssertEqual(loadedEdge.sceneID, fixtureEdge.sceneID)
                 XCTAssertEqual(loadedEdge.fromCompendiumID, fixtureEdge.fromCompendiumID)
                 XCTAssertEqual(loadedEdge.toCompendiumID, fixtureEdge.toCompendiumID)
                 XCTAssertEqual(loadedEdge.relation, fixtureEdge.relation)
