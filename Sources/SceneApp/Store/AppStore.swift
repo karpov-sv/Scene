@@ -4085,8 +4085,15 @@ final class AppStore: ObservableObject {
             return
         }
 
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = state.originalSceneContent
-        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = state.originalSceneRichTextData
+        let base = GenerationAppendBase(
+            content: state.baseContent,
+            richTextData: state.baseRichTextData,
+            trailingContent: state.trailingContent,
+            trailingRichTextData: state.trailingRichTextData
+        )
+        let reverted = buildGeneratedSceneContent(base: base, generated: "")
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = reverted.content
+        project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = reverted.richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
         project.chapters[location.chapterIndex].updatedAt = .now
         project.rollingSceneMemoryByScene.removeValue(forKey: selectedSceneID.uuidString)
