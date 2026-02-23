@@ -1841,6 +1841,24 @@ final class AppStore: ObservableObject {
         return "\(selected.count) Models"
     }
 
+    var proseOutputProfileSummary: String {
+        var parts: [String] = []
+        if project.settings.proseOutputTone != .automatic {
+            parts.append(project.settings.proseOutputTone.label)
+        }
+        if project.settings.proseOutputStyle != .automatic {
+            parts.append(project.settings.proseOutputStyle.label)
+        }
+        if project.settings.proseOutputLength != .medium {
+            parts.append(project.settings.proseOutputLength.label)
+        }
+
+        if parts.isEmpty {
+            return "Output Profile"
+        }
+        return parts.joined(separator: ", ")
+    }
+
     var useInlineGeneration: Bool {
         project.settings.useInlineGeneration
     }
@@ -2453,6 +2471,37 @@ final class AppStore: ObservableObject {
     func updateProseGenerationStrategy(_ strategy: ProseGenerationStrategy) {
         guard project.settings.proseGenerationStrategy != strategy else { return }
         project.settings.proseGenerationStrategy = strategy
+        saveProject(debounced: true)
+    }
+
+    func updateProseOutputTone(_ tone: ProseOutputTone) {
+        guard project.settings.proseOutputTone != tone else { return }
+        project.settings.proseOutputTone = tone
+        saveProject(debounced: true)
+    }
+
+    func updateProseOutputStyle(_ style: ProseOutputStyle) {
+        guard project.settings.proseOutputStyle != style else { return }
+        project.settings.proseOutputStyle = style
+        saveProject(debounced: true)
+    }
+
+    func updateProseOutputLength(_ length: ProseOutputLength) {
+        guard project.settings.proseOutputLength != length else { return }
+        project.settings.proseOutputLength = length
+        saveProject(debounced: true)
+    }
+
+    func resetProseOutputProfile() {
+        let defaults = GenerationSettings.default
+        guard project.settings.proseOutputTone != defaults.proseOutputTone ||
+              project.settings.proseOutputStyle != defaults.proseOutputStyle ||
+              project.settings.proseOutputLength != defaults.proseOutputLength else {
+            return
+        }
+        project.settings.proseOutputTone = defaults.proseOutputTone
+        project.settings.proseOutputStyle = defaults.proseOutputStyle
+        project.settings.proseOutputLength = defaults.proseOutputLength
         saveProject(debounced: true)
     }
 
@@ -4193,6 +4242,9 @@ final class AppStore: ObservableObject {
             "Candidate-review generation runs in non-streaming mode.",
             "Timeout is \(Int(project.settings.requestTimeoutSeconds.rounded())) seconds."
         ]
+        if proseOutputProfileSummary != "Output Profile" {
+            baseNotes.append("\(proseOutputProfileSummary).")
+        }
         if beat.isEmpty {
             baseNotes.append("Beat input is empty. Prompt relies on template/context without beat guidance.")
         }
@@ -4895,7 +4947,17 @@ final class AppStore: ObservableObject {
             )
             let sceneExcerpt = String(scenePreview.sceneContent.suffix(Self.proseSceneTailChars))
             let sceneSummary = sceneSummaryText(for: scenePreview.sceneID)
-            renderedUser = renderPromptTemplate(
+            let outputProfileBlock = proseOutputProfileBlock()
+            let outputTone = project.settings.proseOutputTone == .automatic
+                ? ""
+                : project.settings.proseOutputTone.label
+            let outputStyle = project.settings.proseOutputStyle == .automatic
+                ? ""
+                : project.settings.proseOutputStyle.label
+            let outputLength = project.settings.proseOutputLength == .medium
+                ? ""
+                : proseOutputLengthGuidance(project.settings.proseOutputLength)
+            let proseRendered = renderPromptTemplate(
                 template: prompt.userTemplate,
                 fallbackTemplate: fallbackUserTemplate(for: prompt, category: .prose),
                 beat: beatPreview,
@@ -4911,8 +4973,19 @@ final class AppStore: ObservableObject {
                 summaryScope: "",
                 source: sceneExcerpt,
                 extraVariables: [
-                    "scene_summary": sceneSummary
+                    "scene_summary": sceneSummary,
+                    "output_tone": outputTone,
+                    "output_style": outputStyle,
+                    "output_length": outputLength,
+                    "output_profile_block": outputProfileBlock
                 ]
+            )
+            renderedUser = PromptRenderer.Result(
+                renderedText: appendingProseOutputProfileBlockIfMissing(
+                    proseRendered.renderedText,
+                    outputProfileBlock: outputProfileBlock
+                ),
+                warnings: proseRendered.warnings
             )
 
         case .rewrite:
@@ -6157,10 +6230,76 @@ final class AppStore: ObservableObject {
         """
     }
 
+    private func proseOutputLengthGuidance(_ length: ProseOutputLength) -> String {
+        switch length {
+        case .short:
+            return "Short (~80-140 words)"
+        case .medium:
+            return "Medium (~140-260 words)"
+        case .long:
+            return "Long (~260-420 words)"
+        }
+    }
+
+    private func proseOutputProfileBlock() -> String {
+        let tone = project.settings.proseOutputTone
+        let style = project.settings.proseOutputStyle
+        let length = project.settings.proseOutputLength
+
+        var lines: [String] = []
+        if tone != .automatic {
+            lines.append("TONE: \(tone.label)")
+        }
+        if style != .automatic {
+            lines.append("STYLE: \(style.label)")
+        }
+        if length != .medium {
+            lines.append("LENGTH: \(proseOutputLengthGuidance(length))")
+        }
+
+        guard !lines.isEmpty else { return "" }
+
+        if project.settings.preferCompactPromptTemplates {
+            return """
+            OUTPUT_PROFILE:
+            <<<
+            \(lines.joined(separator: "\n"))
+            >>>
+            """
+        }
+
+        var xmlLines: [String] = ["<OUTPUT_PROFILE>"]
+        if tone != .automatic {
+            xmlLines.append("<TONE>\(tone.label)</TONE>")
+        }
+        if style != .automatic {
+            xmlLines.append("<STYLE>\(style.label)</STYLE>")
+        }
+        if length != .medium {
+            xmlLines.append("<LENGTH>\(proseOutputLengthGuidance(length))</LENGTH>")
+        }
+        xmlLines.append("</OUTPUT_PROFILE>")
+        return xmlLines.joined(separator: "\n")
+    }
+
     private func appendingProsePlanBlockIfMissing(_ prompt: String, prosePlanBlock: String) -> String {
         let trimmedBlock = prosePlanBlock.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBlock.isEmpty else { return prompt }
         if prompt.range(of: "<PROSE_PLAN>") != nil || prompt.range(of: "PROSE_PLAN:") != nil {
+            return prompt
+        }
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else { return trimmedBlock }
+        return trimmedPrompt + "\n\n" + trimmedBlock
+    }
+
+    private func appendingProseOutputProfileBlockIfMissing(
+        _ prompt: String,
+        outputProfileBlock: String
+    ) -> String {
+        let trimmedBlock = outputProfileBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBlock.isEmpty else { return prompt }
+        if prompt.range(of: "<OUTPUT_PROFILE>") != nil || prompt.range(of: "OUTPUT_PROFILE:") != nil {
             return prompt
         }
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6174,6 +6313,15 @@ final class AppStore: ObservableObject {
         - If PROSE_PLAN is present, treat it as the structural roadmap for the next passage.
         - Follow PROSE_PLAN unless it conflicts with hard continuity in SCENE_TAIL.
         - Return prose only; never output the plan itself.
+        """
+    }
+
+    private var proseOutputProfileSystemPromptRules: String {
+        """
+        Output profile rules:
+        - If OUTPUT_PROFILE is present, follow its tone, style, and length guidance.
+        - Keep continuity, POV, tense, chronology, and factual consistency as hard constraints.
+        - Return prose only; never output OUTPUT_PROFILE labels.
         """
     }
 
@@ -6719,6 +6867,16 @@ final class AppStore: ObservableObject {
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let prosePlan = (planOverride ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let prosePlanBlock = prosePlanBlock(for: prosePlan)
+        let outputProfileBlock = proseOutputProfileBlock()
+        let outputTone = project.settings.proseOutputTone == .automatic
+            ? ""
+            : project.settings.proseOutputTone.label
+        let outputStyle = project.settings.proseOutputStyle == .automatic
+            ? ""
+            : project.settings.proseOutputStyle.label
+        let outputLength = project.settings.proseOutputLength == .medium
+            ? ""
+            : proseOutputLengthGuidance(project.settings.proseOutputLength)
 
         let promptResult = renderPromptTemplate(
             template: activePrompt.userTemplate,
@@ -6744,15 +6902,23 @@ final class AppStore: ObservableObject {
                 "is_caret_insertion": isCaretInsertion ? "true" : "false",
                 "plan": prosePlan,
                 "prose_plan": prosePlan,
-                "prose_plan_block": prosePlanBlock
+                "prose_plan_block": prosePlanBlock,
+                "output_tone": outputTone,
+                "output_style": outputStyle,
+                "output_length": outputLength,
+                "output_profile_block": outputProfileBlock
             ]
         )
         let renderedPrompt = isCaretInsertion
             ? removingSceneTailSectionsForCaretInsertion(promptResult.renderedText)
             : promptResult.renderedText
-        let renderedUserPrompt = appendingProsePlanBlockIfMissing(
+        let promptWithPlan = appendingProsePlanBlockIfMissing(
             renderedPrompt,
             prosePlanBlock: prosePlanBlock
+        )
+        let renderedUserPrompt = appendingProseOutputProfileBlockIfMissing(
+            promptWithPlan,
+            outputProfileBlock: outputProfileBlock
         )
 
         var systemPrompt = activePrompt.systemTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -6763,6 +6929,9 @@ final class AppStore: ObservableObject {
         }
         if !prosePlan.isEmpty {
             systemPrompt += "\n\n\(prosePlanSystemPromptRules)"
+        }
+        if !outputProfileBlock.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            systemPrompt += "\n\n\(proseOutputProfileSystemPromptRules)"
         }
 
         let fallbackModel = resolvedPrimaryModel()

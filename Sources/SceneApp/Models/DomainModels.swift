@@ -1218,6 +1218,81 @@ enum ProseGenerationStrategy: String, Codable, CaseIterable, Equatable {
     }
 }
 
+enum ProseOutputTone: String, Codable, CaseIterable, Equatable {
+    case automatic
+    case neutral
+    case tense
+    case warm
+    case dark
+    case playful
+    case formal
+
+    var label: String {
+        switch self {
+        case .automatic:
+            return "Auto"
+        case .neutral:
+            return "Neutral"
+        case .tense:
+            return "Tense"
+        case .warm:
+            return "Warm"
+        case .dark:
+            return "Dark"
+        case .playful:
+            return "Playful"
+        case .formal:
+            return "Formal"
+        }
+    }
+}
+
+enum ProseOutputStyle: String, Codable, CaseIterable, Equatable {
+    case automatic
+    case natural
+    case cinematic
+    case minimalist
+    case lyrical
+    case dialogueHeavy
+    case actionHeavy
+
+    var label: String {
+        switch self {
+        case .automatic:
+            return "Auto"
+        case .natural:
+            return "Natural"
+        case .cinematic:
+            return "Cinematic"
+        case .minimalist:
+            return "Minimalist"
+        case .lyrical:
+            return "Lyrical"
+        case .dialogueHeavy:
+            return "Dialog-heavy"
+        case .actionHeavy:
+            return "Action-heavy"
+        }
+    }
+}
+
+enum ProseOutputLength: String, Codable, CaseIterable, Equatable {
+    case short
+    case medium
+    case long
+
+    var label: String {
+        switch self {
+        case .short:
+            return "Short"
+        case .medium:
+            return "Medium"
+        case .long:
+            return "Long"
+        }
+    }
+}
+
 struct GenerationSettings: Codable, Equatable {
     var provider: AIProvider
     var endpoint: String
@@ -1227,6 +1302,9 @@ struct GenerationSettings: Codable, Equatable {
     var useInlineGeneration: Bool
     var inlineGenerationMode: InlineGenerationMode
     var proseGenerationStrategy: ProseGenerationStrategy
+    var proseOutputTone: ProseOutputTone
+    var proseOutputStyle: ProseOutputStyle
+    var proseOutputLength: ProseOutputLength
     var cleanUpCaretInsertionEchoes: Bool
     var markRewrittenTextAsItalics: Bool
     var incrementalRewrite: Bool
@@ -1256,6 +1334,9 @@ struct GenerationSettings: Codable, Equatable {
         useInlineGeneration: Bool,
         inlineGenerationMode: InlineGenerationMode,
         proseGenerationStrategy: ProseGenerationStrategy,
+        proseOutputTone: ProseOutputTone,
+        proseOutputStyle: ProseOutputStyle,
+        proseOutputLength: ProseOutputLength,
         cleanUpCaretInsertionEchoes: Bool,
         markRewrittenTextAsItalics: Bool,
         incrementalRewrite: Bool,
@@ -1278,6 +1359,9 @@ struct GenerationSettings: Codable, Equatable {
         self.useInlineGeneration = useInlineGeneration
         self.inlineGenerationMode = inlineGenerationMode
         self.proseGenerationStrategy = proseGenerationStrategy
+        self.proseOutputTone = proseOutputTone
+        self.proseOutputStyle = proseOutputStyle
+        self.proseOutputLength = proseOutputLength
         self.cleanUpCaretInsertionEchoes = cleanUpCaretInsertionEchoes
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.incrementalRewrite = incrementalRewrite
@@ -1302,6 +1386,9 @@ struct GenerationSettings: Codable, Equatable {
         case useInlineGeneration
         case inlineGenerationMode
         case proseGenerationStrategy
+        case proseOutputTone
+        case proseOutputStyle
+        case proseOutputLength
         case cleanUpCaretInsertionEchoes
         case markRewrittenTextAsItalics
         case incrementalRewrite
@@ -1341,6 +1428,9 @@ struct GenerationSettings: Codable, Equatable {
         useInlineGeneration = try container.decodeIfPresent(Bool.self, forKey: .useInlineGeneration) ?? false
         inlineGenerationMode = try container.decodeIfPresent(InlineGenerationMode.self, forKey: .inlineGenerationMode) ?? .variants
         proseGenerationStrategy = try container.decodeIfPresent(ProseGenerationStrategy.self, forKey: .proseGenerationStrategy) ?? .direct
+        proseOutputTone = try container.decodeIfPresent(ProseOutputTone.self, forKey: .proseOutputTone) ?? .automatic
+        proseOutputStyle = try container.decodeIfPresent(ProseOutputStyle.self, forKey: .proseOutputStyle) ?? .automatic
+        proseOutputLength = try container.decodeIfPresent(ProseOutputLength.self, forKey: .proseOutputLength) ?? .medium
         cleanUpCaretInsertionEchoes = try container.decodeIfPresent(Bool.self, forKey: .cleanUpCaretInsertionEchoes) ?? true
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
@@ -1368,6 +1458,9 @@ struct GenerationSettings: Codable, Equatable {
         useInlineGeneration: false,
         inlineGenerationMode: .variants,
         proseGenerationStrategy: .direct,
+        proseOutputTone: .automatic,
+        proseOutputStyle: .automatic,
+        proseOutputLength: .medium,
         cleanUpCaretInsertionEchoes: true,
         markRewrittenTextAsItalics: true,
         incrementalRewrite: false,

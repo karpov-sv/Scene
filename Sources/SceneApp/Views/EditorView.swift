@@ -155,6 +155,7 @@ private extension SceneEditorFormatting {
 struct EditorView: View {
     @EnvironmentObject private var store: AppStore
     @State private var showingSceneContextSheet: Bool = false
+    @State private var showingOutputProfilePopover: Bool = false
     @State private var sceneHistorySheetRequest: SceneHistorySheetRequest?
     @State private var generationPayloadPreview: AppStore.WorkshopPayloadPreview?
     @State private var sceneEditorCommand: SceneEditorCommand?
@@ -257,6 +258,27 @@ struct EditorView: View {
 
     private var activeGenerationPrompts: [PromptTemplate] {
         isRewriteMode ? store.rewritePrompts : store.prosePrompts
+    }
+
+    private var proseOutputToneBinding: Binding<ProseOutputTone> {
+        Binding(
+            get: { store.project.settings.proseOutputTone },
+            set: { store.updateProseOutputTone($0) }
+        )
+    }
+
+    private var proseOutputStyleBinding: Binding<ProseOutputStyle> {
+        Binding(
+            get: { store.project.settings.proseOutputStyle },
+            set: { store.updateProseOutputStyle($0) }
+        )
+    }
+
+    private var proseOutputLengthBinding: Binding<ProseOutputLength> {
+        Binding(
+            get: { store.project.settings.proseOutputLength },
+            set: { store.updateProseOutputLength($0) }
+        )
     }
 
     private var hasSelectedSceneProsePlan: Bool {
@@ -780,6 +802,19 @@ struct EditorView: View {
 
                 Spacer(minLength: 0)
 
+                if !isRewriteMode {
+                    Button {
+                        showingOutputProfilePopover.toggle()
+                    } label: {
+                        Label(store.proseOutputProfileSummary, systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .popover(isPresented: $showingOutputProfilePopover, arrowEdge: .bottom) {
+                        proseOutputProfilePopover
+                    }
+                }
+
                 Button {
                     showingSceneContextSheet = true
                 } label: {
@@ -1019,6 +1054,67 @@ struct EditorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .frame(height: generationButtonHeight)
+    }
+
+    private var proseOutputProfilePopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Output Profile")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Tone")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Tone", selection: proseOutputToneBinding) {
+                    ForEach(ProseOutputTone.allCases, id: \.self) { tone in
+                        Text(tone.label).tag(tone)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Style")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Style", selection: proseOutputStyleBinding) {
+                    ForEach(ProseOutputStyle.allCases, id: \.self) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Length")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Length", selection: proseOutputLengthBinding) {
+                    ForEach(ProseOutputLength.allCases, id: \.self) { length in
+                        Text(length.label).tag(length)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Reset") {
+                    store.resetProseOutputProfile()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Text("Applies to prose generation and inline regenerate.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(width: 300)
     }
 
     private func applyEditorToolbarFont(family: String, size: Double) {

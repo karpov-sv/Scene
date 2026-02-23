@@ -48,6 +48,9 @@ final class DomainModelsDecodingTests: XCTestCase {
         let normalized = try decoder.decode(GenerationSettings.self, from: Data(explicitSelectionJSON.utf8))
         XCTAssertEqual(normalized.generationModelSelection, ["model-a", "model-b"])
         XCTAssertEqual(normalized.proseGenerationStrategy, .planThenDraft)
+        XCTAssertEqual(normalized.proseOutputTone, .automatic)
+        XCTAssertEqual(normalized.proseOutputStyle, .automatic)
+        XCTAssertEqual(normalized.proseOutputLength, .medium)
 
         let fallbackSelectionJSON = """
         {
@@ -63,6 +66,28 @@ final class DomainModelsDecodingTests: XCTestCase {
         let fallback = try decoder.decode(GenerationSettings.self, from: Data(fallbackSelectionJSON.utf8))
         XCTAssertEqual(fallback.generationModelSelection, ["fallback-model"])
         XCTAssertEqual(fallback.proseGenerationStrategy, .direct)
+        XCTAssertEqual(fallback.proseOutputTone, .automatic)
+        XCTAssertEqual(fallback.proseOutputStyle, .automatic)
+        XCTAssertEqual(fallback.proseOutputLength, .medium)
+
+        let explicitProfileJSON = """
+        {
+          "provider": "openAI",
+          "endpoint": "",
+          "apiKey": "",
+          "model": "fallback-model",
+          "temperature": 0.8,
+          "maxTokens": 700,
+          "proseOutputTone": "tense",
+          "proseOutputStyle": "cinematic",
+          "proseOutputLength": "short",
+          "defaultSystemPrompt": "sys"
+        }
+        """
+        let explicitProfile = try decoder.decode(GenerationSettings.self, from: Data(explicitProfileJSON.utf8))
+        XCTAssertEqual(explicitProfile.proseOutputTone, .tense)
+        XCTAssertEqual(explicitProfile.proseOutputStyle, .cinematic)
+        XCTAssertEqual(explicitProfile.proseOutputLength, .short)
     }
 
     func testGenerationSettingsDecodingClampsTaskNotificationDuration() throws {

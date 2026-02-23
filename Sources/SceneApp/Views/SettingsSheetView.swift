@@ -261,6 +261,27 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var proseOutputToneBinding: Binding<ProseOutputTone> {
+        Binding(
+            get: { store.project.settings.proseOutputTone },
+            set: { store.updateProseOutputTone($0) }
+        )
+    }
+
+    private var proseOutputStyleBinding: Binding<ProseOutputStyle> {
+        Binding(
+            get: { store.project.settings.proseOutputStyle },
+            set: { store.updateProseOutputStyle($0) }
+        )
+    }
+
+    private var proseOutputLengthBinding: Binding<ProseOutputLength> {
+        Binding(
+            get: { store.project.settings.proseOutputLength },
+            set: { store.updateProseOutputLength($0) }
+        )
+    }
+
     private var maxTokensBinding: Binding<Int> {
         Binding(
             get: { store.project.settings.maxTokens },
@@ -1128,6 +1149,53 @@ struct SettingsSheetView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+                GroupBox("Output Profile Defaults") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Tone")
+                            Spacer(minLength: 0)
+                            Picker("Tone", selection: proseOutputToneBinding) {
+                                ForEach(ProseOutputTone.allCases, id: \.self) { tone in
+                                    Text(tone.label).tag(tone)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(width: 180, alignment: .trailing)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Style")
+                            Spacer(minLength: 0)
+                            Picker("Style", selection: proseOutputStyleBinding) {
+                                ForEach(ProseOutputStyle.allCases, id: \.self) { style in
+                                    Text(style.label).tag(style)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(width: 180, alignment: .trailing)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Length")
+                            Picker("Length", selection: proseOutputLengthBinding) {
+                                ForEach(ProseOutputLength.allCases, id: \.self) { length in
+                                    Text(length.label).tag(length)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        Text("Used by prose generation and inline regenerate. Leave Tone/Style on Auto and Length on Medium for neutral behavior.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 GroupBox("Rewrite") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
@@ -1698,6 +1766,8 @@ struct SettingsSheetView: View {
                 .init(token: "{{scene_before_caret}} / {{scene_after_caret}}", meaning: "Small left/right windows around insertion caret (empty when appending at scene end)."),
                 .init(token: "{{scene_caret_window}}", meaning: "Combined before/after-caret block for insertion-aware prompts."),
                 .init(token: "{{scene_insertion_block}}", meaning: "Standalone insertion guidance + before/after-caret context block (empty when appending at scene end)."),
+                .init(token: "{{output_profile_block}}", meaning: "Selected output constraints block (tone/style/length) for prose generation."),
+                .init(token: "{{output_tone}} / {{output_style}} / {{output_length}}", meaning: "Resolved output profile fields (empty when defaults are neutral)."),
                 .init(token: "{{is_caret_insertion}}", meaning: "`true` when generating in the middle of scene; otherwise `false`."),
                 .init(token: "{{state}}", meaning: "Structured scene-local narrative state block with only filled values."),
                 .init(token: "{{state_pov}} / {{state_tense}} / {{state_location}}", meaning: "Scene-local narrative state fields."),
