@@ -3800,6 +3800,96 @@ final class AppStore: ObservableObject {
         saveProject(debounced: true)
     }
 
+    func storyGraphEdgesLinked(to entryID: UUID?) -> [StoryGraphEdge] {
+        guard let entryID else { return [] }
+        return project.storyGraphEdges.filter { edge in
+            edge.fromCompendiumID == entryID || edge.toCompendiumID == entryID
+        }
+    }
+
+    @discardableResult
+    func addStoryGraphEdge(
+        fromCompendiumID fromID: UUID,
+        toCompendiumID toID: UUID,
+        relation: StoryGraphRelation,
+        weight: Double = 1.0,
+        note: String = ""
+    ) -> UUID? {
+        guard fromID != toID else { return nil }
+        guard compendiumIndex(for: fromID) != nil,
+              compendiumIndex(for: toID) != nil else {
+            return nil
+        }
+
+        let edge = StoryGraphEdge(
+            fromCompendiumID: fromID,
+            toCompendiumID: toID,
+            relation: relation,
+            weight: weight,
+            note: note
+        )
+        project.storyGraphEdges.append(edge)
+        saveProject()
+        return edge.id
+    }
+
+    func updateStoryGraphEdgeEndpoints(
+        _ edgeID: UUID,
+        fromCompendiumID fromID: UUID,
+        toCompendiumID toID: UUID
+    ) {
+        guard fromID != toID else { return }
+        guard compendiumIndex(for: fromID) != nil,
+              compendiumIndex(for: toID) != nil else {
+            return
+        }
+        guard let index = storyGraphEdgeIndex(for: edgeID) else { return }
+
+        if project.storyGraphEdges[index].fromCompendiumID == fromID,
+           project.storyGraphEdges[index].toCompendiumID == toID {
+            return
+        }
+
+        project.storyGraphEdges[index].fromCompendiumID = fromID
+        project.storyGraphEdges[index].toCompendiumID = toID
+        project.storyGraphEdges[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func updateStoryGraphEdgeRelation(_ edgeID: UUID, relation: StoryGraphRelation) {
+        guard let index = storyGraphEdgeIndex(for: edgeID) else { return }
+        guard project.storyGraphEdges[index].relation != relation else { return }
+        project.storyGraphEdges[index].relation = relation
+        project.storyGraphEdges[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func updateStoryGraphEdgeWeight(_ edgeID: UUID, weight: Double) {
+        guard let index = storyGraphEdgeIndex(for: edgeID) else { return }
+        let normalized = min(max(weight, 0), 1)
+        guard abs(project.storyGraphEdges[index].weight - normalized) > 0.0001 else { return }
+        project.storyGraphEdges[index].weight = normalized
+        project.storyGraphEdges[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func updateStoryGraphEdgeNote(_ edgeID: UUID, note: String) {
+        guard let index = storyGraphEdgeIndex(for: edgeID) else { return }
+        guard project.storyGraphEdges[index].note != note else { return }
+        project.storyGraphEdges[index].note = note
+        project.storyGraphEdges[index].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func deleteStoryGraphEdge(_ edgeID: UUID) {
+        let previousCount = project.storyGraphEdges.count
+        project.storyGraphEdges.removeAll { edge in
+            edge.id == edgeID
+        }
+        guard project.storyGraphEdges.count != previousCount else { return }
+        saveProject()
+    }
+
     // MARK: - Prose Generation
 
     func applyBeatInputFromHistory(_ text: String) {
@@ -11253,6 +11343,10 @@ final class AppStore: ObservableObject {
 
     private func compendiumIndex(for entryID: UUID) -> Int? {
         project.compendium.firstIndex(where: { $0.id == entryID })
+    }
+
+    private func storyGraphEdgeIndex(for edgeID: UUID) -> Int? {
+        project.storyGraphEdges.firstIndex(where: { $0.id == edgeID })
     }
 
     private func workshopSessionIndex(for sessionID: UUID) -> Int? {

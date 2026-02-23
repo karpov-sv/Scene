@@ -182,7 +182,7 @@ struct CompendiumView: View {
                 .padding(.bottom, 0)
             } else {
                 ContentUnavailableView("No Entry Selected", systemImage: "books.vertical", description: Text("Select or add a compendium entry."))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .alert("Delete Entry", isPresented: $confirmDeleteEntry) {
@@ -216,7 +216,7 @@ struct CompendiumView: View {
                 store.selectCompendiumEntry(filteredEntries.first?.id)
             }
         }
-        .onChange(of: store.pendingCompendiumTextReveal?.requestID) { _, reqID in
+        .onChange(of: store.pendingCompendiumTextReveal?.requestID) { _, _ in
             guard let reveal = store.pendingCompendiumTextReveal else { return }
             bodyRevealRequest = .init(
                 id: reveal.requestID,
