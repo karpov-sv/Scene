@@ -100,6 +100,12 @@ struct ScenePlanPanelView: View {
                 .help("Draft from Plan")
                 .disabled(store.isProseGenerationRunning || !store.canDraftFromSelectedScenePlan || store.selectedScene == nil)
 
+                Spacer(minLength: 0)
+
+                Text("\(store.selectedSceneProsePlanDraft.count) chars")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
                 Button {
                     store.clearSelectedSceneProsePlanDraft()
                 } label: {
@@ -109,15 +115,13 @@ struct ScenePlanPanelView: View {
                 .help("Clear Plan")
                 .disabled(store.selectedSceneProsePlanDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Spacer(minLength: 0)
-
-                Text("\(store.selectedSceneProsePlanDraft.count) chars")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.system(size: 14, weight: .bold))
     }
 
     private var editor: some View {
