@@ -347,7 +347,7 @@ struct EditorView: View {
 
     private var proseGenerationReviewPresented: Binding<Bool> {
         Binding(
-            get: { store.proseGenerationReview != nil },
+            get: { store.proseReviewSession != nil },
             set: { isPresented in
                 if !isPresented {
                     store.dismissProseGenerationReview()
@@ -739,7 +739,7 @@ struct EditorView: View {
         }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottomTrailing) {
-                if let state = store.inlineVariantGeneration,
+                if let state = store.inlineVariantSession,
                    state.sceneID == store.selectedSceneID {
                     InlineVariantsTrayView()
                         .padding(.trailing, 10)
@@ -1042,13 +1042,6 @@ struct EditorView: View {
     private func historyMenuTitle(_ value: String) -> String {
         let singleLine = value.replacingOccurrences(of: "\n", with: " ")
         return singleLine.count > 80 ? String(singleLine.prefix(80)) + "..." : singleLine
-    }
-
-    private var inlineGenerationModeBinding: Binding<InlineGenerationMode> {
-        Binding(
-            get: { store.project.settings.inlineGenerationMode },
-            set: { store.updateInlineGenerationMode($0) }
-        )
     }
 
     @ViewBuilder
@@ -4099,7 +4092,7 @@ private struct ProseGenerationReviewSheet: View {
 
     var body: some View {
         Group {
-            if let review = store.proseGenerationReview {
+            if let review = store.proseReviewSession {
                 VStack(spacing: 0) {
                     header(review: review)
                     Divider()
@@ -4139,7 +4132,7 @@ private struct ProseGenerationReviewSheet: View {
         }
     }
 
-    private func header(review: AppStore.ProseGenerationReviewState) -> some View {
+    private func header(review: AppStore.ProseCandidateSessionState) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Generation Candidates")
@@ -4189,7 +4182,7 @@ private struct ProseGenerationReviewSheet: View {
                     Text(candidate.model)
                         .font(.headline)
 
-                    statusBadge(candidate.status)
+                    GenerationCandidateStatusBadge(status: candidate.status)
 
                     if let elapsedSeconds = candidate.elapsedSeconds {
                         Text(String(format: "%.1fs", elapsedSeconds))
@@ -4206,31 +4199,17 @@ private struct ProseGenerationReviewSheet: View {
 
                 switch candidate.status {
                 case .completed:
-                    ScrollView {
-                        Text(candidate.text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                    }
-                    .frame(minHeight: 140, maxHeight: 280)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    GenerationCandidateTextPreview(
+                        text: candidate.text,
+                        placeholder: "No text.",
+                        minHeight: 140,
+                        maxHeight: 280,
+                        chromeStyle: .outlined
                     )
                 case .failed:
-                    Text(candidate.errorMessage ?? "Generation failed.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-                        )
+                    GenerationCandidateErrorBox(
+                        message: candidate.errorMessage ?? "Generation failed."
+                    )
                 case .running:
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
@@ -4242,18 +4221,12 @@ private struct ProseGenerationReviewSheet: View {
                         }
 
                         if !candidate.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            ScrollView {
-                                Text(candidate.text)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                            }
-                            .frame(minHeight: 100, maxHeight: 220)
-                            .background(Color(nsColor: .textBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                            GenerationCandidateTextPreview(
+                                text: candidate.text,
+                                placeholder: "Generating...",
+                                minHeight: 100,
+                                maxHeight: 220,
+                                chromeStyle: .outlined
                             )
                         }
                     }
@@ -4293,46 +4266,6 @@ private struct ProseGenerationReviewSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             EmptyView()
-        }
-    }
-
-    private func statusBadge(_ status: AppStore.ProseGenerationCandidate.Status) -> some View {
-        Text(statusLabel(status))
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(statusColor(status))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(statusColor(status).opacity(0.15))
-            )
-    }
-
-    private func statusLabel(_ status: AppStore.ProseGenerationCandidate.Status) -> String {
-        switch status {
-        case .queued:
-            return "Queued"
-        case .running:
-            return "Running"
-        case .completed:
-            return "Ready"
-        case .failed:
-            return "Failed"
-        case .cancelled:
-            return "Cancelled"
-        }
-    }
-
-    private func statusColor(_ status: AppStore.ProseGenerationCandidate.Status) -> Color {
-        switch status {
-        case .queued, .running:
-            return .secondary
-        case .completed:
-            return .green
-        case .failed:
-            return .red
-        case .cancelled:
-            return .orange
         }
     }
 

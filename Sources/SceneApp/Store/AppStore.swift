@@ -401,15 +401,26 @@ final class AppStore: ObservableObject {
         var elapsedSeconds: Double?
     }
 
-    struct ProseGenerationReviewState: Identifiable, Equatable {
+    enum ProseCandidateSessionPresentation: String, Equatable {
+        case reviewSheet
+        case inlineTray
+    }
+
+    struct ProseCandidateSessionState: Identifiable, Equatable {
         let id: UUID
+        let presentation: ProseCandidateSessionPresentation
+        var sceneID: UUID
         var beat: String
         var sceneTitle: String
         var promptTitle: String
         var renderWarnings: [String]
+        var request: TextGenerationRequest?
         var candidates: [ProseGenerationCandidate]
+        var selectedIndex: Int
+        var followsActiveCandidate: Bool
         var startedAt: Date
         var isRunning: Bool
+        var wasCancelled: Bool
 
         var completedCount: Int {
             candidates.filter { $0.status.isTerminal }.count
@@ -417,6 +428,11 @@ final class AppStore: ObservableObject {
 
         var successCount: Int {
             candidates.filter { $0.status == .completed }.count
+        }
+
+        var selectedCandidate: ProseGenerationCandidate? {
+            guard candidates.indices.contains(selectedIndex) else { return nil }
+            return candidates[selectedIndex]
         }
     }
 
@@ -439,7 +455,7 @@ final class AppStore: ObservableObject {
     }
 
     private struct ProseGenerationSessionContext {
-        let reviewID: UUID
+        let sessionID: UUID
         let sceneID: UUID
         let beat: String
         let strategy: ProseGenerationStrategy
@@ -465,6 +481,12 @@ final class AppStore: ObservableObject {
         let errorMessage: String?
         let cancelled: Bool
         let elapsedSeconds: Double
+    }
+
+    private enum ProseGenerationRunPhase: Equatable {
+        case planning
+        case generating
+        case cancelling
     }
 
     private struct PromptPreviewSceneContext {
@@ -508,32 +530,6 @@ final class AppStore: ObservableObject {
         var generatedText: String
     }
 
-    struct InlineVariantGenerationState: Identifiable, Equatable {
-        let id: UUID
-        let sceneID: UUID
-        let beat: String
-        let request: TextGenerationRequest
-        var candidates: [ProseGenerationCandidate]
-        var selectedIndex: Int
-        var followsActiveCandidate: Bool
-        var startedAt: Date
-        var isRunning: Bool
-        var wasCancelled: Bool
-
-        var completedCount: Int {
-            candidates.filter { $0.status.isTerminal }.count
-        }
-
-        var successCount: Int {
-            candidates.filter { $0.status == .completed }.count
-        }
-
-        var selectedCandidate: ProseGenerationCandidate? {
-            guard candidates.indices.contains(selectedIndex) else { return nil }
-            return candidates[selectedIndex]
-        }
-    }
-
     struct TaskNotificationToast: Identifiable, Equatable {
         enum Style: Equatable {
             case progress
@@ -571,11 +567,10 @@ final class AppStore: ObservableObject {
 
     @Published var beatInput: String = ""
     @Published private var prosePlanDraftByScene: [UUID: String] = [:]
-    @Published var isGenerating: Bool = false
+    @Published private var proseRunPhase: ProseGenerationRunPhase?
     @Published var generationStatus: String = ""
     @Published private(set) var proseLiveUsage: TokenUsage?
-    @Published var proseGenerationReview: ProseGenerationReviewState?
-    @Published private(set) var inlineVariantGeneration: InlineVariantGenerationState?
+    @Published private(set) var proseCandidateSession: ProseCandidateSessionState?
     @Published var lastError: String?
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
@@ -624,7 +619,8 @@ final class AppStore: ObservableObject {
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
     private var workshopRollingMemoryTask: Task<Void, Never>?
-    private var proseRequestTask: Task<Void, Never>?
+    private var proseRunTask: Task<Void, Never>?
+    private var proseRunID: UUID?
     private var searchDebounceTask: Task<Void, Never>?
     private var documentSaveInProgress: Bool = false
     private var pendingDocumentSaveRequest: Bool = false
@@ -705,7 +701,7 @@ final class AppStore: ObservableObject {
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
         workshopRollingMemoryTask?.cancel()
-        proseRequestTask?.cancel()
+        proseRunTask?.cancel()
         for task in toastDismissTasks.values {
             task.cancel()
         }
@@ -1045,8 +1041,28 @@ final class AppStore: ObservableObject {
         !selectedSceneProsePlanDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var isGenerating: Bool {
+        proseRunTask != nil
+    }
+
     var isProseGenerationRunning: Bool {
-        proseRequestTask != nil || isGenerating
+        proseRunTask != nil
+    }
+
+    var proseReviewSession: ProseCandidateSessionState? {
+        guard let session = proseCandidateSession,
+              session.presentation == .reviewSheet else {
+            return nil
+        }
+        return session
+    }
+
+    var inlineVariantSession: ProseCandidateSessionState? {
+        guard let session = proseCandidateSession,
+              session.presentation == .inlineTray else {
+            return nil
+        }
+        return session
     }
 
     var canRetryLastWorkshopTurn: Bool {
@@ -2134,7 +2150,7 @@ final class AppStore: ObservableObject {
     }
 
     private func cancelBeatGenerationForSceneSwitchIfNeeded() {
-        guard proseRequestTask != nil else { return }
+        guard proseRunTask != nil else { return }
         cancelBeatGeneration()
     }
 
@@ -3350,10 +3366,9 @@ final class AppStore: ObservableObject {
         beatInput = ""
         generationStatus = ""
         workshopStatus = ""
-        isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
         inlineProseRegenerationState = nil
         workshopLiveUsage = nil
@@ -4063,6 +4078,149 @@ final class AppStore: ObservableObject {
 
     // MARK: - Prose Generation
 
+    private func beginProseRun(
+        initialPhase: ProseGenerationRunPhase,
+        operation: @escaping @MainActor () async -> Void
+    ) {
+        guard proseRunTask == nil else { return }
+
+        let runID = UUID()
+        proseRunID = runID
+        proseRunPhase = initialPhase
+        proseRunTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.finishProseRun(id: runID)
+            }
+            await operation()
+        }
+    }
+
+    private func finishProseRun(id: UUID) {
+        guard proseRunID == id else { return }
+        proseRunTask = nil
+        proseRunID = nil
+        proseRunPhase = nil
+    }
+
+    private func updateProseRunPhase(_ phase: ProseGenerationRunPhase) {
+        guard proseRunTask != nil else { return }
+        proseRunPhase = phase
+    }
+
+    private func updateProseCandidateSession(
+        id: UUID? = nil,
+        presentation: ProseCandidateSessionPresentation? = nil,
+        _ mutate: (inout ProseCandidateSessionState) -> Void
+    ) {
+        guard var session = proseCandidateSession else { return }
+        if let id, session.id != id {
+            return
+        }
+        if let presentation, session.presentation != presentation {
+            return
+        }
+        mutate(&session)
+        proseCandidateSession = session
+    }
+
+    private func dismissCandidateSession(_ presentation: ProseCandidateSessionPresentation) {
+        guard let session = proseCandidateSession,
+              session.presentation == presentation else {
+            return
+        }
+        proseCandidateSession = nil
+        if presentation == .reviewSheet {
+            proseGenerationSessionContext = nil
+        }
+    }
+
+    private func retryReviewCandidates(candidateID: UUID?) {
+        guard !isGenerating else { return }
+        guard let review = proseReviewSession,
+              let context = proseGenerationSessionContext else {
+            return
+        }
+
+        let retryCandidates: [ProseGenerationCandidate]
+        if let candidateID {
+            guard let candidate = review.candidates.first(where: { $0.id == candidateID }) else {
+                return
+            }
+            retryCandidates = [candidate]
+        } else {
+            retryCandidates = review.candidates
+        }
+
+        let models = retryCandidates.map(\.model)
+        let idMap = Dictionary(uniqueKeysWithValues: retryCandidates.map { ($0.model, $0.id) })
+        submitBeatGeneration(
+            modelsOverride: models,
+            candidateIDsByModel: idMap,
+            beatOverride: context.beat,
+            sceneIDOverride: context.sceneID,
+            strategyOverride: context.strategy,
+            planOverride: context.plan
+        )
+    }
+
+    @discardableResult
+    private func insertCandidateText(
+        _ candidate: ProseGenerationCandidate,
+        from session: ProseCandidateSessionState
+    ) -> Bool {
+        let trimmed = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            generationStatus = "No generated text to insert."
+            return false
+        }
+
+        switch session.presentation {
+        case .reviewSheet:
+            appendGeneratedText(candidate.text)
+            proseLiveUsage = candidate.usage
+            generationStatus = "Inserted output from \(candidate.model)."
+            beatInput = ""
+            return true
+        case .inlineTray:
+            guard let request = session.request else {
+                generationStatus = "Variant request is unavailable."
+                return false
+            }
+            guard let location = sceneLocation(for: session.sceneID) else {
+                generationStatus = "Scene not found."
+                return false
+            }
+
+            let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
+            guard let base = makeGenerationAppendBase(for: session.sceneID) else {
+                generationStatus = "Scene not found."
+                return false
+            }
+
+            let sanitized = sanitizedGeneratedInsertionText(trimmed, base: base)
+            guard !sanitized.isEmpty else {
+                generationStatus = "No variant text to insert."
+                return false
+            }
+
+            rememberInlineProseRegenerationState(
+                sceneID: session.sceneID,
+                request: request,
+                originalSceneContent: scene.content,
+                originalSceneRichTextData: scene.contentRTFData,
+                base: base,
+                generated: sanitized
+            )
+            setGeneratedTextPreview(sceneID: session.sceneID, base: base, generated: sanitized)
+
+            proseLiveUsage = normalizedTokenUsage(from: candidate.usage, request: request, response: sanitized)
+            generationStatus = "Inserted variant."
+            beatInput = ""
+            return true
+        }
+    }
+
     func applyBeatInputFromHistory(_ text: String) {
         beatInput = text
     }
@@ -4076,13 +4234,8 @@ final class AppStore: ObservableObject {
         planOverride: String? = nil
     ) {
         guard workspaceTab == "writing" else { return }
-        guard proseRequestTask == nil else { return }
-
-        proseRequestTask = Task { @MainActor [weak self] in
+        beginProseRun(initialPhase: .planning) { [weak self] in
             guard let self else { return }
-            defer {
-                self.proseRequestTask = nil
-            }
             await self.generateFromBeat(
                 modelsOverride: modelsOverride,
                 candidateIDsByModel: candidateIDsByModel,
@@ -4100,7 +4253,7 @@ final class AppStore: ObservableObject {
 
     func submitGraphPathPlanUpdate() {
         guard workspaceTab == "writing" else { return }
-        guard proseRequestTask == nil else { return }
+        guard proseRunTask == nil else { return }
         guard let scene = selectedScene else {
             generationStatus = "Select a scene first."
             return
@@ -4109,11 +4262,8 @@ final class AppStore: ObservableObject {
         let beat = beatInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let model = resolveGenerationModelSelection(modelsOverride: nil).first
 
-        proseRequestTask = Task { @MainActor [weak self] in
+        beginProseRun(initialPhase: .planning) { [weak self] in
             guard let self else { return }
-            defer {
-                self.proseRequestTask = nil
-            }
             await self.generateGraphPathPlan(
                 beat: beat,
                 scene: scene,
@@ -4132,26 +4282,28 @@ final class AppStore: ObservableObject {
     }
 
     func cancelBeatGeneration() {
-        proseRequestTask?.cancel()
+        proseRunPhase = .cancelling
+        proseRunTask?.cancel()
         generationStatus = "Cancelling..."
     }
 
     func dismissInlineVariantGeneration() {
-        inlineVariantGeneration = nil
+        dismissCandidateSession(.inlineTray)
     }
 
     func selectInlineVariantCandidate(index: Int) {
-        guard var state = inlineVariantGeneration else { return }
+        guard let state = inlineVariantSession else { return }
         let clamped = min(max(index, 0), max(0, state.candidates.count - 1))
         guard state.selectedIndex != clamped else { return }
-        state.selectedIndex = clamped
-        state.followsActiveCandidate = false
-        inlineVariantGeneration = state
+        updateProseCandidateSession(id: state.id, presentation: .inlineTray) { session in
+            session.selectedIndex = clamped
+            session.followsActiveCandidate = false
+        }
     }
 
     func regenerateInlineVariants() {
-        guard proseRequestTask == nil else { return }
-        guard let state = inlineVariantGeneration,
+        guard proseRunTask == nil else { return }
+        guard let state = inlineVariantSession,
               state.sceneID == selectedSceneID else {
             submitBeatGeneration()
             return
@@ -4163,74 +4315,40 @@ final class AppStore: ObservableObject {
         guard let location = sceneLocation(for: state.sceneID) else { return }
         let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
 
-        proseRequestTask = Task { @MainActor [weak self] in
+        beginProseRun(initialPhase: .generating) { [weak self] in
             guard let self else { return }
-            defer {
-                self.proseRequestTask = nil
-            }
             await self.generateFromBeatInlineVariants(
                 beat: beatOverride,
                 scene: scene,
-                modelOverride: state.request.model,
+                modelOverride: state.request?.model,
                 planOverride: self.prosePlanDraft(for: state.sceneID)
             )
         }
     }
 
     func acceptInlineVariantCandidate() {
-        guard proseRequestTask == nil else { return }
-        guard !isGenerating else { return }
+        guard proseRunTask == nil else { return }
         guard let selectedSceneID,
-              let state = inlineVariantGeneration,
+              let state = inlineVariantSession,
               state.sceneID == selectedSceneID,
-              let candidate = state.selectedCandidate,
-              let location = sceneLocation(for: selectedSceneID) else {
+              let candidate = state.selectedCandidate else {
             return
         }
-
-        let scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
-        guard let base = makeGenerationAppendBase(for: selectedSceneID) else {
-            generationStatus = "Scene not found."
-            return
-        }
-
-        let normalized = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sanitized = sanitizedGeneratedInsertionText(normalized, base: base)
-        guard !sanitized.isEmpty else {
-            generationStatus = "No variant text to insert."
-            return
-        }
-
-        rememberInlineProseRegenerationState(
-            sceneID: selectedSceneID,
-            request: state.request,
-            originalSceneContent: scene.content,
-            originalSceneRichTextData: scene.contentRTFData,
-            base: base,
-            generated: sanitized
-        )
-        setGeneratedTextPreview(sceneID: selectedSceneID, base: base, generated: sanitized)
-
-        proseLiveUsage = normalizedTokenUsage(from: candidate.usage, request: state.request, response: sanitized)
-        generationStatus = "Inserted variant."
-        beatInput = ""
-        inlineVariantGeneration = nil
+        guard insertCandidateText(candidate, from: state) else { return }
+        dismissCandidateSession(.inlineTray)
         saveProject()
     }
 
     func retryLastInlineProseGeneration() {
-        guard proseRequestTask == nil else { return }
+        guard proseRunTask == nil else { return }
         guard canRetryLastInlineProseGeneration else {
             generationStatus = "Regeneration is unavailable."
             return
         }
         guard let state = inlineProseRegenerationState else { return }
 
-        proseRequestTask = Task { @MainActor [weak self] in
+        beginProseRun(initialPhase: .generating) { [weak self] in
             guard let self else { return }
-            defer {
-                self.proseRequestTask = nil
-            }
             await self.regenerateInlineProse(using: state)
         }
     }
@@ -4280,56 +4398,26 @@ final class AppStore: ObservableObject {
         if isGenerating {
             cancelBeatGeneration()
         }
-        proseGenerationReview = nil
-        proseGenerationSessionContext = nil
+        dismissCandidateSession(.reviewSheet)
     }
 
     func retryAllProseGenerationCandidates() {
-        guard !isGenerating else { return }
-        guard let review = proseGenerationReview else { return }
-        guard let context = proseGenerationSessionContext else { return }
-        let models = review.candidates.map(\.model)
-        let idMap = Dictionary(uniqueKeysWithValues: review.candidates.map { ($0.model, $0.id) })
-        submitBeatGeneration(
-            modelsOverride: models,
-            candidateIDsByModel: idMap,
-            beatOverride: context.beat,
-            sceneIDOverride: context.sceneID,
-            strategyOverride: context.strategy,
-            planOverride: context.plan
-        )
+        retryReviewCandidates(candidateID: nil)
     }
 
     func retryProseGenerationCandidate(_ candidateID: UUID) {
-        guard !isGenerating else { return }
-        guard let review = proseGenerationReview,
-              let context = proseGenerationSessionContext,
-              let candidate = review.candidates.first(where: { $0.id == candidateID }) else {
-            return
-        }
-        submitBeatGeneration(
-            modelsOverride: [candidate.model],
-            candidateIDsByModel: [candidate.model: candidate.id],
-            beatOverride: context.beat,
-            sceneIDOverride: context.sceneID,
-            strategyOverride: context.strategy,
-            planOverride: context.plan
-        )
+        retryReviewCandidates(candidateID: candidateID)
     }
 
     func acceptProseGenerationCandidate(_ candidateID: UUID) {
-        guard let review = proseGenerationReview,
+        guard let review = proseReviewSession,
               let candidate = review.candidates.first(where: { $0.id == candidateID }),
               candidate.status == .completed else {
             return
         }
 
-        appendGeneratedText(candidate.text)
-        proseLiveUsage = candidate.usage
-        generationStatus = "Inserted output from \(candidate.model)."
-        beatInput = ""
-        proseGenerationReview = nil
-        proseGenerationSessionContext = nil
+        guard insertCandidateText(candidate, from: review) else { return }
+        dismissCandidateSession(.reviewSheet)
         saveProject()
     }
 
@@ -5398,6 +5486,122 @@ final class AppStore: ObservableObject {
 
     // MARK: - Generation
 
+    private static func executeProseCandidateRequest(
+        candidateID: UUID,
+        request: TextGenerationRequest,
+        provider: AIProvider,
+        settings: GenerationSettings,
+        openAIService: OpenAICompatibleAIService,
+        anthropicService: AnthropicAIService,
+        onPartial: (@MainActor (String) -> Void)?
+    ) async -> ProseCandidateRunResult {
+        let started = Date()
+        do {
+            let result: TextGenerationResult
+            switch provider {
+            case .anthropic:
+                result = try await anthropicService.generateTextResult(
+                    request,
+                    settings: settings,
+                    onPartial: onPartial
+                )
+            case .openAI, .openRouter, .lmStudio, .openAICompatible:
+                result = try await openAIService.generateTextResult(
+                    request,
+                    settings: settings,
+                    onPartial: onPartial
+                )
+            }
+
+            return ProseCandidateRunResult(
+                candidateID: candidateID,
+                request: request,
+                text: result.text,
+                usage: result.usage,
+                errorMessage: nil,
+                cancelled: false,
+                elapsedSeconds: Date().timeIntervalSince(started)
+            )
+        } catch is CancellationError {
+            return ProseCandidateRunResult(
+                candidateID: candidateID,
+                request: request,
+                text: nil,
+                usage: nil,
+                errorMessage: nil,
+                cancelled: true,
+                elapsedSeconds: Date().timeIntervalSince(started)
+            )
+        } catch {
+            return ProseCandidateRunResult(
+                candidateID: candidateID,
+                request: request,
+                text: nil,
+                usage: nil,
+                errorMessage: error.localizedDescription,
+                cancelled: false,
+                elapsedSeconds: Date().timeIntervalSince(started)
+            )
+        }
+    }
+
+    private func finalizeCandidateGenerationRun(
+        sessionID: UUID,
+        presentation: ProseCandidateSessionPresentation,
+        toastID: UUID?,
+        wasCancelled: Bool,
+        unitLabel: String,
+        readyToastMessage: String,
+        noOutputToastMessage: String
+    ) {
+        if wasCancelled {
+            generationStatus = "Generation cancelled."
+            switch presentation {
+            case .reviewSheet:
+                markRunningProseCandidatesCancelled(sessionID: sessionID)
+            case .inlineTray:
+                markInlineVariantCandidatesCancelled(generationID: sessionID)
+            }
+            finishTaskCancelledToast(toastID, "Generation cancelled.")
+        }
+
+        guard var session = proseCandidateSession,
+              session.id == sessionID,
+              session.presentation == presentation else {
+            if !wasCancelled {
+                generationStatus = "Generation finished."
+                finishTaskSuccessToast(toastID, "Generation completed.")
+            }
+            return
+        }
+
+        session.isRunning = false
+        session.wasCancelled = wasCancelled
+        proseCandidateSession = session
+
+        if presentation == .inlineTray {
+            proseLiveUsage = aggregatedInlineVariantUsage(state: session)
+        }
+
+        if wasCancelled {
+            if session.successCount > 0 {
+                let label = session.successCount == 1 ? unitLabel : "\(unitLabel)s"
+                generationStatus = "Generation cancelled. \(session.successCount) \(label) ready."
+            }
+            return
+        }
+
+        if session.successCount > 0 {
+            let label = session.successCount == 1 ? unitLabel : "\(unitLabel)s"
+            generationStatus = "Review \(session.successCount) \(label) and accept one."
+            finishTaskSuccessToast(toastID, readyToastMessage)
+            return
+        }
+
+        generationStatus = "No \(unitLabel) was generated."
+        finishTaskWarningToast(toastID, noOutputToastMessage)
+    }
+
     func generateFromBeat(
         modelsOverride: [String]? = nil,
         candidateIDsByModel: [String: UUID] = [:],
@@ -5407,7 +5611,7 @@ final class AppStore: ObservableObject {
         planOverride: String? = nil
     ) async {
         let beat = (beatOverride ?? beatInput).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isGenerating else { return }
+        updateProseRunPhase(.planning)
         let scene: Scene?
         if let sceneIDOverride, let location = sceneLocation(for: sceneIDOverride) {
             scene = project.chapters[location.chapterIndex].scenes[location.sceneIndex]
@@ -5525,14 +5729,19 @@ final class AppStore: ObservableObject {
         let promptTitleRaw = activeProsePrompt?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let promptTitle = promptTitleRaw.isEmpty ? "Writing Prompt" : promptTitleRaw
 
-        let reviewID: UUID
-        if !candidateIDsByModel.isEmpty, var existing = proseGenerationReview {
+        let sessionID: UUID
+        if !candidateIDsByModel.isEmpty, var existing = proseReviewSession {
             existing.beat = beat
+            existing.sceneID = scene.id
             existing.sceneTitle = sceneTitle
             existing.promptTitle = promptTitle
             existing.renderWarnings = renderWarnings
+            existing.request = nil
+            existing.selectedIndex = 0
+            existing.followsActiveCandidate = false
             existing.startedAt = .now
             existing.isRunning = true
+            existing.wasCancelled = false
 
             for input in candidateRequests {
                 if let index = existing.candidates.firstIndex(where: { $0.id == input.candidateID }) {
@@ -5556,16 +5765,19 @@ final class AppStore: ObservableObject {
                 }
             }
 
-            proseGenerationReview = existing
-            reviewID = existing.id
+            proseCandidateSession = existing
+            sessionID = existing.id
         } else {
-            reviewID = UUID()
-            proseGenerationReview = ProseGenerationReviewState(
-                id: reviewID,
+            sessionID = UUID()
+            proseCandidateSession = ProseCandidateSessionState(
+                id: sessionID,
+                presentation: .reviewSheet,
+                sceneID: scene.id,
                 beat: beat,
                 sceneTitle: sceneTitle,
                 promptTitle: promptTitle,
                 renderWarnings: renderWarnings,
+                request: nil,
                 candidates: candidateRequests.map { input in
                     ProseGenerationCandidate(
                         id: input.candidateID,
@@ -5575,15 +5787,18 @@ final class AppStore: ObservableObject {
                         usage: nil,
                         errorMessage: nil,
                         elapsedSeconds: nil
-                    )
+                        )
                 },
+                selectedIndex: 0,
+                followsActiveCandidate: false,
                 startedAt: .now,
-                isRunning: true
+                isRunning: true,
+                wasCancelled: false
             )
         }
 
         proseGenerationSessionContext = ProseGenerationSessionContext(
-            reviewID: reviewID,
+            sessionID: sessionID,
             sceneID: scene.id,
             beat: beat,
             strategy: strategy,
@@ -5591,14 +5806,10 @@ final class AppStore: ObservableObject {
         )
         rememberBeatInputHistory(beat, for: scene.id)
 
-        isGenerating = true
+        updateProseRunPhase(.generating)
         proseLiveUsage = nil
         generationStatus = "Generating 0/\(candidateRequests.count)..."
         var toastID = startTaskProgressToast("Generating candidates (0/\(candidateRequests.count))…")
-
-        defer {
-            isGenerating = false
-        }
 
         let settingsForRun = project.settings
         let streamCandidates = shouldUseStreaming
@@ -5612,75 +5823,38 @@ final class AppStore: ObservableObject {
         await withTaskGroup(of: ProseCandidateRunResult.self) { group in
             for input in candidateRequests {
                 group.addTask {
-                    let started = Date()
                     let partialHandler: (@MainActor (String) -> Void)?
                     if streamCandidates {
+                        let started = Date()
                         partialHandler = { [weak self] partial in
                             guard let self else { return }
                             self.updateProseCandidatePartial(
                                 candidateID: input.candidateID,
                                 partial: partial,
                                 request: input.request,
-                                reviewID: reviewID,
+                                sessionID: sessionID,
                                 startedAt: started
                             )
                         }
                     } else {
                         partialHandler = nil
                     }
-                    do {
-                        let result: TextGenerationResult
-                        switch provider {
-                        case .anthropic:
-                            result = try await anthropicService.generateTextResult(
-                                input.request,
-                                settings: settingsForRun,
-                                onPartial: partialHandler
-                            )
-                        case .openAI, .openRouter, .lmStudio, .openAICompatible:
-                            result = try await openAIService.generateTextResult(
-                                input.request,
-                                settings: settingsForRun,
-                                onPartial: partialHandler
-                            )
-                        }
 
-                        return ProseCandidateRunResult(
-                            candidateID: input.candidateID,
-                            request: input.request,
-                            text: result.text,
-                            usage: result.usage,
-                            errorMessage: nil,
-                            cancelled: false,
-                            elapsedSeconds: Date().timeIntervalSince(started)
-                        )
-                    } catch is CancellationError {
-                        return ProseCandidateRunResult(
-                            candidateID: input.candidateID,
-                            request: input.request,
-                            text: nil,
-                            usage: nil,
-                            errorMessage: nil,
-                            cancelled: true,
-                            elapsedSeconds: Date().timeIntervalSince(started)
-                        )
-                    } catch {
-                        return ProseCandidateRunResult(
-                            candidateID: input.candidateID,
-                            request: input.request,
-                            text: nil,
-                            usage: nil,
-                            errorMessage: error.localizedDescription,
-                            cancelled: false,
-                            elapsedSeconds: Date().timeIntervalSince(started)
-                        )
-                    }
+                    return await Self.executeProseCandidateRequest(
+                        candidateID: input.candidateID,
+                        request: input.request,
+                        provider: provider,
+                        settings: settingsForRun,
+                        openAIService: openAIService,
+                        anthropicService: anthropicService,
+                        onPartial: partialHandler
+                    )
                 }
             }
 
             for await outcome in group {
                 completed += 1
-                applyProseCandidateRunResult(outcome, reviewID: reviewID)
+                applyProseCandidateRunResult(outcome, sessionID: sessionID)
                 generationStatus = "Generating \(completed)/\(total)..."
                 if let existingToastID = toastID {
                     toastID = showTaskNotification(
@@ -5694,37 +5868,15 @@ final class AppStore: ObservableObject {
         }
 
         let wasCancelled = Task.isCancelled
-        if wasCancelled {
-            generationStatus = "Generation cancelled."
-            markRunningProseCandidatesCancelled(reviewID: reviewID)
-            finishTaskCancelledToast(toastID, "Generation cancelled.")
-        }
-
-        if var review = proseGenerationReview, review.id == reviewID {
-            review.isRunning = false
-            proseGenerationReview = review
-
-            if wasCancelled {
-                if review.successCount > 0 {
-                    let label = review.successCount == 1 ? "candidate" : "candidates"
-                    generationStatus = "Generation cancelled. \(review.successCount) \(label) completed."
-                }
-            } else if review.successCount > 0 {
-                let label = review.successCount == 1 ? "candidate" : "candidates"
-                generationStatus = "Review \(review.successCount) \(label) and accept one."
-                if !wasCancelled {
-                    finishTaskSuccessToast(toastID, "Generation completed. \(review.successCount) \(label) ready.")
-                }
-            } else {
-                generationStatus = "No candidate was generated."
-                if !wasCancelled {
-                    finishTaskWarningToast(toastID, "Generation completed with no candidates.")
-                }
-            }
-        } else if !wasCancelled {
-            generationStatus = "Generation finished."
-            finishTaskSuccessToast(toastID, "Generation completed.")
-        }
+        finalizeCandidateGenerationRun(
+            sessionID: sessionID,
+            presentation: .reviewSheet,
+            toastID: toastID,
+            wasCancelled: wasCancelled,
+            unitLabel: "candidate",
+            readyToastMessage: "Generation completed. Candidates ready.",
+            noOutputToastMessage: "Generation completed with no candidates."
+        )
 
         if !wasCancelled {
             saveProject(debounced: true)
@@ -5746,17 +5898,12 @@ final class AppStore: ObservableObject {
         let request = requestBuild.request
         rememberBeatInputHistory(beat, for: scene.id)
 
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
-        inlineVariantGeneration = nil
-        isGenerating = true
+        updateProseRunPhase(.generating)
         generationStatus = shouldUseStreaming ? "Streaming variants..." : "Generating variants..."
         proseLiveUsage = nil
         let toastID = startTaskProgressToast("Generating variants…")
-
-        defer {
-            isGenerating = false
-        }
 
         let generationID = UUID()
         let variantCount = Self.inlineVariantsDefaultCount
@@ -5772,10 +5919,17 @@ final class AppStore: ObservableObject {
             )
         }
 
-        inlineVariantGeneration = InlineVariantGenerationState(
+        let promptTitleRaw = activeProsePrompt?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptTitle = promptTitleRaw.isEmpty ? "Writing Prompt" : promptTitleRaw
+
+        proseCandidateSession = ProseCandidateSessionState(
             id: generationID,
+            presentation: .inlineTray,
             sceneID: scene.id,
             beat: beat,
+            sceneTitle: displaySceneTitle(scene),
+            promptTitle: promptTitle,
+            renderWarnings: requestBuild.renderWarnings,
             request: request,
             candidates: candidates,
             selectedIndex: 0,
@@ -5788,13 +5942,16 @@ final class AppStore: ObservableObject {
         let streamCandidates = shouldUseStreaming
         let candidateIDs = candidates.map(\.id)
         let total = candidates.count
+        let provider = project.settings.provider
+        let settingsForRun = project.settings
+        let openAIService = openAIService
+        let anthropicService = anthropicService
 
         for (index, candidateID) in candidateIDs.enumerated() {
             guard !Task.isCancelled else { break }
             markInlineVariantCandidateStarted(generationID: generationID, candidateID: candidateID, index: index)
             generationStatus = "Generating variants (\(min(index, total))/\(total))..."
 
-            let started = Date()
             let partialHandler: (@MainActor (String) -> Void)?
             if streamCandidates {
                 partialHandler = { [weak self] partial in
@@ -5809,81 +5966,31 @@ final class AppStore: ObservableObject {
                 partialHandler = nil
             }
 
-            do {
-                let result = try await generateTextResult(request, onPartial: partialHandler)
-                applyInlineVariantRunResult(
-                    ProseCandidateRunResult(
-                        candidateID: candidateID,
-                        request: request,
-                        text: result.text,
-                        usage: result.usage,
-                        errorMessage: nil,
-                        cancelled: false,
-                        elapsedSeconds: Date().timeIntervalSince(started)
-                    ),
-                    generationID: generationID
-                )
-            } catch is CancellationError {
-                applyInlineVariantRunResult(
-                    ProseCandidateRunResult(
-                        candidateID: candidateID,
-                        request: request,
-                        text: nil,
-                        usage: nil,
-                        errorMessage: nil,
-                        cancelled: true,
-                        elapsedSeconds: Date().timeIntervalSince(started)
-                    ),
-                    generationID: generationID
-                )
+            let outcome = await Self.executeProseCandidateRequest(
+                candidateID: candidateID,
+                request: request,
+                provider: provider,
+                settings: settingsForRun,
+                openAIService: openAIService,
+                anthropicService: anthropicService,
+                onPartial: partialHandler
+            )
+            applyInlineVariantRunResult(outcome, generationID: generationID)
+            if outcome.cancelled {
                 break
-            } catch {
-                applyInlineVariantRunResult(
-                    ProseCandidateRunResult(
-                        candidateID: candidateID,
-                        request: request,
-                        text: nil,
-                        usage: nil,
-                        errorMessage: error.localizedDescription,
-                        cancelled: false,
-                        elapsedSeconds: Date().timeIntervalSince(started)
-                    ),
-                    generationID: generationID
-                )
             }
         }
 
         let wasCancelled = Task.isCancelled
-        if wasCancelled {
-            generationStatus = "Generation cancelled."
-            markInlineVariantCandidatesCancelled(generationID: generationID)
-            finishTaskCancelledToast(toastID, "Generation cancelled.")
-        }
-
-        if var state = inlineVariantGeneration, state.id == generationID {
-            state.isRunning = false
-            state.wasCancelled = wasCancelled
-            inlineVariantGeneration = state
-
-            proseLiveUsage = aggregatedInlineVariantUsage(state: state)
-
-            if wasCancelled {
-                if state.successCount > 0 {
-                    let label = state.successCount == 1 ? "variant" : "variants"
-                    generationStatus = "Generation cancelled. \(state.successCount) \(label) ready."
-                }
-            } else if state.successCount > 0 {
-                let label = state.successCount == 1 ? "variant" : "variants"
-                generationStatus = "Review \(state.successCount) \(label) and accept one."
-                finishTaskSuccessToast(toastID, "Variants ready.")
-            } else {
-                generationStatus = "No variant was generated."
-                finishTaskWarningToast(toastID, "No variants generated.")
-            }
-        } else if !wasCancelled {
-            generationStatus = "Generation finished."
-            finishTaskSuccessToast(toastID, "Variants ready.")
-        }
+        finalizeCandidateGenerationRun(
+            sessionID: generationID,
+            presentation: .inlineTray,
+            toastID: toastID,
+            wasCancelled: wasCancelled,
+            unitLabel: "variant",
+            readyToastMessage: "Variants ready.",
+            noOutputToastMessage: "No variants generated."
+        )
 
         saveProject(debounced: true)
     }
@@ -5902,17 +6009,12 @@ final class AppStore: ObservableObject {
         ).request
         rememberBeatInputHistory(beat, for: scene.id)
 
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
-        inlineVariantGeneration = nil
-        isGenerating = true
+        updateProseRunPhase(.generating)
         generationStatus = shouldUseStreaming ? "Streaming..." : "Generating..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
         let toastID = startTaskProgressToast("Generating text…")
-
-        defer {
-            isGenerating = false
-        }
 
         let generationBase = makeGenerationAppendBase(for: scene.id)
         if let base = generationBase {
@@ -6018,16 +6120,12 @@ final class AppStore: ObservableObject {
         )
         let request = state.request
 
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
-        isGenerating = true
+        updateProseRunPhase(.generating)
         generationStatus = shouldUseStreaming ? "Re-streaming..." : "Regenerating..."
         proseLiveUsage = normalizedTokenUsage(from: nil, request: request, response: "")
         let toastID = startTaskProgressToast("Regenerating text…")
-
-        defer {
-            isGenerating = false
-        }
 
         let generationPartialHandler: (@MainActor (String) -> Void)?
         if shouldUseStreaming {
@@ -6091,44 +6189,45 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func applyProseCandidateRunResult(_ outcome: ProseCandidateRunResult, reviewID: UUID) {
-        guard var review = proseGenerationReview, review.id == reviewID else { return }
-        if let usage = applyCandidateRunResult(
-            outcome,
-            to: &review.candidates,
-            clearTextOnCancellation: true
-        ) {
-            proseLiveUsage = usage
+    private func applyProseCandidateRunResult(_ outcome: ProseCandidateRunResult, sessionID: UUID) {
+        updateProseCandidateSession(id: sessionID, presentation: .reviewSheet) { session in
+            if let usage = applyCandidateRunResult(
+                outcome,
+                to: &session.candidates,
+                clearTextOnCancellation: true
+            ) {
+                proseLiveUsage = usage
+            }
+            session.isRunning = session.candidates.contains { !$0.status.isTerminal }
         }
-        review.isRunning = review.candidates.contains { !$0.status.isTerminal }
-        proseGenerationReview = review
     }
 
     private func updateProseCandidatePartial(
         candidateID: UUID,
         partial: String,
         request: TextGenerationRequest,
-        reviewID: UUID,
+        sessionID: UUID,
         startedAt: Date
     ) {
-        guard var review = proseGenerationReview, review.id == reviewID else { return }
-        if let usage = applyCandidatePartial(
-            candidateID: candidateID,
-            partial: partial,
-            request: request,
-            startedAt: startedAt,
-            candidates: &review.candidates
-        ) {
-            proseLiveUsage = usage
+        updateProseCandidateSession(id: sessionID, presentation: .reviewSheet) { session in
+            if let usage = applyCandidatePartial(
+                candidateID: candidateID,
+                partial: partial,
+                request: request,
+                startedAt: startedAt,
+                candidates: &session.candidates
+            ) {
+                proseLiveUsage = usage
+            }
         }
-        proseGenerationReview = review
     }
 
-    private func markRunningProseCandidatesCancelled(reviewID: UUID) {
-        guard var review = proseGenerationReview, review.id == reviewID else { return }
-        markRunningCandidatesCancelled(&review.candidates, clearTextOnCancellation: true)
-        review.isRunning = false
-        proseGenerationReview = review
+    private func markRunningProseCandidatesCancelled(sessionID: UUID) {
+        updateProseCandidateSession(id: sessionID, presentation: .reviewSheet) { session in
+            markRunningCandidatesCancelled(&session.candidates, clearTextOnCancellation: true)
+            session.isRunning = false
+            session.wasCancelled = true
+        }
     }
 
     private func markInlineVariantCandidateStarted(
@@ -6136,20 +6235,19 @@ final class AppStore: ObservableObject {
         candidateID: UUID,
         index: Int
     ) {
-        guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        guard state.candidates.indices.contains(index), state.candidates[index].id == candidateID else { return }
+        updateProseCandidateSession(id: generationID, presentation: .inlineTray) { state in
+            guard state.candidates.indices.contains(index), state.candidates[index].id == candidateID else { return }
 
-        state.candidates[index].status = .running
-        state.candidates[index].text = ""
-        state.candidates[index].usage = nil
-        state.candidates[index].errorMessage = nil
-        state.candidates[index].elapsedSeconds = nil
+            state.candidates[index].status = .running
+            state.candidates[index].text = ""
+            state.candidates[index].usage = nil
+            state.candidates[index].errorMessage = nil
+            state.candidates[index].elapsedSeconds = nil
 
-        if state.followsActiveCandidate {
-            state.selectedIndex = index
+            if state.followsActiveCandidate {
+                state.selectedIndex = index
+            }
         }
-
-        inlineVariantGeneration = state
     }
 
     private func applyInlineVariantPartial(
@@ -6157,40 +6255,41 @@ final class AppStore: ObservableObject {
         candidateID: UUID,
         partial: String
     ) {
-        guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        _ = applyCandidatePartial(
-            candidateID: candidateID,
-            partial: partial,
-            request: state.request,
-            startedAt: state.startedAt,
-            candidates: &state.candidates
-        )
-        state.isRunning = true
-
-        inlineVariantGeneration = state
-        proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+        updateProseCandidateSession(id: generationID, presentation: .inlineTray) { state in
+            guard let request = state.request else { return }
+            _ = applyCandidatePartial(
+                candidateID: candidateID,
+                partial: partial,
+                request: request,
+                startedAt: state.startedAt,
+                candidates: &state.candidates
+            )
+            state.isRunning = true
+            proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+        }
     }
 
     private func applyInlineVariantRunResult(
         _ outcome: ProseCandidateRunResult,
         generationID: UUID
     ) {
-        guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        _ = applyCandidateRunResult(
-            outcome,
-            to: &state.candidates,
-            clearTextOnCancellation: false
-        )
-        state.isRunning = state.candidates.contains { !$0.status.isTerminal }
-        inlineVariantGeneration = state
-        proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+        updateProseCandidateSession(id: generationID, presentation: .inlineTray) { state in
+            _ = applyCandidateRunResult(
+                outcome,
+                to: &state.candidates,
+                clearTextOnCancellation: false
+            )
+            state.isRunning = state.candidates.contains { !$0.status.isTerminal }
+            proseLiveUsage = aggregatedInlineVariantUsage(state: state)
+        }
     }
 
     private func markInlineVariantCandidatesCancelled(generationID: UUID) {
-        guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        markRunningCandidatesCancelled(&state.candidates, clearTextOnCancellation: false)
-        state.isRunning = false
-        inlineVariantGeneration = state
+        updateProseCandidateSession(id: generationID, presentation: .inlineTray) { state in
+            markRunningCandidatesCancelled(&state.candidates, clearTextOnCancellation: false)
+            state.isRunning = false
+            state.wasCancelled = true
+        }
     }
 
     private func applyCandidatePartial(
@@ -6268,7 +6367,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func aggregatedInlineVariantUsage(state: InlineVariantGenerationState) -> TokenUsage? {
+    private func aggregatedInlineVariantUsage(state: ProseCandidateSessionState) -> TokenUsage? {
         var totalPrompt = 0
         var totalCompletion = 0
         var total = 0
@@ -7063,10 +7162,7 @@ final class AppStore: ObservableObject {
         scene: Scene,
         modelOverride: String?
     ) async throws -> ProsePlanRunResult {
-        isGenerating = true
-        defer {
-            isGenerating = false
-        }
+        updateProseRunPhase(.planning)
 
         let requestBuild = makeProsePlanRequest(
             beat: beat,
@@ -7110,10 +7206,7 @@ final class AppStore: ObservableObject {
         scene: Scene,
         modelOverride: String?
     ) async {
-        isGenerating = true
-        defer {
-            isGenerating = false
-        }
+        updateProseRunPhase(.planning)
 
         generationStatus = "Planning from graph..."
         let toastID = startTaskProgressToast("Generating graph path plan…")
@@ -8081,10 +8174,9 @@ final class AppStore: ObservableObject {
         beatInput = ""
         generationStatus = ""
         workshopStatus = ""
-        isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
         inlineProseRegenerationState = nil
         workshopLiveUsage = nil
@@ -8136,10 +8228,9 @@ final class AppStore: ObservableObject {
         beatInput = ""
         generationStatus = ""
         workshopStatus = ""
-        isGenerating = false
         workshopIsGenerating = false
         proseLiveUsage = nil
-        proseGenerationReview = nil
+        proseCandidateSession = nil
         proseGenerationSessionContext = nil
         prosePlanDraftByScene = [:]
         workshopLiveUsage = nil
@@ -8177,13 +8268,15 @@ final class AppStore: ObservableObject {
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
         workshopRollingMemoryTask?.cancel()
-        proseRequestTask?.cancel()
+        proseRunTask?.cancel()
 
         autosaveTask = nil
         modelDiscoveryTask = nil
         workshopRequestTask = nil
         workshopRollingMemoryTask = nil
-        proseRequestTask = nil
+        proseRunTask = nil
+        proseRunID = nil
+        proseRunPhase = nil
     }
 
     private func ensureProjectBaseline() {

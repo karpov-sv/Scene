@@ -3,8 +3,8 @@ import SwiftUI
 struct InlineVariantsTrayView: View {
     @EnvironmentObject private var store: AppStore
 
-    private var visibleState: AppStore.InlineVariantGenerationState? {
-        guard let state = store.inlineVariantGeneration else { return nil }
+    private var visibleState: AppStore.ProseCandidateSessionState? {
+        guard let state = store.inlineVariantSession else { return nil }
         guard state.sceneID == store.selectedSceneID else { return nil }
         return state
     }
@@ -42,12 +42,12 @@ struct InlineVariantsTrayView: View {
 
     private var variantSelectionBinding: Binding<Int> {
         Binding(
-            get: { store.inlineVariantGeneration?.selectedIndex ?? 0 },
+            get: { store.inlineVariantSession?.selectedIndex ?? 0 },
             set: { store.selectInlineVariantCandidate(index: $0) }
         )
     }
 
-    private func headerRow(state: AppStore.InlineVariantGenerationState) -> some View {
+    private func headerRow(state: AppStore.ProseCandidateSessionState) -> some View {
         HStack(alignment: .center, spacing: 8) {
             Text("Variants")
                 .font(.caption)
@@ -69,7 +69,7 @@ struct InlineVariantsTrayView: View {
         }
     }
 
-    private func statusRow(state: AppStore.InlineVariantGenerationState) -> some View {
+    private func statusRow(state: AppStore.ProseCandidateSessionState) -> some View {
         let completed = min(state.completedCount, state.candidates.count)
         let total = state.candidates.count
 
@@ -86,32 +86,27 @@ struct InlineVariantsTrayView: View {
             Spacer(minLength: 0)
 
             if let candidate = state.selectedCandidate {
-                Text(statusLabel(candidate.status))
+                Text(GenerationCandidateUI.statusLabel(candidate.status))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func previewBox(state: AppStore.InlineVariantGenerationState) -> some View {
+    private func previewBox(state: AppStore.ProseCandidateSessionState) -> some View {
         let candidate = state.selectedCandidate
         let previewText = (candidate?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let errorText = candidate?.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let placeholder = state.isRunning ? "Generating..." : "No text."
 
         return VStack(alignment: .leading, spacing: 8) {
-            ScrollView {
-                Text(previewText.isEmpty ? placeholder : previewText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .font(.callout)
-                    .foregroundStyle(previewText.isEmpty ? .secondary : .primary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-            }
-            .frame(height: 180)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.25))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            GenerationCandidateTextPreview(
+                text: previewText,
+                placeholder: placeholder,
+                fixedHeight: 180,
+                font: .callout,
+                chromeStyle: .subtle
+            )
 
             if !errorText.isEmpty {
                 Text(errorText)
@@ -122,7 +117,7 @@ struct InlineVariantsTrayView: View {
         }
     }
 
-    private func actionRow(state: AppStore.InlineVariantGenerationState) -> some View {
+    private func actionRow(state: AppStore.ProseCandidateSessionState) -> some View {
         let selectedText = state.selectedCandidate?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let selectedFailed = state.selectedCandidate?.status == .failed
         let canAccept = !store.isGenerating && !state.isRunning && !selectedText.isEmpty && !selectedFailed
@@ -148,24 +143,10 @@ struct InlineVariantsTrayView: View {
         }
     }
 
-    private func candidateTitle(state: AppStore.InlineVariantGenerationState, index: Int) -> String {
+    private func candidateTitle(state: AppStore.ProseCandidateSessionState, index: Int) -> String {
         guard state.candidates.indices.contains(index) else { return "\(index + 1)" }
         let label = state.candidates[index].model.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty ? "\(index + 1)" : label
     }
 
-    private func statusLabel(_ status: AppStore.ProseGenerationCandidate.Status) -> String {
-        switch status {
-        case .queued:
-            return "Queued"
-        case .running:
-            return "Running"
-        case .completed:
-            return "Ready"
-        case .failed:
-            return "Failed"
-        case .cancelled:
-            return "Cancelled"
-        }
-    }
 }
