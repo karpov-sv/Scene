@@ -262,22 +262,43 @@ struct EditorView: View {
 
     private var proseOutputToneBinding: Binding<ProseOutputTone> {
         Binding(
-            get: { store.project.settings.proseOutputTone },
-            set: { store.updateProseOutputTone($0) }
+            get: { store.selectedSceneProseOutputTone },
+            set: { store.updateSelectedSceneProseOutputTone($0) }
         )
     }
 
     private var proseOutputStyleBinding: Binding<ProseOutputStyle> {
         Binding(
-            get: { store.project.settings.proseOutputStyle },
-            set: { store.updateProseOutputStyle($0) }
+            get: { store.selectedSceneProseOutputStyle },
+            set: { store.updateSelectedSceneProseOutputStyle($0) }
         )
     }
 
     private var proseOutputLengthBinding: Binding<ProseOutputLength> {
         Binding(
-            get: { store.project.settings.proseOutputLength },
-            set: { store.updateProseOutputLength($0) }
+            get: { store.selectedSceneProseOutputLength },
+            set: { store.updateSelectedSceneProseOutputLength($0) }
+        )
+    }
+
+    private var proseOutputToneCustomBinding: Binding<String> {
+        Binding(
+            get: { store.selectedSceneProseOutputToneCustom },
+            set: { store.updateSelectedSceneProseOutputToneCustom($0) }
+        )
+    }
+
+    private var proseOutputStyleCustomBinding: Binding<String> {
+        Binding(
+            get: { store.selectedSceneProseOutputStyleCustom },
+            set: { store.updateSelectedSceneProseOutputStyleCustom($0) }
+        )
+    }
+
+    private var proseOutputTemperatureBinding: Binding<Double> {
+        Binding(
+            get: { store.selectedSceneProseOutputTemperature },
+            set: { store.updateSelectedSceneProseOutputTemperature($0) }
         )
     }
 
@@ -800,7 +821,7 @@ struct EditorView: View {
                 .frame(maxWidth: 280)
                 .padding(.leading, 8)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 6)
 
                 if !isRewriteMode {
                     Button {
@@ -1072,6 +1093,8 @@ struct EditorView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                TextField("Optional custom tone guidance", text: proseOutputToneCustomBinding)
+                    .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1085,6 +1108,8 @@ struct EditorView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+                TextField("Optional custom style guidance", text: proseOutputStyleCustomBinding)
+                    .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1100,21 +1125,34 @@ struct EditorView: View {
                 .labelsHidden()
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("Temperature")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text(proseOutputTemperatureBinding.wrappedValue, format: .number.precision(.fractionLength(2)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Slider(value: proseOutputTemperatureBinding, in: 0...2, step: 0.05)
+            }
+
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Button("Reset") {
-                    store.resetProseOutputProfile()
+                    store.resetSelectedSceneProseOutputProfile()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
 
-            Text("Applies to prose generation and inline regenerate.")
+            Text("Applies to prose generation for the current scene. Reset reverts to project defaults.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: 340)
     }
 
     private func applyEditorToolbarFont(family: String, size: Double) {

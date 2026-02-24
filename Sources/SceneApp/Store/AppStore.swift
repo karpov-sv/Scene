@@ -1842,21 +1842,53 @@ final class AppStore: ObservableObject {
     }
 
     var proseOutputProfileSummary: String {
+        let profile = resolvedProseOutputProfile(for: selectedSceneID)
         var parts: [String] = []
-        if project.settings.proseOutputTone != .automatic {
-            parts.append(project.settings.proseOutputTone.label)
+        if !profile.toneCustom.isEmpty {
+            parts.append("Tone*")
+        } else if profile.tone != .automatic {
+            parts.append(profile.tone.label)
         }
-        if project.settings.proseOutputStyle != .automatic {
-            parts.append(project.settings.proseOutputStyle.label)
+        if !profile.styleCustom.isEmpty {
+            parts.append("Style*")
+        } else if profile.style != .automatic {
+            parts.append(profile.style.label)
         }
-        if project.settings.proseOutputLength != .medium {
-            parts.append(project.settings.proseOutputLength.label)
+        if profile.length != .medium {
+            parts.append(profile.length.label)
+        }
+        if profile.hasTemperatureOverride {
+            parts.append("Temp*")
         }
 
         if parts.isEmpty {
             return "Output Profile"
         }
         return parts.joined(separator: ", ")
+    }
+
+    var selectedSceneProseOutputTone: ProseOutputTone {
+        resolvedProseOutputProfile(for: selectedSceneID).tone
+    }
+
+    var selectedSceneProseOutputStyle: ProseOutputStyle {
+        resolvedProseOutputProfile(for: selectedSceneID).style
+    }
+
+    var selectedSceneProseOutputLength: ProseOutputLength {
+        resolvedProseOutputProfile(for: selectedSceneID).length
+    }
+
+    var selectedSceneProseOutputToneCustom: String {
+        resolvedProseOutputProfile(for: selectedSceneID).toneCustom
+    }
+
+    var selectedSceneProseOutputStyleCustom: String {
+        resolvedProseOutputProfile(for: selectedSceneID).styleCustom
+    }
+
+    var selectedSceneProseOutputTemperature: Double {
+        resolvedProseOutputProfile(for: selectedSceneID).temperature
     }
 
     var useInlineGeneration: Bool {
@@ -2486,20 +2518,55 @@ final class AppStore: ObservableObject {
     }
 
     func updateProseOutputTone(_ tone: ProseOutputTone) {
-        guard project.settings.proseOutputTone != tone else { return }
+        let hasCustom = !project.settings.proseOutputToneCustom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard project.settings.proseOutputTone != tone || hasCustom else { return }
         project.settings.proseOutputTone = tone
+        if hasCustom {
+            project.settings.proseOutputToneCustom = ""
+        }
+        sanitizeSceneProseOutputProfiles()
         saveProject(debounced: true)
     }
 
     func updateProseOutputStyle(_ style: ProseOutputStyle) {
-        guard project.settings.proseOutputStyle != style else { return }
+        let hasCustom = !project.settings.proseOutputStyleCustom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard project.settings.proseOutputStyle != style || hasCustom else { return }
         project.settings.proseOutputStyle = style
+        if hasCustom {
+            project.settings.proseOutputStyleCustom = ""
+        }
+        sanitizeSceneProseOutputProfiles()
         saveProject(debounced: true)
     }
 
     func updateProseOutputLength(_ length: ProseOutputLength) {
         guard project.settings.proseOutputLength != length else { return }
         project.settings.proseOutputLength = length
+        sanitizeSceneProseOutputProfiles()
+        saveProject(debounced: true)
+    }
+
+    func updateProseOutputToneCustom(_ tone: String) {
+        let hasCustom = !tone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let shouldResetPreset = hasCustom && project.settings.proseOutputTone != .automatic
+        guard project.settings.proseOutputToneCustom != tone || shouldResetPreset else { return }
+        project.settings.proseOutputToneCustom = tone
+        if shouldResetPreset {
+            project.settings.proseOutputTone = .automatic
+        }
+        sanitizeSceneProseOutputProfiles()
+        saveProject(debounced: true)
+    }
+
+    func updateProseOutputStyleCustom(_ style: String) {
+        let hasCustom = !style.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let shouldResetPreset = hasCustom && project.settings.proseOutputStyle != .automatic
+        guard project.settings.proseOutputStyleCustom != style || shouldResetPreset else { return }
+        project.settings.proseOutputStyleCustom = style
+        if shouldResetPreset {
+            project.settings.proseOutputStyle = .automatic
+        }
+        sanitizeSceneProseOutputProfiles()
         saveProject(debounced: true)
     }
 
@@ -2507,12 +2574,81 @@ final class AppStore: ObservableObject {
         let defaults = GenerationSettings.default
         guard project.settings.proseOutputTone != defaults.proseOutputTone ||
               project.settings.proseOutputStyle != defaults.proseOutputStyle ||
-              project.settings.proseOutputLength != defaults.proseOutputLength else {
+              project.settings.proseOutputLength != defaults.proseOutputLength ||
+              project.settings.proseOutputToneCustom != defaults.proseOutputToneCustom ||
+              project.settings.proseOutputStyleCustom != defaults.proseOutputStyleCustom else {
             return
         }
         project.settings.proseOutputTone = defaults.proseOutputTone
         project.settings.proseOutputStyle = defaults.proseOutputStyle
         project.settings.proseOutputLength = defaults.proseOutputLength
+        project.settings.proseOutputToneCustom = defaults.proseOutputToneCustom
+        project.settings.proseOutputStyleCustom = defaults.proseOutputStyleCustom
+        sanitizeSceneProseOutputProfiles()
+        saveProject(debounced: true)
+    }
+
+    func updateSelectedSceneProseOutputTone(_ tone: ProseOutputTone) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let defaults = defaultProseOutputProfileValues()
+        profile.tone = tone == defaults.tone ? nil : tone
+        profile.toneCustom = nil
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneProseOutputStyle(_ style: ProseOutputStyle) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let defaults = defaultProseOutputProfileValues()
+        profile.style = style == defaults.style ? nil : style
+        profile.styleCustom = nil
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneProseOutputLength(_ length: ProseOutputLength) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let defaults = defaultProseOutputProfileValues()
+        profile.length = length == defaults.length ? nil : length
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneProseOutputToneCustom(_ tone: String) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let normalizedTone = normalizedProseOutputCustomValue(tone)
+        profile.toneCustom = normalizedTone
+        if normalizedTone != nil {
+            profile.tone = nil
+        }
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneProseOutputStyleCustom(_ style: String) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let normalizedStyle = normalizedProseOutputCustomValue(style)
+        profile.styleCustom = normalizedStyle
+        if normalizedStyle != nil {
+            profile.style = nil
+        }
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func updateSelectedSceneProseOutputTemperature(_ temperature: Double) {
+        guard let selectedSceneID else { return }
+        var profile = sceneProseOutputProfile(for: selectedSceneID)
+        let clamped = min(max(temperature, 0), 2)
+        let defaults = defaultProseOutputProfileValues()
+        profile.temperatureOverride = abs(clamped - defaults.temperature) < 0.0001 ? nil : clamped
+        setSceneProseOutputProfile(profile, for: selectedSceneID)
+    }
+
+    func resetSelectedSceneProseOutputProfile() {
+        guard let selectedSceneID else { return }
+        guard project.sceneProseOutputProfileByScene[selectedSceneID.uuidString] != nil else { return }
+        project.sceneProseOutputProfileByScene.removeValue(forKey: selectedSceneID.uuidString)
         saveProject(debounced: true)
     }
 
@@ -2554,6 +2690,7 @@ final class AppStore: ObservableObject {
 
     func updateTemperature(_ temperature: Double) {
         project.settings.temperature = temperature
+        sanitizeSceneProseOutputProfiles()
         saveProject(debounced: true)
     }
 
@@ -3217,6 +3354,7 @@ final class AppStore: ObservableObject {
         importedProject.sceneContextSceneSummarySelection = [:]
         importedProject.sceneContextChapterSummarySelection = [:]
         importedProject.sceneNarrativeStates = [:]
+        importedProject.sceneProseOutputProfileByScene = [:]
         importedProject.workshopInputHistoryBySession = [:]
         importedProject.beatInputHistoryByScene = [:]
         importedProject.sceneProsePlanDraftByScene = [:]
@@ -4958,16 +5096,17 @@ final class AppStore: ObservableObject {
             )
             let sceneExcerpt = String(scenePreview.sceneContent.suffix(Self.proseSceneTailChars))
             let sceneSummary = sceneSummaryText(for: scenePreview.sceneID)
-            let outputProfileBlock = proseOutputProfileBlock()
-            let outputTone = project.settings.proseOutputTone == .automatic
+            let profile = resolvedProseOutputProfile(for: scenePreview.sceneID)
+            let outputProfileBlock = proseOutputProfileBlock(for: scenePreview.sceneID)
+            let outputTone = !profile.toneCustom.isEmpty
+                ? profile.toneCustom
+                : (profile.tone == .automatic ? "" : profile.tone.label)
+            let outputStyle = !profile.styleCustom.isEmpty
+                ? profile.styleCustom
+                : (profile.style == .automatic ? "" : profile.style.label)
+            let outputLength = profile.length == .medium
                 ? ""
-                : project.settings.proseOutputTone.label
-            let outputStyle = project.settings.proseOutputStyle == .automatic
-                ? ""
-                : project.settings.proseOutputStyle.label
-            let outputLength = project.settings.proseOutputLength == .medium
-                ? ""
-                : proseOutputLengthGuidance(project.settings.proseOutputLength)
+                : proseOutputLengthGuidance(profile.length)
             let proseRendered = renderPromptTemplate(
                 template: prompt.userTemplate,
                 fallbackTemplate: fallbackUserTemplate(for: prompt, category: .prose),
@@ -4987,6 +5126,8 @@ final class AppStore: ObservableObject {
                     "scene_summary": sceneSummary,
                     "output_tone": outputTone,
                     "output_style": outputStyle,
+                    "output_tone_custom": profile.toneCustom,
+                    "output_style_custom": profile.styleCustom,
                     "output_length": outputLength,
                     "output_profile_block": outputProfileBlock
                 ]
@@ -6241,6 +6382,138 @@ final class AppStore: ObservableObject {
         """
     }
 
+    private struct ResolvedProseOutputProfile {
+        let tone: ProseOutputTone
+        let style: ProseOutputStyle
+        let length: ProseOutputLength
+        let toneCustom: String
+        let styleCustom: String
+        let temperature: Double
+        let hasTemperatureOverride: Bool
+    }
+
+    private func defaultProseOutputProfileValues() -> (
+        tone: ProseOutputTone,
+        style: ProseOutputStyle,
+        length: ProseOutputLength,
+        toneCustom: String?,
+        styleCustom: String?,
+        temperature: Double
+    ) {
+        (
+            tone: project.settings.proseOutputTone,
+            style: project.settings.proseOutputStyle,
+            length: project.settings.proseOutputLength,
+            toneCustom: normalizedProseOutputCustomValue(project.settings.proseOutputToneCustom),
+            styleCustom: normalizedProseOutputCustomValue(project.settings.proseOutputStyleCustom),
+            temperature: min(max(project.settings.temperature, 0), 2)
+        )
+    }
+
+    private func normalizedProseOutputCustomValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func normalizedSceneProseOutputProfile(_ profile: SceneProseOutputProfile) -> SceneProseOutputProfile? {
+        let defaults = defaultProseOutputProfileValues()
+        var tone = profile.tone
+        var style = profile.style
+        var length = profile.length
+        var toneCustom = normalizedProseOutputCustomValue(profile.toneCustom)
+        var styleCustom = normalizedProseOutputCustomValue(profile.styleCustom)
+        var temperatureOverride = profile.temperatureOverride.map { min(max($0, 0), 2) }
+
+        if toneCustom != nil {
+            tone = nil
+        }
+        if styleCustom != nil {
+            style = nil
+        }
+        if tone == defaults.tone {
+            tone = nil
+        }
+        if style == defaults.style {
+            style = nil
+        }
+        if length == defaults.length {
+            length = nil
+        }
+        if toneCustom == defaults.toneCustom {
+            toneCustom = nil
+        }
+        if styleCustom == defaults.styleCustom {
+            styleCustom = nil
+        }
+        if let overrideValue = temperatureOverride,
+           abs(overrideValue - defaults.temperature) < 0.0001 {
+            temperatureOverride = nil
+        }
+
+        let normalized = SceneProseOutputProfile(
+            tone: tone,
+            style: style,
+            length: length,
+            toneCustom: toneCustom,
+            styleCustom: styleCustom,
+            temperatureOverride: temperatureOverride
+        )
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private func sceneProseOutputProfile(for sceneID: UUID?) -> SceneProseOutputProfile {
+        guard let sceneID else { return SceneProseOutputProfile() }
+        guard let profile = project.sceneProseOutputProfileByScene[sceneID.uuidString] else {
+            return SceneProseOutputProfile()
+        }
+        return normalizedSceneProseOutputProfile(profile) ?? SceneProseOutputProfile()
+    }
+
+    private func setSceneProseOutputProfile(_ profile: SceneProseOutputProfile, for sceneID: UUID) {
+        let key = sceneID.uuidString
+        if let normalized = normalizedSceneProseOutputProfile(profile) {
+            project.sceneProseOutputProfileByScene[key] = normalized
+        } else {
+            project.sceneProseOutputProfileByScene.removeValue(forKey: key)
+        }
+        saveProject(debounced: true)
+    }
+
+    private func resolvedProseOutputProfile(for sceneID: UUID?) -> ResolvedProseOutputProfile {
+        let defaults = defaultProseOutputProfileValues()
+        let profile = sceneProseOutputProfile(for: sceneID)
+        let toneCustom: String = {
+            if let profileToneCustom = profile.toneCustom {
+                return profileToneCustom
+            }
+            if profile.tone == nil {
+                return defaults.toneCustom ?? ""
+            }
+            return ""
+        }()
+        let styleCustom: String = {
+            if let profileStyleCustom = profile.styleCustom {
+                return profileStyleCustom
+            }
+            if profile.style == nil {
+                return defaults.styleCustom ?? ""
+            }
+            return ""
+        }()
+        let temperature = min(max(profile.temperatureOverride ?? defaults.temperature, 0), 2)
+
+        return ResolvedProseOutputProfile(
+            tone: profile.tone ?? defaults.tone,
+            style: profile.style ?? defaults.style,
+            length: profile.length ?? defaults.length,
+            toneCustom: toneCustom,
+            styleCustom: styleCustom,
+            temperature: temperature,
+            hasTemperatureOverride: profile.temperatureOverride != nil
+        )
+    }
+
     private func proseOutputLengthGuidance(_ length: ProseOutputLength) -> String {
         switch length {
         case .short:
@@ -6252,20 +6525,30 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func proseOutputProfileBlock() -> String {
-        let tone = project.settings.proseOutputTone
-        let style = project.settings.proseOutputStyle
-        let length = project.settings.proseOutputLength
+    private func proseOutputProfileBlock(for sceneID: UUID?) -> String {
+        let profile = resolvedProseOutputProfile(for: sceneID)
+        let tone = profile.tone
+        let style = profile.style
+        let length = profile.length
+        let toneCustom = profile.toneCustom
+        let styleCustom = profile.styleCustom
 
         var lines: [String] = []
-        if tone != .automatic {
+        if !toneCustom.isEmpty {
+            lines.append("TONE: \(toneCustom)")
+        } else if tone != .automatic {
             lines.append("TONE: \(tone.label)")
         }
-        if style != .automatic {
+        if !styleCustom.isEmpty {
+            lines.append("STYLE: \(styleCustom)")
+        } else if style != .automatic {
             lines.append("STYLE: \(style.label)")
         }
         if length != .medium {
             lines.append("LENGTH: \(proseOutputLengthGuidance(length))")
+        }
+        if profile.hasTemperatureOverride {
+            lines.append("TEMPERATURE: \(String(format: "%.2f", profile.temperature))")
         }
 
         guard !lines.isEmpty else { return "" }
@@ -6280,14 +6563,21 @@ final class AppStore: ObservableObject {
         }
 
         var xmlLines: [String] = ["<OUTPUT_PROFILE>"]
-        if tone != .automatic {
+        if !toneCustom.isEmpty {
+            xmlLines.append("<TONE>\(escapeHTML(toneCustom))</TONE>")
+        } else if tone != .automatic {
             xmlLines.append("<TONE>\(tone.label)</TONE>")
         }
-        if style != .automatic {
+        if !styleCustom.isEmpty {
+            xmlLines.append("<STYLE>\(escapeHTML(styleCustom))</STYLE>")
+        } else if style != .automatic {
             xmlLines.append("<STYLE>\(style.label)</STYLE>")
         }
         if length != .medium {
             xmlLines.append("<LENGTH>\(proseOutputLengthGuidance(length))</LENGTH>")
+        }
+        if profile.hasTemperatureOverride {
+            xmlLines.append("<TEMPERATURE>\(String(format: "%.2f", profile.temperature))</TEMPERATURE>")
         }
         xmlLines.append("</OUTPUT_PROFILE>")
         return xmlLines.joined(separator: "\n")
@@ -6331,6 +6621,7 @@ final class AppStore: ObservableObject {
         """
         Output profile rules:
         - If OUTPUT_PROFILE is present, follow its tone, style, and length guidance.
+        - If TEMPERATURE is present in OUTPUT_PROFILE, treat it as creativity/risk guidance.
         - Keep continuity, POV, tense, chronology, and factual consistency as hard constraints.
         - Return prose only; never output OUTPUT_PROFILE labels.
         """
@@ -6888,16 +7179,17 @@ final class AppStore: ObservableObject {
         let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let prosePlan = (planOverride ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let prosePlanBlock = prosePlanBlock(for: prosePlan)
-        let outputProfileBlock = proseOutputProfileBlock()
-        let outputTone = project.settings.proseOutputTone == .automatic
+        let profile = resolvedProseOutputProfile(for: scene.id)
+        let outputProfileBlock = proseOutputProfileBlock(for: scene.id)
+        let outputTone = !profile.toneCustom.isEmpty
+            ? profile.toneCustom
+            : (profile.tone == .automatic ? "" : profile.tone.label)
+        let outputStyle = !profile.styleCustom.isEmpty
+            ? profile.styleCustom
+            : (profile.style == .automatic ? "" : profile.style.label)
+        let outputLength = profile.length == .medium
             ? ""
-            : project.settings.proseOutputTone.label
-        let outputStyle = project.settings.proseOutputStyle == .automatic
-            ? ""
-            : project.settings.proseOutputStyle.label
-        let outputLength = project.settings.proseOutputLength == .medium
-            ? ""
-            : proseOutputLengthGuidance(project.settings.proseOutputLength)
+            : proseOutputLengthGuidance(profile.length)
 
         let promptResult = renderPromptTemplate(
             template: activePrompt.userTemplate,
@@ -6926,6 +7218,8 @@ final class AppStore: ObservableObject {
                 "prose_plan_block": prosePlanBlock,
                 "output_tone": outputTone,
                 "output_style": outputStyle,
+                "output_tone_custom": profile.toneCustom,
+                "output_style_custom": profile.styleCustom,
                 "output_length": outputLength,
                 "output_profile_block": outputProfileBlock
             ]
@@ -6965,7 +7259,7 @@ final class AppStore: ObservableObject {
                 systemPrompt: systemPrompt,
                 userPrompt: renderedUserPrompt,
                 model: selectedModel,
-                temperature: project.settings.temperature,
+                temperature: profile.temperature,
                 maxTokens: project.settings.maxTokens
             ),
             renderWarnings: promptResult.warnings
@@ -7556,6 +7850,12 @@ final class AppStore: ObservableObject {
         merged.sceneNarrativeStates = mergeDictionaryEntries(
             current: merged.sceneNarrativeStates,
             source: checkpointProject.sceneNarrativeStates,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.sceneProseOutputProfileByScene = mergeDictionaryEntries(
+            current: merged.sceneProseOutputProfileByScene,
+            source: checkpointProject.sceneProseOutputProfileByScene,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
@@ -10911,6 +11211,7 @@ final class AppStore: ObservableObject {
         project.sceneContextSceneSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneContextChapterSummarySelection.removeValue(forKey: sceneID.uuidString)
         project.sceneNarrativeStates.removeValue(forKey: sceneID.uuidString)
+        project.sceneProseOutputProfileByScene.removeValue(forKey: sceneID.uuidString)
         project.rollingSceneMemoryByScene.removeValue(forKey: sceneID.uuidString)
         setProsePlanDraft("", for: sceneID)
     }
@@ -11003,6 +11304,22 @@ final class AppStore: ObservableObject {
             }
         }
         project.sceneNarrativeStates = sanitized
+    }
+
+    private func sanitizeSceneProseOutputProfiles() {
+        let validSceneIDs = Set(
+            project.chapters
+                .flatMap(\.scenes)
+                .map(\.id.uuidString)
+        )
+
+        var sanitized: [String: SceneProseOutputProfile] = [:]
+        for (sceneKey, profile) in project.sceneProseOutputProfileByScene where validSceneIDs.contains(sceneKey) {
+            if let normalized = normalizedSceneProseOutputProfile(profile) {
+                sanitized[sceneKey] = normalized
+            }
+        }
+        project.sceneProseOutputProfileByScene = sanitized
     }
 
     private func sanitizeStoryGraphEdges() {
@@ -11630,6 +11947,7 @@ final class AppStore: ObservableObject {
         guard isProjectOpen else { return }
         sanitizeSceneContextSelections()
         sanitizeSceneNarrativeStates()
+        sanitizeSceneProseOutputProfiles()
         sanitizeStoryGraphEdges()
         sanitizeProsePlanDrafts()
         sanitizeInputHistories()

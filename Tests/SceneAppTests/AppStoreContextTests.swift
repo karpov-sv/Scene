@@ -92,4 +92,67 @@ final class AppStoreContextTests: XCTestCase {
         XCTAssertNil(store.project.sceneProsePlanDraftByScene[ids.sceneOneID.uuidString])
         XCTAssertEqual(store.selectedSceneProsePlanDraft, "")
     }
+
+    func testProseOutputHintsAndPresetsAreMutuallyExclusive() throws {
+        let (store, _) = SceneTestFixtures.makeStoreFromFixture()
+
+        store.updateProseOutputTone(.tense)
+        XCTAssertEqual(store.project.settings.proseOutputTone, .tense)
+        XCTAssertEqual(store.project.settings.proseOutputToneCustom, "")
+
+        store.updateProseOutputToneCustom("restrained, distant, quietly ominous")
+        XCTAssertEqual(store.project.settings.proseOutputTone, .automatic)
+        XCTAssertEqual(store.project.settings.proseOutputToneCustom, "restrained, distant, quietly ominous")
+
+        store.updateProseOutputTone(.warm)
+        XCTAssertEqual(store.project.settings.proseOutputTone, .warm)
+        XCTAssertEqual(store.project.settings.proseOutputToneCustom, "")
+
+        store.updateProseOutputStyle(.cinematic)
+        XCTAssertEqual(store.project.settings.proseOutputStyle, .cinematic)
+        XCTAssertEqual(store.project.settings.proseOutputStyleCustom, "")
+
+        store.updateProseOutputStyleCustom("short clauses, heavy sensory detail")
+        XCTAssertEqual(store.project.settings.proseOutputStyle, .automatic)
+        XCTAssertEqual(store.project.settings.proseOutputStyleCustom, "short clauses, heavy sensory detail")
+
+        store.updateProseOutputStyle(.minimalist)
+        XCTAssertEqual(store.project.settings.proseOutputStyle, .minimalist)
+        XCTAssertEqual(store.project.settings.proseOutputStyleCustom, "")
+    }
+
+    func testSelectedSceneProseOutputProfileUsesSceneOverridesAndResetFallsBackToDefaults() throws {
+        let (store, ids) = SceneTestFixtures.makeStoreFromFixture()
+        store.selectScene(ids.sceneOneID, chapterID: ids.chapterOneID)
+
+        let defaultTemperature = store.project.settings.temperature
+        XCTAssertEqual(store.selectedSceneProseOutputTone, store.project.settings.proseOutputTone)
+        XCTAssertEqual(store.selectedSceneProseOutputTemperature, defaultTemperature, accuracy: 0.0001)
+
+        store.updateSelectedSceneProseOutputTone(.tense)
+        store.updateSelectedSceneProseOutputStyleCustom("choppy and jagged")
+        store.updateSelectedSceneProseOutputLength(.short)
+        store.updateSelectedSceneProseOutputTemperature(1.25)
+
+        XCTAssertEqual(store.selectedSceneProseOutputTone, .tense)
+        XCTAssertEqual(store.selectedSceneProseOutputStyle, .automatic)
+        XCTAssertEqual(store.selectedSceneProseOutputStyleCustom, "choppy and jagged")
+        XCTAssertEqual(store.selectedSceneProseOutputLength, .short)
+        XCTAssertEqual(store.selectedSceneProseOutputTemperature, 1.25, accuracy: 0.0001)
+        XCTAssertNotNil(store.project.sceneProseOutputProfileByScene[ids.sceneOneID.uuidString])
+
+        store.selectScene(ids.sceneTwoID, chapterID: ids.chapterOneID)
+        XCTAssertEqual(store.selectedSceneProseOutputTone, store.project.settings.proseOutputTone)
+        XCTAssertEqual(store.selectedSceneProseOutputStyleCustom, store.project.settings.proseOutputStyleCustom)
+        XCTAssertEqual(store.selectedSceneProseOutputLength, store.project.settings.proseOutputLength)
+        XCTAssertEqual(store.selectedSceneProseOutputTemperature, defaultTemperature, accuracy: 0.0001)
+
+        store.selectScene(ids.sceneOneID, chapterID: ids.chapterOneID)
+        store.resetSelectedSceneProseOutputProfile()
+        XCTAssertNil(store.project.sceneProseOutputProfileByScene[ids.sceneOneID.uuidString])
+        XCTAssertEqual(store.selectedSceneProseOutputTone, store.project.settings.proseOutputTone)
+        XCTAssertEqual(store.selectedSceneProseOutputStyleCustom, store.project.settings.proseOutputStyleCustom)
+        XCTAssertEqual(store.selectedSceneProseOutputLength, store.project.settings.proseOutputLength)
+        XCTAssertEqual(store.selectedSceneProseOutputTemperature, defaultTemperature, accuracy: 0.0001)
+    }
 }

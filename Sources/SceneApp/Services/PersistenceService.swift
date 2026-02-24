@@ -357,6 +357,7 @@ final class ProjectPersistence {
         var selectedWorkshopPromptID: UUID?
         var beatInputHistoryByScene: [String: [String]]?
         var sceneProsePlanDraftByScene: [String: String]?
+        var sceneProseOutputProfileByScene: [String: SceneProseOutputProfile]?
         var sceneContextCompendiumSelection: [String: [UUID]]
         var sceneContextSceneSummarySelection: [String: [UUID]]?
         var sceneContextChapterSummarySelection: [String: [UUID]]?
@@ -663,6 +664,7 @@ final class ProjectPersistence {
             selectedWorkshopPromptID: manifest.selectedWorkshopPromptID,
             beatInputHistoryByScene: manifest.beatInputHistoryByScene ?? [:],
             sceneProsePlanDraftByScene: manifest.sceneProsePlanDraftByScene ?? [:],
+            sceneProseOutputProfileByScene: manifest.sceneProseOutputProfileByScene ?? [:],
             sceneContextCompendiumSelection: manifest.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: manifest.sceneContextSceneSummarySelection ?? [:],
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
@@ -804,6 +806,7 @@ final class ProjectPersistence {
             selectedWorkshopPromptID: project.selectedWorkshopPromptID,
             beatInputHistoryByScene: project.beatInputHistoryByScene,
             sceneProsePlanDraftByScene: project.sceneProsePlanDraftByScene,
+            sceneProseOutputProfileByScene: project.sceneProseOutputProfileByScene,
             sceneContextCompendiumSelection: project.sceneContextCompendiumSelection,
             sceneContextSceneSummarySelection: project.sceneContextSceneSummarySelection,
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,

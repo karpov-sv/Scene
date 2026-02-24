@@ -221,6 +221,40 @@ struct SceneNarrativeState: Codable, Equatable {
     }
 }
 
+struct SceneProseOutputProfile: Codable, Equatable {
+    var tone: ProseOutputTone?
+    var style: ProseOutputStyle?
+    var length: ProseOutputLength?
+    var toneCustom: String?
+    var styleCustom: String?
+    var temperatureOverride: Double?
+
+    init(
+        tone: ProseOutputTone? = nil,
+        style: ProseOutputStyle? = nil,
+        length: ProseOutputLength? = nil,
+        toneCustom: String? = nil,
+        styleCustom: String? = nil,
+        temperatureOverride: Double? = nil
+    ) {
+        self.tone = tone
+        self.style = style
+        self.length = length
+        self.toneCustom = toneCustom
+        self.styleCustom = styleCustom
+        self.temperatureOverride = temperatureOverride
+    }
+
+    var isEmpty: Bool {
+        tone == nil &&
+        style == nil &&
+        length == nil &&
+        toneCustom == nil &&
+        styleCustom == nil &&
+        temperatureOverride == nil
+    }
+}
+
 struct Chapter: Codable, Identifiable, Equatable {
     var id: UUID
     var title: String
@@ -1305,6 +1339,8 @@ struct GenerationSettings: Codable, Equatable {
     var proseOutputTone: ProseOutputTone
     var proseOutputStyle: ProseOutputStyle
     var proseOutputLength: ProseOutputLength
+    var proseOutputToneCustom: String
+    var proseOutputStyleCustom: String
     var cleanUpCaretInsertionEchoes: Bool
     var markRewrittenTextAsItalics: Bool
     var incrementalRewrite: Bool
@@ -1337,6 +1373,8 @@ struct GenerationSettings: Codable, Equatable {
         proseOutputTone: ProseOutputTone,
         proseOutputStyle: ProseOutputStyle,
         proseOutputLength: ProseOutputLength,
+        proseOutputToneCustom: String,
+        proseOutputStyleCustom: String,
         cleanUpCaretInsertionEchoes: Bool,
         markRewrittenTextAsItalics: Bool,
         incrementalRewrite: Bool,
@@ -1362,6 +1400,8 @@ struct GenerationSettings: Codable, Equatable {
         self.proseOutputTone = proseOutputTone
         self.proseOutputStyle = proseOutputStyle
         self.proseOutputLength = proseOutputLength
+        self.proseOutputToneCustom = proseOutputToneCustom
+        self.proseOutputStyleCustom = proseOutputStyleCustom
         self.cleanUpCaretInsertionEchoes = cleanUpCaretInsertionEchoes
         self.markRewrittenTextAsItalics = markRewrittenTextAsItalics
         self.incrementalRewrite = incrementalRewrite
@@ -1389,6 +1429,8 @@ struct GenerationSettings: Codable, Equatable {
         case proseOutputTone
         case proseOutputStyle
         case proseOutputLength
+        case proseOutputToneCustom
+        case proseOutputStyleCustom
         case cleanUpCaretInsertionEchoes
         case markRewrittenTextAsItalics
         case incrementalRewrite
@@ -1431,6 +1473,8 @@ struct GenerationSettings: Codable, Equatable {
         proseOutputTone = try container.decodeIfPresent(ProseOutputTone.self, forKey: .proseOutputTone) ?? .automatic
         proseOutputStyle = try container.decodeIfPresent(ProseOutputStyle.self, forKey: .proseOutputStyle) ?? .automatic
         proseOutputLength = try container.decodeIfPresent(ProseOutputLength.self, forKey: .proseOutputLength) ?? .medium
+        proseOutputToneCustom = try container.decodeIfPresent(String.self, forKey: .proseOutputToneCustom) ?? ""
+        proseOutputStyleCustom = try container.decodeIfPresent(String.self, forKey: .proseOutputStyleCustom) ?? ""
         cleanUpCaretInsertionEchoes = try container.decodeIfPresent(Bool.self, forKey: .cleanUpCaretInsertionEchoes) ?? true
         markRewrittenTextAsItalics = try container.decodeIfPresent(Bool.self, forKey: .markRewrittenTextAsItalics) ?? true
         incrementalRewrite = try container.decodeIfPresent(Bool.self, forKey: .incrementalRewrite) ?? false
@@ -1461,6 +1505,8 @@ struct GenerationSettings: Codable, Equatable {
         proseOutputTone: .automatic,
         proseOutputStyle: .automatic,
         proseOutputLength: .medium,
+        proseOutputToneCustom: "",
+        proseOutputStyleCustom: "",
         cleanUpCaretInsertionEchoes: true,
         markRewrittenTextAsItalics: true,
         incrementalRewrite: false,
@@ -1627,6 +1673,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var selectedWorkshopPromptID: UUID?
     var beatInputHistoryByScene: [String: [String]]
     var sceneProsePlanDraftByScene: [String: String]
+    var sceneProseOutputProfileByScene: [String: SceneProseOutputProfile]
     var sceneContextCompendiumSelection: [String: [UUID]]
     var sceneContextSceneSummarySelection: [String: [UUID]]
     var sceneContextChapterSummarySelection: [String: [UUID]]
@@ -1658,6 +1705,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedWorkshopPromptID: UUID?,
         beatInputHistoryByScene: [String: [String]],
         sceneProsePlanDraftByScene: [String: String],
+        sceneProseOutputProfileByScene: [String: SceneProseOutputProfile] = [:],
         sceneContextCompendiumSelection: [String: [UUID]],
         sceneContextSceneSummarySelection: [String: [UUID]],
         sceneContextChapterSummarySelection: [String: [UUID]],
@@ -1688,6 +1736,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.selectedWorkshopPromptID = selectedWorkshopPromptID
         self.beatInputHistoryByScene = beatInputHistoryByScene
         self.sceneProsePlanDraftByScene = sceneProsePlanDraftByScene
+        self.sceneProseOutputProfileByScene = sceneProseOutputProfileByScene
         self.sceneContextCompendiumSelection = sceneContextCompendiumSelection
         self.sceneContextSceneSummarySelection = sceneContextSceneSummarySelection
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
@@ -1720,6 +1769,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case selectedWorkshopPromptID
         case beatInputHistoryByScene
         case sceneProsePlanDraftByScene
+        case sceneProseOutputProfileByScene
         case sceneContextCompendiumSelection
         case sceneContextSceneSummarySelection
         case sceneContextChapterSummarySelection
@@ -1754,6 +1804,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         selectedWorkshopPromptID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkshopPromptID)
         beatInputHistoryByScene = try container.decodeIfPresent([String: [String]].self, forKey: .beatInputHistoryByScene) ?? [:]
         sceneProsePlanDraftByScene = try container.decodeIfPresent([String: String].self, forKey: .sceneProsePlanDraftByScene) ?? [:]
+        sceneProseOutputProfileByScene = try container.decodeIfPresent([String: SceneProseOutputProfile].self, forKey: .sceneProseOutputProfileByScene) ?? [:]
         sceneContextCompendiumSelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextCompendiumSelection) ?? [:]
         sceneContextSceneSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextSceneSummarySelection) ?? [:]
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
@@ -1818,6 +1869,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             selectedWorkshopPromptID: PromptTemplate.defaultWorkshopTemplate.id,
             beatInputHistoryByScene: [:],
             sceneProsePlanDraftByScene: [:],
+            sceneProseOutputProfileByScene: [:],
             sceneContextCompendiumSelection: [:],
             sceneContextSceneSummarySelection: [:],
             sceneContextChapterSummarySelection: [:],

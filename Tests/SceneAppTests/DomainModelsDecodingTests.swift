@@ -51,6 +51,8 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(normalized.proseOutputTone, .automatic)
         XCTAssertEqual(normalized.proseOutputStyle, .automatic)
         XCTAssertEqual(normalized.proseOutputLength, .medium)
+        XCTAssertEqual(normalized.proseOutputToneCustom, "")
+        XCTAssertEqual(normalized.proseOutputStyleCustom, "")
 
         let fallbackSelectionJSON = """
         {
@@ -69,6 +71,8 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(fallback.proseOutputTone, .automatic)
         XCTAssertEqual(fallback.proseOutputStyle, .automatic)
         XCTAssertEqual(fallback.proseOutputLength, .medium)
+        XCTAssertEqual(fallback.proseOutputToneCustom, "")
+        XCTAssertEqual(fallback.proseOutputStyleCustom, "")
 
         let explicitProfileJSON = """
         {
@@ -81,6 +85,8 @@ final class DomainModelsDecodingTests: XCTestCase {
           "proseOutputTone": "tense",
           "proseOutputStyle": "cinematic",
           "proseOutputLength": "short",
+          "proseOutputToneCustom": "claustrophobic and brittle",
+          "proseOutputStyleCustom": "choppy fragments with sudden sensory details",
           "defaultSystemPrompt": "sys"
         }
         """
@@ -88,6 +94,8 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(explicitProfile.proseOutputTone, .tense)
         XCTAssertEqual(explicitProfile.proseOutputStyle, .cinematic)
         XCTAssertEqual(explicitProfile.proseOutputLength, .short)
+        XCTAssertEqual(explicitProfile.proseOutputToneCustom, "claustrophobic and brittle")
+        XCTAssertEqual(explicitProfile.proseOutputStyleCustom, "choppy fragments with sudden sensory details")
     }
 
     func testGenerationSettingsDecodingClampsTaskNotificationDuration() throws {
@@ -148,6 +156,9 @@ final class DomainModelsDecodingTests: XCTestCase {
         project.sceneContextChapterSummarySelection = [UUID().uuidString: [UUID()]]
         project.sceneNarrativeStates = [UUID().uuidString: SceneNarrativeState(pov: "third")]
         project.sceneProsePlanDraftByScene = [UUID().uuidString: "Plan draft"]
+        project.sceneProseOutputProfileByScene = [
+            UUID().uuidString: SceneProseOutputProfile(tone: .tense, temperatureOverride: 1.1)
+        ]
         project.storyGraphEdges = [
             StoryGraphEdge(
                 fromCompendiumID: UUID(),
@@ -173,6 +184,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         object.removeValue(forKey: "sceneContextChapterSummarySelection")
         object.removeValue(forKey: "sceneNarrativeStates")
         object.removeValue(forKey: "sceneProsePlanDraftByScene")
+        object.removeValue(forKey: "sceneProseOutputProfileByScene")
         object.removeValue(forKey: "storyGraphEdges")
         object.removeValue(forKey: "rollingSceneMemoryByScene")
         object.removeValue(forKey: "rollingChapterMemoryByChapter")
@@ -184,6 +196,7 @@ final class DomainModelsDecodingTests: XCTestCase {
         XCTAssertEqual(decoded.sceneContextChapterSummarySelection, [:])
         XCTAssertEqual(decoded.sceneNarrativeStates, [:])
         XCTAssertEqual(decoded.sceneProsePlanDraftByScene, [:])
+        XCTAssertEqual(decoded.sceneProseOutputProfileByScene, [:])
         XCTAssertEqual(decoded.storyGraphEdges, [])
         XCTAssertEqual(decoded.rollingSceneMemoryByScene, [:])
         XCTAssertEqual(decoded.rollingChapterMemoryByChapter, [:])
