@@ -2113,9 +2113,12 @@ final class AppStore: ObservableObject {
 
     func selectChapter(_ chapterID: UUID) {
         guard isProjectOpen else { return }
+        let nextSceneID = project.chapters.first(where: { $0.id == chapterID })?.scenes.first?.id
+        if nextSceneID != selectedSceneID {
+            cancelBeatGenerationForSceneSwitchIfNeeded()
+        }
         selectedChapterID = chapterID
-        let firstSceneID = project.chapters.first(where: { $0.id == chapterID })?.scenes.first?.id
-        selectedSceneID = firstSceneID
+        selectedSceneID = nextSceneID
         proseInsertionAnchor = nil
         project.selectedSceneID = selectedSceneID
         saveProject(debounced: true)
@@ -2123,11 +2126,19 @@ final class AppStore: ObservableObject {
 
     func selectScene(_ sceneID: UUID, chapterID: UUID) {
         guard isProjectOpen else { return }
+        if sceneID != selectedSceneID {
+            cancelBeatGenerationForSceneSwitchIfNeeded()
+        }
         selectedChapterID = chapterID
         selectedSceneID = sceneID
         proseInsertionAnchor = nil
         project.selectedSceneID = sceneID
         saveProject(debounced: true)
+    }
+
+    private func cancelBeatGenerationForSceneSwitchIfNeeded() {
+        guard proseRequestTask != nil else { return }
+        cancelBeatGeneration()
     }
 
     func setProseInsertionPoint(sceneID: UUID?, utf16Location: Int) {
@@ -6757,6 +6768,11 @@ final class AppStore: ObservableObject {
         scene: Scene,
         modelOverride: String?
     ) async throws -> ProsePlanRunResult {
+        isGenerating = true
+        defer {
+            isGenerating = false
+        }
+
         let requestBuild = makeProsePlanRequest(
             beat: beat,
             scene: scene,
@@ -6799,6 +6815,11 @@ final class AppStore: ObservableObject {
         scene: Scene,
         modelOverride: String?
     ) async {
+        isGenerating = true
+        defer {
+            isGenerating = false
+        }
+
         generationStatus = "Planning from graph..."
         let toastID = startTaskProgressToast("Generating graph path plan…")
 

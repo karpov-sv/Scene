@@ -226,6 +226,13 @@ struct SettingsSheetView: View {
         )
     }
 
+    private var proseGenerationStrategyBinding: Binding<ProseGenerationStrategy> {
+        Binding(
+            get: { store.project.settings.proseGenerationStrategy },
+            set: { store.updateProseGenerationStrategy($0) }
+        )
+    }
+
     private var preferCompactPromptTemplatesBinding: Binding<Bool> {
         Binding(
             get: { store.project.settings.preferCompactPromptTemplates },
@@ -1142,6 +1149,29 @@ struct SettingsSheetView: View {
                         }
 
                         Text("When inline generation is on, generation appends/streams directly into the scene and skips the multi-model candidate review.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                GroupBox("Prose Generation Flow") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("Main Generate action")
+                            Spacer(minLength: 0)
+                            Picker("Main Generate action", selection: proseGenerationStrategyBinding) {
+                                ForEach(ProseGenerationStrategy.allCases, id: \.self) { strategy in
+                                    Text(strategy.label).tag(strategy)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(width: 180, alignment: .trailing)
+                        }
+
+                        Text("Controls what the main Generate button does by default in prose mode.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

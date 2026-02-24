@@ -1141,7 +1141,7 @@ struct EditorView: View {
         if store.isProseGenerationRunning {
             store.cancelBeatGeneration()
         } else {
-            store.submitBeatGeneration(strategyOverride: .direct)
+            store.submitBeatGeneration(strategyOverride: store.project.settings.proseGenerationStrategy)
         }
     }
 
