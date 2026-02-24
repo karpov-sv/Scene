@@ -467,15 +467,6 @@ final class AppStore: ObservableObject {
         let elapsedSeconds: Double
     }
 
-    private struct InlineVariantRunResult {
-        let candidateID: UUID
-        let text: String?
-        let usage: TokenUsage?
-        let errorMessage: String?
-        let cancelled: Bool
-        let elapsedSeconds: Double
-    }
-
     private struct PromptPreviewSceneContext {
         let sceneID: UUID?
         let sceneTitle: String
@@ -517,38 +508,12 @@ final class AppStore: ObservableObject {
         var generatedText: String
     }
 
-    struct InlineVariantCandidate: Identifiable, Equatable {
-        enum Status: String, Equatable {
-            case queued
-            case running
-            case completed
-            case failed
-            case cancelled
-
-            var isTerminal: Bool {
-                switch self {
-                case .queued, .running:
-                    return false
-                case .completed, .failed, .cancelled:
-                    return true
-                }
-            }
-        }
-
-        let id: UUID
-        var status: Status
-        var text: String
-        var usage: TokenUsage?
-        var errorMessage: String?
-        var elapsedSeconds: Double?
-    }
-
     struct InlineVariantGenerationState: Identifiable, Equatable {
         let id: UUID
         let sceneID: UUID
         let beat: String
         let request: TextGenerationRequest
-        var candidates: [InlineVariantCandidate]
+        var candidates: [ProseGenerationCandidate]
         var selectedIndex: Int
         var followsActiveCandidate: Bool
         var startedAt: Date
@@ -563,7 +528,7 @@ final class AppStore: ObservableObject {
             candidates.filter { $0.status == .completed }.count
         }
 
-        var selectedCandidate: InlineVariantCandidate? {
+        var selectedCandidate: ProseGenerationCandidate? {
             guard candidates.indices.contains(selectedIndex) else { return nil }
             return candidates[selectedIndex]
         }
@@ -5795,9 +5760,10 @@ final class AppStore: ObservableObject {
 
         let generationID = UUID()
         let variantCount = Self.inlineVariantsDefaultCount
-        let candidates = (0..<variantCount).map { _ in
-            InlineVariantCandidate(
+        let candidates = (0..<variantCount).map { index in
+            ProseGenerationCandidate(
                 id: UUID(),
+                model: inlineVariantCandidateLabel(for: index),
                 status: .queued,
                 text: "",
                 usage: nil,
@@ -5846,8 +5812,9 @@ final class AppStore: ObservableObject {
             do {
                 let result = try await generateTextResult(request, onPartial: partialHandler)
                 applyInlineVariantRunResult(
-                    InlineVariantRunResult(
+                    ProseCandidateRunResult(
                         candidateID: candidateID,
+                        request: request,
                         text: result.text,
                         usage: result.usage,
                         errorMessage: nil,
@@ -5858,8 +5825,9 @@ final class AppStore: ObservableObject {
                 )
             } catch is CancellationError {
                 applyInlineVariantRunResult(
-                    InlineVariantRunResult(
+                    ProseCandidateRunResult(
                         candidateID: candidateID,
+                        request: request,
                         text: nil,
                         usage: nil,
                         errorMessage: nil,
@@ -5871,8 +5839,9 @@ final class AppStore: ObservableObject {
                 break
             } catch {
                 applyInlineVariantRunResult(
-                    InlineVariantRunResult(
+                    ProseCandidateRunResult(
                         candidateID: candidateID,
+                        request: request,
                         text: nil,
                         usage: nil,
                         errorMessage: error.localizedDescription,
@@ -6124,32 +6093,13 @@ final class AppStore: ObservableObject {
 
     private func applyProseCandidateRunResult(_ outcome: ProseCandidateRunResult, reviewID: UUID) {
         guard var review = proseGenerationReview, review.id == reviewID else { return }
-        guard let index = review.candidates.firstIndex(where: { $0.id == outcome.candidateID }) else { return }
-
-        let normalizedText = outcome.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if outcome.cancelled {
-            review.candidates[index].status = .cancelled
-            review.candidates[index].errorMessage = nil
-            review.candidates[index].text = ""
-            review.candidates[index].usage = nil
-        } else if normalizedText.isEmpty {
-            review.candidates[index].status = .failed
-            review.candidates[index].errorMessage = outcome.errorMessage ?? "No text returned."
-            review.candidates[index].text = ""
-            review.candidates[index].usage = nil
-        } else {
-            let usage = normalizedTokenUsage(
-                from: outcome.usage,
-                request: outcome.request,
-                response: normalizedText
-            )
-            review.candidates[index].status = .completed
-            review.candidates[index].errorMessage = nil
-            review.candidates[index].text = normalizedText
-            review.candidates[index].usage = usage
+        if let usage = applyCandidateRunResult(
+            outcome,
+            to: &review.candidates,
+            clearTextOnCancellation: true
+        ) {
             proseLiveUsage = usage
         }
-        review.candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
         review.isRunning = review.candidates.contains { !$0.status.isTerminal }
         proseGenerationReview = review
     }
@@ -6162,26 +6112,21 @@ final class AppStore: ObservableObject {
         startedAt: Date
     ) {
         guard var review = proseGenerationReview, review.id == reviewID else { return }
-        guard let index = review.candidates.firstIndex(where: { $0.id == candidateID }) else { return }
-
-        review.candidates[index].status = .running
-        review.candidates[index].text = partial
-        let usage = normalizedTokenUsage(from: nil, request: request, response: partial)
-        review.candidates[index].usage = usage
-        review.candidates[index].errorMessage = nil
-        review.candidates[index].elapsedSeconds = max(0, Date().timeIntervalSince(startedAt))
-        proseLiveUsage = usage
+        if let usage = applyCandidatePartial(
+            candidateID: candidateID,
+            partial: partial,
+            request: request,
+            startedAt: startedAt,
+            candidates: &review.candidates
+        ) {
+            proseLiveUsage = usage
+        }
         proseGenerationReview = review
     }
 
     private func markRunningProseCandidatesCancelled(reviewID: UUID) {
         guard var review = proseGenerationReview, review.id == reviewID else { return }
-        for index in review.candidates.indices where review.candidates[index].status == .running || review.candidates[index].status == .queued {
-            review.candidates[index].status = .cancelled
-            review.candidates[index].errorMessage = nil
-            review.candidates[index].text = ""
-            review.candidates[index].usage = nil
-        }
+        markRunningCandidatesCancelled(&review.candidates, clearTextOnCancellation: true)
         review.isRunning = false
         proseGenerationReview = review
     }
@@ -6213,15 +6158,13 @@ final class AppStore: ObservableObject {
         partial: String
     ) {
         guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        guard let index = state.candidates.firstIndex(where: { $0.id == candidateID }) else { return }
-
-        state.candidates[index].status = .running
-        state.candidates[index].text = partial
-        state.candidates[index].errorMessage = nil
-        state.candidates[index].usage = partial.isEmpty
-            ? nil
-            : normalizedTokenUsage(from: nil, request: state.request, response: partial)
-        state.candidates[index].elapsedSeconds = max(0, Date().timeIntervalSince(state.startedAt))
+        _ = applyCandidatePartial(
+            candidateID: candidateID,
+            partial: partial,
+            request: state.request,
+            startedAt: state.startedAt,
+            candidates: &state.candidates
+        )
         state.isRunning = true
 
         inlineVariantGeneration = state
@@ -6229,35 +6172,15 @@ final class AppStore: ObservableObject {
     }
 
     private func applyInlineVariantRunResult(
-        _ outcome: InlineVariantRunResult,
+        _ outcome: ProseCandidateRunResult,
         generationID: UUID
     ) {
         guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        guard let index = state.candidates.firstIndex(where: { $0.id == outcome.candidateID }) else { return }
-
-        let normalizedText = outcome.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if outcome.cancelled {
-            state.candidates[index].status = .cancelled
-            state.candidates[index].errorMessage = nil
-            // Keep partial text (if any) so the user can still accept it after cancellation.
-        } else if normalizedText.isEmpty {
-            state.candidates[index].status = .failed
-            state.candidates[index].errorMessage = outcome.errorMessage ?? "No text returned."
-            state.candidates[index].text = ""
-            state.candidates[index].usage = nil
-        } else {
-            let usage = normalizedTokenUsage(
-                from: outcome.usage,
-                request: state.request,
-                response: normalizedText
-            )
-            state.candidates[index].status = .completed
-            state.candidates[index].errorMessage = nil
-            state.candidates[index].text = normalizedText
-            state.candidates[index].usage = usage
-        }
-
-        state.candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+        _ = applyCandidateRunResult(
+            outcome,
+            to: &state.candidates,
+            clearTextOnCancellation: false
+        )
         state.isRunning = state.candidates.contains { !$0.status.isTerminal }
         inlineVariantGeneration = state
         proseLiveUsage = aggregatedInlineVariantUsage(state: state)
@@ -6265,12 +6188,84 @@ final class AppStore: ObservableObject {
 
     private func markInlineVariantCandidatesCancelled(generationID: UUID) {
         guard var state = inlineVariantGeneration, state.id == generationID else { return }
-        for index in state.candidates.indices where state.candidates[index].status == .running || state.candidates[index].status == .queued {
-            state.candidates[index].status = .cancelled
-            state.candidates[index].errorMessage = nil
-        }
+        markRunningCandidatesCancelled(&state.candidates, clearTextOnCancellation: false)
         state.isRunning = false
         inlineVariantGeneration = state
+    }
+
+    private func applyCandidatePartial(
+        candidateID: UUID,
+        partial: String,
+        request: TextGenerationRequest,
+        startedAt: Date,
+        candidates: inout [ProseGenerationCandidate]
+    ) -> TokenUsage? {
+        guard let index = candidates.firstIndex(where: { $0.id == candidateID }) else { return nil }
+
+        candidates[index].status = .running
+        candidates[index].text = partial
+        candidates[index].errorMessage = nil
+        let usage = partial.isEmpty
+            ? nil
+            : normalizedTokenUsage(from: nil, request: request, response: partial)
+        candidates[index].usage = usage
+        candidates[index].elapsedSeconds = max(0, Date().timeIntervalSince(startedAt))
+        return usage
+    }
+
+    private func applyCandidateRunResult(
+        _ outcome: ProseCandidateRunResult,
+        to candidates: inout [ProseGenerationCandidate],
+        clearTextOnCancellation: Bool
+    ) -> TokenUsage? {
+        guard let index = candidates.firstIndex(where: { $0.id == outcome.candidateID }) else { return nil }
+
+        let normalizedText = outcome.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if outcome.cancelled {
+            candidates[index].status = .cancelled
+            candidates[index].errorMessage = nil
+            if clearTextOnCancellation {
+                candidates[index].text = ""
+                candidates[index].usage = nil
+            }
+            candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+            return nil
+        }
+
+        guard !normalizedText.isEmpty else {
+            candidates[index].status = .failed
+            candidates[index].errorMessage = outcome.errorMessage ?? "No text returned."
+            candidates[index].text = ""
+            candidates[index].usage = nil
+            candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+            return nil
+        }
+
+        let usage = normalizedTokenUsage(
+            from: outcome.usage,
+            request: outcome.request,
+            response: normalizedText
+        )
+        candidates[index].status = .completed
+        candidates[index].errorMessage = nil
+        candidates[index].text = normalizedText
+        candidates[index].usage = usage
+        candidates[index].elapsedSeconds = max(0, outcome.elapsedSeconds)
+        return usage
+    }
+
+    private func markRunningCandidatesCancelled(
+        _ candidates: inout [ProseGenerationCandidate],
+        clearTextOnCancellation: Bool
+    ) {
+        for index in candidates.indices where candidates[index].status == .running || candidates[index].status == .queued {
+            candidates[index].status = .cancelled
+            candidates[index].errorMessage = nil
+            if clearTextOnCancellation {
+                candidates[index].text = ""
+                candidates[index].usage = nil
+            }
+        }
     }
 
     private func aggregatedInlineVariantUsage(state: InlineVariantGenerationState) -> TokenUsage? {
@@ -6296,6 +6291,15 @@ final class AppStore: ObservableObject {
             totalTokens: total,
             isEstimated: anyEstimated
         )
+    }
+
+    private func inlineVariantCandidateLabel(for index: Int) -> String {
+        switch index {
+        case 0: return "A"
+        case 1: return "B"
+        case 2: return "C"
+        default: return "\(index + 1)"
+        }
     }
 
     private func resolveGenerationModelSelection(modelsOverride: [String]?) -> [String] {

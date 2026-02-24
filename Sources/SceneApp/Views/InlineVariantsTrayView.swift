@@ -16,7 +16,7 @@ struct InlineVariantsTrayView: View {
 
                 Picker("Variant", selection: variantSelectionBinding) {
                     ForEach(Array(state.candidates.indices), id: \.self) { index in
-                        Text(variantTitle(index))
+                        Text(candidateTitle(state: state, index: index))
                             .tag(index)
                     }
                 }
@@ -148,16 +148,13 @@ struct InlineVariantsTrayView: View {
         }
     }
 
-    private func variantTitle(_ index: Int) -> String {
-        switch index {
-        case 0: return "A"
-        case 1: return "B"
-        case 2: return "C"
-        default: return "\(index + 1)"
-        }
+    private func candidateTitle(state: AppStore.InlineVariantGenerationState, index: Int) -> String {
+        guard state.candidates.indices.contains(index) else { return "\(index + 1)" }
+        let label = state.candidates[index].model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return label.isEmpty ? "\(index + 1)" : label
     }
 
-    private func statusLabel(_ status: AppStore.InlineVariantCandidate.Status) -> String {
+    private func statusLabel(_ status: AppStore.ProseGenerationCandidate.Status) -> String {
         switch status {
         case .queued:
             return "Queued"
@@ -172,4 +169,3 @@ struct InlineVariantsTrayView: View {
         }
     }
 }
-
