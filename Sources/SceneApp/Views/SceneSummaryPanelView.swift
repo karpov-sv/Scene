@@ -12,6 +12,9 @@ struct SceneSummaryPanelView: View {
     @State private var isChapterRollingMemorySheetPresented: Bool = false
     @State private var chapterRollingMemoryDraft: String = ""
     @State private var chapterRollingMemoryRefreshError: String = ""
+    @State private var storyMemoryTask: Task<Void, Never>?
+    @State private var isStoryMemorySheetPresented: Bool = false
+    @State private var storyMemoryError: String = ""
     @State private var summaryRevealRequest: RevealableTextEditor.RevealRequest?
 
     init(scope: Binding<SummaryScope>) {
@@ -99,6 +102,10 @@ struct SceneSummaryPanelView: View {
 
     private var isRefreshingChapterRollingMemory: Bool {
         chapterRollingMemoryTask != nil
+    }
+
+    private var isRefreshingStoryMemory: Bool {
+        storyMemoryTask != nil
     }
 
     private var sceneMemorySheetTitle: String {
@@ -253,6 +260,10 @@ struct SceneSummaryPanelView: View {
             isPresented: $isChapterRollingMemorySheetPresented,
             content: chapterRollingMemorySheetContent
         )
+        .sheet(
+            isPresented: $isStoryMemorySheetPresented,
+            content: storyMemorySheetContent
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: scope) { _, nextScope in
             if nextScope != .scene {
@@ -280,6 +291,7 @@ struct SceneSummaryPanelView: View {
             cancelSummarization()
             cancelSceneRollingMemoryRefresh()
             cancelChapterRollingMemoryRefresh()
+            cancelStoryMemoryRefresh()
         }
         .onChange(of: store.pendingSummaryTextReveal?.requestID) { _, _ in
             guard let reveal = store.pendingSummaryTextReveal else { return }
@@ -299,6 +311,16 @@ struct SceneSummaryPanelView: View {
                     .font(.headline)
 
                 Spacer(minLength: 0)
+
+                Button {
+                    storyMemoryError = ""
+                    isStoryMemorySheetPresented = true
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+                .buttonStyle(.borderless)
+                .help("Inspect inferred story memory and knowledge graph.")
+                .disabled(!store.isProjectOpen)
 
                 if scope == .scene {
                     Button {
@@ -423,6 +445,27 @@ struct SceneSummaryPanelView: View {
         )
     }
 
+    @ViewBuilder
+    private func storyMemorySheetContent() -> some View {
+        AutoStoryMemorySheet(
+            sceneSummary: store.selectedSceneStoryMemorySummary,
+            sceneFacts: store.selectedSceneStoryMemoryFacts,
+            sceneOpenThreads: store.selectedSceneStoryMemoryOpenThreads,
+            sceneUpdatedAt: store.selectedSceneStoryMemoryUpdatedAt,
+            chapterSummary: store.selectedChapterStoryMemorySummary,
+            chapterOpenThreads: store.selectedChapterStoryMemoryOpenThreads,
+            chapterUpdatedAt: store.selectedChapterStoryMemoryUpdatedAt,
+            projectSummary: store.projectStoryMemorySummary,
+            projectOpenThreads: store.projectStoryMemoryOpenThreads,
+            projectUpdatedAt: store.projectStoryMemoryUpdatedAt,
+            relevantKnowledge: store.selectedSceneRelevantStoryKnowledge,
+            isUpdating: isRefreshingStoryMemory,
+            updateErrorMessage: storyMemoryError.isEmpty ? nil : storyMemoryError,
+            onRebuildScene: rebuildSelectedStoryMemory,
+            onRebuildProject: rebuildProjectStoryMemory
+        )
+    }
+
     private func refreshSceneRollingMemory(from sourceText: String) {
         let trimmedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSource.isEmpty else { return }
@@ -509,6 +552,51 @@ struct SceneSummaryPanelView: View {
         chapterRollingMemoryTask = nil
     }
 
+    private func rebuildSelectedStoryMemory() {
+        cancelStoryMemoryRefresh()
+        storyMemoryError = ""
+
+        storyMemoryTask = Task { @MainActor in
+            defer {
+                storyMemoryTask = nil
+            }
+
+            do {
+                _ = try await store.rebuildSelectedSceneStoryMemory()
+            } catch is CancellationError {
+                return
+            } catch {
+                storyMemoryError = error.localizedDescription
+                store.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func rebuildProjectStoryMemory() {
+        cancelStoryMemoryRefresh()
+        storyMemoryError = ""
+
+        storyMemoryTask = Task { @MainActor in
+            defer {
+                storyMemoryTask = nil
+            }
+
+            do {
+                try await store.rebuildAllStoryMemory()
+            } catch is CancellationError {
+                return
+            } catch {
+                storyMemoryError = error.localizedDescription
+                store.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelStoryMemoryRefresh() {
+        storyMemoryTask?.cancel()
+        storyMemoryTask = nil
+    }
+
     private func clearCurrentScope() {
         switch scope {
         case .scene:
@@ -517,6 +605,328 @@ struct SceneSummaryPanelView: View {
             store.updateSelectedChapterSummary("")
         }
     }
+}
+
+private struct AutoStoryMemorySheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
+
+    let sceneSummary: String
+    let sceneFacts: [String]
+    let sceneOpenThreads: [String]
+    let sceneUpdatedAt: Date?
+    let chapterSummary: String
+    let chapterOpenThreads: [String]
+    let chapterUpdatedAt: Date?
+    let projectSummary: String
+    let projectOpenThreads: [String]
+    let projectUpdatedAt: Date?
+    let relevantKnowledge: String
+    let isUpdating: Bool
+    let updateErrorMessage: String?
+    let onRebuildScene: () -> Void
+    let onRebuildProject: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Auto Story Memory")
+                        .font(.title3.weight(.semibold))
+                    Text("\(store.storyKnowledgeNodeCount) active nodes • \(store.storyKnowledgeEdgeCount) active edges")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(store.storyKnowledgePendingNodeCount) node suggestions • \(store.storyKnowledgePendingEdgeCount) edge suggestions")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    section(
+                        title: "Project Memory",
+                        body: projectSummary,
+                        updatedAt: projectUpdatedAt
+                    )
+
+                    bulletSection(
+                        title: "Project Threads",
+                        items: projectOpenThreads
+                    )
+
+                    section(
+                        title: "Chapter Memory",
+                        body: chapterSummary,
+                        updatedAt: chapterUpdatedAt
+                    )
+
+                    bulletSection(
+                        title: "Chapter Threads",
+                        items: chapterOpenThreads
+                    )
+
+                    section(
+                        title: "Scene Memory",
+                        body: sceneSummary,
+                        updatedAt: sceneUpdatedAt
+                    )
+
+                    bulletSection(
+                        title: "Scene Facts",
+                        items: sceneFacts
+                    )
+
+                    bulletSection(
+                        title: "Scene Open Threads",
+                        items: sceneOpenThreads
+                    )
+
+                    section(
+                        title: "Relevant Knowledge",
+                        body: relevantKnowledge,
+                        updatedAt: nil,
+                        monospaced: true
+                    )
+
+                    pendingNodeSection()
+
+                    pendingEdgeSection()
+                }
+                .padding(12)
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Button("Rebuild Scene") {
+                    onRebuildScene()
+                }
+                .disabled(isUpdating)
+
+                Button("Rebuild Project") {
+                    onRebuildProject()
+                }
+                .disabled(isUpdating)
+
+                Spacer(minLength: 0)
+
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isUpdating)
+            }
+            .padding(12)
+
+            if let updateErrorMessage, !updateErrorMessage.isEmpty {
+                Text(updateErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
+        }
+        .frame(minWidth: 640, minHeight: 520)
+    }
+
+    @ViewBuilder
+    private func section(
+        title: String,
+        body: String,
+        updatedAt: Date?,
+        monospaced: Bool = false
+    ) -> some View {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                if let updatedAt {
+                    Text(Self.timestampFormatter.string(from: updatedAt))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if trimmed.isEmpty {
+                Text("No memory available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(trimmed)
+                    .font(monospaced ? .system(.body, design: .monospaced) : .body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bulletSection(title: String, items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
+
+            if items.isEmpty {
+                Text("None.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { entry in
+                        Text("- \(entry.element)")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pendingNodeSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Node Suggestions")
+                .font(.headline)
+
+            if store.storyKnowledgePendingReviewNodes.isEmpty {
+                Text("No inferred nodes awaiting review.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.storyKnowledgePendingReviewNodes.prefix(12)) { node in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(node.name)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(node.kind.rawValue.capitalized)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                Text(confidenceLabel(node.confidence))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !node.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(node.summary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+
+                            if !node.aliases.isEmpty {
+                                Text("Aliases: \(node.aliases.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+
+                            HStack(spacing: 8) {
+                                Button("Promote to Compendium") {
+                                    store.promoteStoryKnowledgeNodeToCompendium(node.id)
+                                }
+                                .disabled(isUpdating)
+
+                                Button("Reject", role: .destructive) {
+                                    store.rejectStoryKnowledgeNode(node.id)
+                                }
+                                .disabled(isUpdating)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pendingEdgeSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Edge Suggestions")
+                .font(.headline)
+
+            if store.storyKnowledgePendingReviewEdges.isEmpty {
+                Text("No inferred edges awaiting review.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.storyKnowledgePendingReviewEdges.prefix(16)) { edge in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(store.storyKnowledgeEdgeDisplayLabel(edge))
+                                    .font(.subheadline.weight(.semibold))
+                                    .textSelection(.enabled)
+                                Spacer(minLength: 0)
+                                Text(confidenceLabel(edge.confidence))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !edge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(edge.note)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+
+                            HStack(spacing: 8) {
+                                Button("Accept") {
+                                    store.acceptStoryKnowledgeEdge(edge.id)
+                                }
+                                .disabled(isUpdating)
+
+                                Button("Reject", role: .destructive) {
+                                    store.rejectStoryKnowledgeEdge(edge.id)
+                                }
+                                .disabled(isUpdating)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func confidenceLabel(_ confidence: Double) -> String {
+        "\(Int((confidence * 100).rounded()))%"
+    }
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
 
 private struct SceneRollingMemorySheet: View {

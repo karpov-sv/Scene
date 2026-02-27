@@ -20,6 +20,7 @@ struct ContentView: View {
     private enum WritingSidePanel: String {
         case none
         case compendium
+        case knowledge
         case summary
         case notes
         case plan
@@ -194,6 +195,13 @@ struct ContentView: View {
             .help(compendiumToggleHelpText)
 
             Button {
+                toggleKnowledgePanel()
+            } label: {
+                Image(systemName: writingSidePanel == .knowledge ? "point.3.connected.trianglepath.dotted.fill" : "point.3.connected.trianglepath.dotted")
+            }
+            .help(knowledgeToggleHelpText)
+
+            Button {
                 toggleSummaryPanel()
             } label: {
                 Image(systemName: writingSidePanel == .summary ? "text.document.fill" : "text.document")
@@ -268,6 +276,11 @@ struct ContentView: View {
                 .zIndex(writingSidePanel == .compendium ? 1 : 0)
                 .opacity(writingSidePanel == .compendium ? 1 : 0)
                 .allowsHitTesting(writingSidePanel == .compendium)
+
+            StoryKnowledgePanelView()
+                .zIndex(writingSidePanel == .knowledge ? 1 : 0)
+                .opacity(writingSidePanel == .knowledge ? 1 : 0)
+                .allowsHitTesting(writingSidePanel == .knowledge)
 
             SceneSummaryPanelView(scope: $summaryScope)
                 .zIndex(writingSidePanel == .summary ? 1 : 0)
@@ -357,6 +370,10 @@ struct ContentView: View {
         writingSidePanel == .compendium ? "Hide Compendium" : "Show Compendium"
     }
 
+    private var knowledgeToggleHelpText: String {
+        writingSidePanel == .knowledge ? "Hide Knowledge Graph" : "Show Knowledge Graph"
+    }
+
     private var summaryToggleHelpText: String {
         writingSidePanel == .summary ? "Hide Summary" : "Show Summary"
     }
@@ -426,6 +443,7 @@ struct ContentView: View {
                 store.requestWorkshopInputFocus()
             },
             toggleCompendium: toggleCompendiumPanel,
+            toggleKnowledge: toggleKnowledgePanel,
             toggleSummary: toggleSummaryPanel,
             toggleNotes: toggleNotesPanel,
             togglePlan: togglePlanPanel,
@@ -552,6 +570,10 @@ struct ContentView: View {
 
     private func toggleCompendiumPanel() {
         writingSidePanel = writingSidePanel == .compendium ? .none : .compendium
+    }
+
+    private func toggleKnowledgePanel() {
+        writingSidePanel = writingSidePanel == .knowledge ? .none : .knowledge
     }
 
     private func toggleSummaryPanel() {

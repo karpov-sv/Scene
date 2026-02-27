@@ -363,6 +363,11 @@ final class ProjectPersistence {
         var sceneContextChapterSummarySelection: [String: [UUID]]?
         var sceneNarrativeStates: [String: SceneNarrativeState]?
         var storyGraphEdges: [StoryGraphEdge]?
+        var storyKnowledgeNodes: [StoryKnowledgeNode]?
+        var storyKnowledgeEdges: [StoryKnowledgeEdge]?
+        var sceneStoryMemoryByScene: [String: SceneStoryMemory]?
+        var chapterStoryMemoryByChapter: [String: ChapterStoryMemory]?
+        var projectStoryMemory: ProjectStoryMemory?
         var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]?
         var rollingSceneMemoryByScene: [String: RollingSceneMemory]?
         var rollingChapterMemoryByChapter: [String: RollingChapterMemory]?
@@ -670,6 +675,11 @@ final class ProjectPersistence {
             sceneContextChapterSummarySelection: manifest.sceneContextChapterSummarySelection ?? [:],
             sceneNarrativeStates: manifest.sceneNarrativeStates ?? [:],
             storyGraphEdges: manifest.storyGraphEdges ?? [],
+            storyKnowledgeNodes: manifest.storyKnowledgeNodes ?? [],
+            storyKnowledgeEdges: manifest.storyKnowledgeEdges ?? [],
+            sceneStoryMemoryByScene: manifest.sceneStoryMemoryByScene ?? [:],
+            chapterStoryMemoryByChapter: manifest.chapterStoryMemoryByChapter ?? [:],
+            projectStoryMemory: manifest.projectStoryMemory,
             rollingWorkshopMemoryBySession: manifest.rollingWorkshopMemoryBySession ?? [:],
             rollingSceneMemoryByScene: manifest.rollingSceneMemoryByScene ?? [:],
             rollingChapterMemoryByChapter: manifest.rollingChapterMemoryByChapter ?? [:],
@@ -812,6 +822,11 @@ final class ProjectPersistence {
             sceneContextChapterSummarySelection: project.sceneContextChapterSummarySelection,
             sceneNarrativeStates: project.sceneNarrativeStates,
             storyGraphEdges: project.storyGraphEdges,
+            storyKnowledgeNodes: project.storyKnowledgeNodes,
+            storyKnowledgeEdges: project.storyKnowledgeEdges,
+            sceneStoryMemoryByScene: project.sceneStoryMemoryByScene,
+            chapterStoryMemoryByChapter: project.chapterStoryMemoryByChapter,
+            projectStoryMemory: project.projectStoryMemory,
             rollingWorkshopMemoryBySession: project.rollingWorkshopMemoryBySession,
             rollingSceneMemoryByScene: project.rollingSceneMemoryByScene,
             rollingChapterMemoryByChapter: project.rollingChapterMemoryByChapter,

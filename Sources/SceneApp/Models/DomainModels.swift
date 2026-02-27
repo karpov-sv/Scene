@@ -396,7 +396,173 @@ struct StoryGraphEdge: Codable, Identifiable, Equatable {
     }
 }
 
-	struct PromptTemplate: Codable, Identifiable, Equatable {
+enum StoryKnowledgeNodeKind: String, Codable, CaseIterable, Identifiable {
+    case character
+    case location
+    case object
+    case concept
+    case group
+    case event
+    case unknown
+
+    var id: String { rawValue }
+}
+
+enum StoryKnowledgeRecordStatus: String, Codable, CaseIterable, Identifiable {
+    case canonical
+    case inferred
+    case rejected
+
+    var id: String { rawValue }
+}
+
+struct StoryKnowledgeNode: Codable, Identifiable, Equatable {
+    var id: UUID
+    var name: String
+    var kind: StoryKnowledgeNodeKind
+    var summary: String
+    var aliases: [String]
+    var resolvedCompendiumID: UUID?
+    var status: StoryKnowledgeRecordStatus
+    var confidence: Double
+    var evidenceSceneIDs: [UUID]
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        kind: StoryKnowledgeNodeKind = .unknown,
+        summary: String = "",
+        aliases: [String] = [],
+        resolvedCompendiumID: UUID? = nil,
+        status: StoryKnowledgeRecordStatus = .inferred,
+        confidence: Double = 0.5,
+        evidenceSceneIDs: [UUID] = [],
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.summary = summary
+        self.aliases = aliases
+        self.resolvedCompendiumID = resolvedCompendiumID
+        self.status = status
+        self.confidence = min(max(confidence, 0), 1)
+        self.evidenceSceneIDs = evidenceSceneIDs
+        self.updatedAt = updatedAt
+    }
+}
+
+struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
+    var id: UUID
+    var sourceNodeID: UUID
+    var targetNodeID: UUID
+    var relation: String
+    var note: String
+    var status: StoryKnowledgeRecordStatus
+    var confidence: Double
+    var evidenceSceneIDs: [UUID]
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        sourceNodeID: UUID,
+        targetNodeID: UUID,
+        relation: String,
+        note: String = "",
+        status: StoryKnowledgeRecordStatus = .inferred,
+        confidence: Double = 0.5,
+        evidenceSceneIDs: [UUID] = [],
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.sourceNodeID = sourceNodeID
+        self.targetNodeID = targetNodeID
+        self.relation = relation
+        self.note = note
+        self.status = status
+        self.confidence = min(max(confidence, 0), 1)
+        self.evidenceSceneIDs = evidenceSceneIDs
+        self.updatedAt = updatedAt
+    }
+}
+
+struct SceneStoryMemory: Codable, Equatable {
+    var sceneID: UUID
+    var chapterID: UUID
+    var sourceContentHash: String
+    var summary: String
+    var facts: [String]
+    var openThreads: [String]
+    var knowledgeNodeIDs: [UUID]
+    var updatedAt: Date
+
+    init(
+        sceneID: UUID,
+        chapterID: UUID,
+        sourceContentHash: String = "",
+        summary: String = "",
+        facts: [String] = [],
+        openThreads: [String] = [],
+        knowledgeNodeIDs: [UUID] = [],
+        updatedAt: Date = .now
+    ) {
+        self.sceneID = sceneID
+        self.chapterID = chapterID
+        self.sourceContentHash = sourceContentHash
+        self.summary = summary
+        self.facts = facts
+        self.openThreads = openThreads
+        self.knowledgeNodeIDs = knowledgeNodeIDs
+        self.updatedAt = updatedAt
+    }
+}
+
+struct ChapterStoryMemory: Codable, Equatable {
+    var chapterID: UUID
+    var sourceFingerprint: String
+    var summary: String
+    var openThreads: [String]
+    var knowledgeNodeIDs: [UUID]
+    var updatedAt: Date
+
+    init(
+        chapterID: UUID,
+        sourceFingerprint: String = "",
+        summary: String = "",
+        openThreads: [String] = [],
+        knowledgeNodeIDs: [UUID] = [],
+        updatedAt: Date = .now
+    ) {
+        self.chapterID = chapterID
+        self.sourceFingerprint = sourceFingerprint
+        self.summary = summary
+        self.openThreads = openThreads
+        self.knowledgeNodeIDs = knowledgeNodeIDs
+        self.updatedAt = updatedAt
+    }
+}
+
+struct ProjectStoryMemory: Codable, Equatable {
+    var sourceFingerprint: String
+    var summary: String
+    var openThreads: [String]
+    var updatedAt: Date
+
+    init(
+        sourceFingerprint: String = "",
+        summary: String = "",
+        openThreads: [String] = [],
+        updatedAt: Date = .now
+    ) {
+        self.sourceFingerprint = sourceFingerprint
+        self.summary = summary
+        self.openThreads = openThreads
+        self.updatedAt = updatedAt
+    }
+}
+
+struct PromptTemplate: Codable, Identifiable, Equatable {
     var id: UUID
     var category: PromptCategory
     var title: String
@@ -1679,6 +1845,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var sceneContextChapterSummarySelection: [String: [UUID]]
     var sceneNarrativeStates: [String: SceneNarrativeState]
     var storyGraphEdges: [StoryGraphEdge]
+    var storyKnowledgeNodes: [StoryKnowledgeNode]
+    var storyKnowledgeEdges: [StoryKnowledgeEdge]
+    var sceneStoryMemoryByScene: [String: SceneStoryMemory]
+    var chapterStoryMemoryByChapter: [String: ChapterStoryMemory]
+    var projectStoryMemory: ProjectStoryMemory?
     var rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory]
     var rollingSceneMemoryByScene: [String: RollingSceneMemory]
     var rollingChapterMemoryByChapter: [String: RollingChapterMemory]
@@ -1711,6 +1882,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextChapterSummarySelection: [String: [UUID]],
         sceneNarrativeStates: [String: SceneNarrativeState],
         storyGraphEdges: [StoryGraphEdge],
+        storyKnowledgeNodes: [StoryKnowledgeNode],
+        storyKnowledgeEdges: [StoryKnowledgeEdge],
+        sceneStoryMemoryByScene: [String: SceneStoryMemory],
+        chapterStoryMemoryByChapter: [String: ChapterStoryMemory],
+        projectStoryMemory: ProjectStoryMemory? = nil,
         rollingWorkshopMemoryBySession: [String: RollingWorkshopMemory],
         rollingSceneMemoryByScene: [String: RollingSceneMemory],
         rollingChapterMemoryByChapter: [String: RollingChapterMemory],
@@ -1742,6 +1918,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.sceneContextChapterSummarySelection = sceneContextChapterSummarySelection
         self.sceneNarrativeStates = sceneNarrativeStates
         self.storyGraphEdges = storyGraphEdges
+        self.storyKnowledgeNodes = storyKnowledgeNodes
+        self.storyKnowledgeEdges = storyKnowledgeEdges
+        self.sceneStoryMemoryByScene = sceneStoryMemoryByScene
+        self.chapterStoryMemoryByChapter = chapterStoryMemoryByChapter
+        self.projectStoryMemory = projectStoryMemory
         self.rollingWorkshopMemoryBySession = rollingWorkshopMemoryBySession
         self.rollingSceneMemoryByScene = rollingSceneMemoryByScene
         self.rollingChapterMemoryByChapter = rollingChapterMemoryByChapter
@@ -1775,6 +1956,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case sceneContextChapterSummarySelection
         case sceneNarrativeStates
         case storyGraphEdges
+        case storyKnowledgeNodes
+        case storyKnowledgeEdges
+        case sceneStoryMemoryByScene
+        case chapterStoryMemoryByChapter
+        case projectStoryMemory
         case rollingWorkshopMemoryBySession
         case rollingSceneMemoryByScene
         case rollingChapterMemoryByChapter
@@ -1810,6 +1996,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
         sceneContextChapterSummarySelection = try container.decodeIfPresent([String: [UUID]].self, forKey: .sceneContextChapterSummarySelection) ?? [:]
         sceneNarrativeStates = try container.decodeIfPresent([String: SceneNarrativeState].self, forKey: .sceneNarrativeStates) ?? [:]
         storyGraphEdges = try container.decodeIfPresent([StoryGraphEdge].self, forKey: .storyGraphEdges) ?? []
+        storyKnowledgeNodes = try container.decodeIfPresent([StoryKnowledgeNode].self, forKey: .storyKnowledgeNodes) ?? []
+        storyKnowledgeEdges = try container.decodeIfPresent([StoryKnowledgeEdge].self, forKey: .storyKnowledgeEdges) ?? []
+        sceneStoryMemoryByScene = try container.decodeIfPresent([String: SceneStoryMemory].self, forKey: .sceneStoryMemoryByScene) ?? [:]
+        chapterStoryMemoryByChapter = try container.decodeIfPresent([String: ChapterStoryMemory].self, forKey: .chapterStoryMemoryByChapter) ?? [:]
+        projectStoryMemory = try container.decodeIfPresent(ProjectStoryMemory.self, forKey: .projectStoryMemory)
         rollingWorkshopMemoryBySession = try container.decodeIfPresent([String: RollingWorkshopMemory].self, forKey: .rollingWorkshopMemoryBySession) ?? [:]
         rollingSceneMemoryByScene = try container.decodeIfPresent([String: RollingSceneMemory].self, forKey: .rollingSceneMemoryByScene) ?? [:]
         rollingChapterMemoryByChapter = try container.decodeIfPresent([String: RollingChapterMemory].self, forKey: .rollingChapterMemoryByChapter) ?? [:]
@@ -1875,6 +2066,11 @@ struct StoryProject: Codable, Identifiable, Equatable {
             sceneContextChapterSummarySelection: [:],
             sceneNarrativeStates: [:],
             storyGraphEdges: [],
+            storyKnowledgeNodes: [],
+            storyKnowledgeEdges: [],
+            sceneStoryMemoryByScene: [:],
+            chapterStoryMemoryByChapter: [:],
+            projectStoryMemory: nil,
             rollingWorkshopMemoryBySession: [:],
             rollingSceneMemoryByScene: [:],
             rollingChapterMemoryByChapter: [:],

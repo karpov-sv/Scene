@@ -127,6 +127,11 @@ struct SceneFileCommands: Commands {
             .keyboardShortcut("4", modifiers: .command)
             .disabled(viewActions?.canUseViewActions != true)
 
+            Button("Toggle Knowledge Graph") {
+                viewActions?.toggleKnowledge()
+            }
+            .disabled(viewActions?.canUseViewActions != true)
+
             Button("Toggle Summary") {
                 viewActions?.toggleSummary()
             }

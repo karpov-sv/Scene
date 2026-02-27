@@ -14,6 +14,15 @@ final class AppStore: ObservableObject {
         let skippedCount: Int
     }
 
+    struct StoryKnowledgeEvidenceItem: Identifiable, Equatable {
+        let sceneID: UUID
+        let chapterID: UUID
+        let chapterTitle: String
+        let sceneTitle: String
+
+        var id: UUID { sceneID }
+    }
+
     private enum DataExchangeError: LocalizedError {
         case projectNotOpen
         case invalidPayloadType(expected: String, actual: String)
@@ -131,6 +140,15 @@ final class AppStore: ObservableObject {
     private static let rollingSceneMemorySourceChars = 12000
     private static let rollingChapterMemorySourceChars = 18000
     private static let rollingChapterMemorySceneChunkChars = 6000
+    private static let autoStoryMemoryDebounceNanoseconds: UInt64 = 1_200_000_000
+    private static let autoStoryMemorySceneSummaryChars = 1600
+    private static let autoStoryMemoryChapterSummaryChars = 2200
+    private static let autoStoryMemoryProjectSummaryChars = 2600
+    private static let autoStoryMemoryFactChars = 220
+    private static let autoStoryMemoryThreadChars = 220
+    private static let autoStoryMemoryKnowledgeContextChars = 1800
+    private static let autoStoryMemoryCatalogChars = 5000
+    private static let autoStoryMemoryNodeSummaryChars = 180
     private static let maxVisibleTaskToasts = 4
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
@@ -454,6 +472,57 @@ final class AppStore: ObservableObject {
         let frontier: String
     }
 
+    private struct StoryMemoryExtractionPayload: Decodable {
+        struct Entity: Decodable {
+            let name: String
+            let kind: String?
+            let summary: String?
+            let aliases: [String]?
+            let compendiumHint: String?
+            let confidence: Double?
+
+            private enum CodingKeys: String, CodingKey {
+                case name
+                case kind
+                case summary
+                case aliases
+                case compendiumHint = "compendium_hint"
+                case confidence
+            }
+        }
+
+        struct Relationship: Decodable {
+            let source: String
+            let target: String
+            let relation: String
+            let note: String?
+            let confidence: Double?
+        }
+
+        let summary: String
+        let facts: [String]
+        let openThreads: [String]
+        let entities: [Entity]
+        let relationships: [Relationship]
+
+        private enum CodingKeys: String, CodingKey {
+            case summary
+            case facts
+            case openThreads = "open_threads"
+            case entities
+            case relationships
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+            facts = try container.decodeIfPresent([String].self, forKey: .facts) ?? []
+            openThreads = try container.decodeIfPresent([String].self, forKey: .openThreads) ?? []
+            entities = try container.decodeIfPresent([Entity].self, forKey: .entities) ?? []
+            relationships = try container.decodeIfPresent([Relationship].self, forKey: .relationships) ?? []
+        }
+    }
+
     private struct ProseGenerationSessionContext {
         let sessionID: UUID
         let sceneID: UUID
@@ -619,6 +688,7 @@ final class AppStore: ObservableObject {
     private var modelDiscoveryTask: Task<Void, Never>?
     private var workshopRequestTask: Task<Void, Never>?
     private var workshopRollingMemoryTask: Task<Void, Never>?
+    private var storyMemoryRefreshTask: Task<Void, Never>?
     private var proseRunTask: Task<Void, Never>?
     private var proseRunID: UUID?
     private var searchDebounceTask: Task<Void, Never>?
@@ -688,6 +758,7 @@ final class AppStore: ObservableObject {
         selectedCompendiumID = project.compendium.first?.id
         selectedWorkshopSessionID = project.selectedWorkshopSessionID ?? project.workshopSessions.first?.id
         ensureValidSelections()
+        scheduleSelectedSceneStoryMemoryRefreshIfNeeded()
 
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
@@ -701,6 +772,7 @@ final class AppStore: ObservableObject {
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
         workshopRollingMemoryTask?.cancel()
+        storyMemoryRefreshTask?.cancel()
         proseRunTask?.cancel()
         for task in toastDismissTasks.values {
             task.cancel()
@@ -1022,6 +1094,98 @@ final class AppStore: ObservableObject {
             chapter: chapter,
             upToSceneID: selectedSceneID,
             maxChars: Self.rollingChapterMemorySourceChars
+        )
+    }
+
+    var selectedSceneStoryMemorySummary: String {
+        autoSceneStoryMemorySummary(for: selectedSceneID)
+    }
+
+    var selectedSceneStoryMemoryFacts: [String] {
+        sceneStoryMemory(for: selectedSceneID)?.facts ?? []
+    }
+
+    var selectedSceneStoryMemoryOpenThreads: [String] {
+        sceneStoryMemory(for: selectedSceneID)?.openThreads ?? []
+    }
+
+    var selectedSceneStoryMemoryUpdatedAt: Date? {
+        sceneStoryMemory(for: selectedSceneID)?.updatedAt
+    }
+
+    var selectedChapterStoryMemorySummary: String {
+        autoChapterStoryMemorySummary(for: selectedChapterID)
+    }
+
+    var selectedChapterStoryMemoryOpenThreads: [String] {
+        chapterStoryMemory(for: selectedChapterID)?.openThreads ?? []
+    }
+
+    var selectedChapterStoryMemoryUpdatedAt: Date? {
+        chapterStoryMemory(for: selectedChapterID)?.updatedAt
+    }
+
+    var projectStoryMemorySummary: String {
+        autoProjectStoryMemorySummary()
+    }
+
+    var projectStoryMemoryOpenThreads: [String] {
+        guard let memory = project.projectStoryMemory,
+              memory.sourceFingerprint == projectStorySourceFingerprint() else {
+            return []
+        }
+        return memory.openThreads
+    }
+
+    var projectStoryMemoryUpdatedAt: Date? {
+        guard let memory = project.projectStoryMemory,
+              memory.sourceFingerprint == projectStorySourceFingerprint() else {
+            return nil
+        }
+        return memory.updatedAt
+    }
+
+    var selectedSceneRelevantStoryKnowledge: String {
+        relevantStoryKnowledgeContext(sceneID: selectedSceneID, chapterID: selectedChapterID)
+    }
+
+    var storyKnowledgeNodeCount: Int {
+        project.storyKnowledgeNodes.filter { isActiveStoryKnowledgeNode($0) }.count
+    }
+
+    var storyKnowledgeEdgeCount: Int {
+        project.storyKnowledgeEdges.filter { isActiveStoryKnowledgeEdge($0) }.count
+    }
+
+    var storyKnowledgePendingNodeCount: Int {
+        project.storyKnowledgeNodes.filter { $0.status == .inferred }.count
+    }
+
+    var storyKnowledgePendingEdgeCount: Int {
+        project.storyKnowledgeEdges.filter { $0.status == .inferred && isActiveStoryKnowledgeEdge($0) }.count
+    }
+
+    var storyKnowledgePendingReviewNodes: [StoryKnowledgeNode] {
+        sortedStoryKnowledgeNodes(
+            project.storyKnowledgeNodes.filter { $0.status == .inferred }
+        )
+    }
+
+    var storyKnowledgePendingReviewEdges: [StoryKnowledgeEdge] {
+        sortedStoryKnowledgeEdges(
+            project.storyKnowledgeEdges.filter { $0.status == .inferred && isActiveStoryKnowledgeEdge($0) }
+        )
+    }
+
+    var storyKnowledgeActiveNodes: [StoryKnowledgeNode] {
+        sortedStoryKnowledgeNodes(
+            project.storyKnowledgeNodes.filter { isActiveStoryKnowledgeNode($0) }
+        )
+    }
+
+    var storyKnowledgeActiveEdges: [StoryKnowledgeEdge] {
+        sortedStoryKnowledgeEdges(
+            project.storyKnowledgeEdges.filter { isActiveStoryKnowledgeEdge($0) }
         )
     }
 
@@ -2109,6 +2273,7 @@ final class AppStore: ObservableObject {
         }
         ensureValidSelections()
         refreshGlobalSearchResults()
+        scheduleSelectedSceneStoryMemoryRefreshIfNeeded()
 
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
@@ -2134,6 +2299,7 @@ final class AppStore: ObservableObject {
         selectedSceneID = nextSceneID
         proseInsertionAnchor = nil
         project.selectedSceneID = selectedSceneID
+        scheduleSelectedSceneStoryMemoryRefreshIfNeeded()
         saveProject(debounced: true)
     }
 
@@ -2146,6 +2312,7 @@ final class AppStore: ObservableObject {
         selectedSceneID = sceneID
         proseInsertionAnchor = nil
         project.selectedSceneID = sceneID
+        scheduleSelectedSceneStoryMemoryRefreshIfNeeded()
         saveProject(debounced: true)
     }
 
@@ -3342,6 +3509,11 @@ final class AppStore: ObservableObject {
         importedProject.rollingWorkshopMemoryBySession = [:]
         importedProject.rollingSceneMemoryByScene = [:]
         importedProject.rollingChapterMemoryByChapter = [:]
+        importedProject.storyKnowledgeNodes = []
+        importedProject.storyKnowledgeEdges = []
+        importedProject.sceneStoryMemoryByScene = [:]
+        importedProject.chapterStoryMemoryByChapter = [:]
+        importedProject.projectStoryMemory = nil
         importedProject.selectedSceneID = chapters.first?.scenes.first?.id
         importedProject.updatedAt = .now
 
@@ -3432,6 +3604,7 @@ final class AppStore: ObservableObject {
         }
 
         ensureValidSelections()
+        rebuildProjectStoryMemory()
         saveProject()
     }
 
@@ -3514,6 +3687,7 @@ final class AppStore: ObservableObject {
         }
 
         ensureValidSelections()
+        rebuildProjectStoryMemory()
         saveProject()
     }
 
@@ -3593,6 +3767,14 @@ final class AppStore: ObservableObject {
         project.chapters[targetChapterIndex].updatedAt = .now
         project.rollingChapterMemoryByChapter.removeValue(forKey: sourceChapterID.uuidString)
         project.rollingChapterMemoryByChapter.removeValue(forKey: toChapterID.uuidString)
+        if var memory = project.sceneStoryMemoryByScene[sceneID.uuidString] {
+            memory.chapterID = toChapterID
+            memory.updatedAt = .now
+            project.sceneStoryMemoryByScene[sceneID.uuidString] = memory
+        }
+        rebuildChapterStoryMemory(for: sourceChapterID)
+        rebuildChapterStoryMemory(for: toChapterID)
+        rebuildProjectStoryMemory()
 
         if selectedSceneID == sceneID {
             selectedChapterID = toChapterID
@@ -3634,6 +3816,7 @@ final class AppStore: ObservableObject {
         project.rollingChapterMemoryByChapter.removeValue(
             forKey: project.chapters[location.chapterIndex].id.uuidString
         )
+        scheduleAutoStoryMemoryRefresh(for: selectedSceneID)
         saveProject(debounced: true)
     }
 
@@ -3828,6 +4011,58 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func rebuildSelectedSceneStoryMemory() async throws -> String {
+        guard let sceneID = selectedSceneID else {
+            throw AIServiceError.badResponse("Select a scene first.")
+        }
+
+        storyMemoryRefreshTask?.cancel()
+        let toastID = startTaskProgressToast("Rebuilding story memory…")
+        await refreshAutoStoryMemory(for: sceneID, force: true, saveAfterUpdate: true)
+        let summary = selectedSceneStoryMemorySummary
+
+        if summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            finishTaskWarningToast(toastID, "Story memory rebuild produced no scene memory.")
+        } else {
+            finishTaskSuccessToast(toastID, "Story memory rebuilt.")
+        }
+
+        return summary
+    }
+
+    func rebuildAllStoryMemory() async throws {
+        guard isProjectOpen else {
+            throw AIServiceError.badResponse("Open a project first.")
+        }
+
+        storyMemoryRefreshTask?.cancel()
+        let sceneIDs = project.chapters.flatMap(\.scenes).map(\.id)
+        let toastID = startTaskProgressToast("Rebuilding story memory (0/\(sceneIDs.count))…")
+
+        do {
+            for (index, sceneID) in sceneIDs.enumerated() {
+                try Task.checkCancellation()
+                _ = showTaskNotification(
+                    "Rebuilding story memory (\(index + 1)/\(sceneIDs.count))…",
+                    style: .progress,
+                    updating: toastID,
+                    autoDismiss: false
+                )
+                await refreshAutoStoryMemory(for: sceneID, force: true, saveAfterUpdate: false)
+            }
+
+            rebuildProjectStoryMemory()
+            saveProject()
+            finishTaskSuccessToast(toastID, "Project story memory rebuilt.")
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Story memory rebuild cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Story memory rebuild failed.")
+            throw error
+        }
+    }
+
     func updateSelectedChapterSummary(_ summary: String) {
         guard let selectedChapterID else {
             return
@@ -3944,6 +4179,131 @@ final class AppStore: ObservableObject {
         project.storyGraphEdges.removeAll()
         selectedCompendiumID = nil
         saveProject()
+    }
+
+    func promoteStoryKnowledgeNodeToCompendium(_ nodeID: UUID) {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }) else {
+            return
+        }
+
+        var node = project.storyKnowledgeNodes[nodeIndex]
+        guard node.status != .rejected else { return }
+
+        if let existingCompendiumID = node.resolvedCompendiumID,
+           compendiumIndex(for: existingCompendiumID) != nil {
+            node.status = .canonical
+            node.updatedAt = .now
+            project.storyKnowledgeNodes[nodeIndex] = node
+            selectedCompendiumID = existingCompendiumID
+            saveProject()
+            return
+        }
+
+        let preferredKind = node.kind == .unknown ? .concept : node.kind
+        let matchedEntry = matchingCompendiumEntry(
+            name: node.name,
+            hint: node.name,
+            preferredKind: preferredKind
+        )
+
+        let resolvedCompendiumID: UUID
+        if let matchedEntry {
+            resolvedCompendiumID = matchedEntry.id
+            selectedCompendiumID = matchedEntry.id
+        } else {
+            let tags = normalizedStoryMemoryLines(
+                node.aliases.filter { normalizedStoryKnowledgeKey($0) != normalizedStoryKnowledgeKey(node.name) },
+                maxCount: 8,
+                maxCharsPerLine: 80
+            )
+            let entry = CompendiumEntry(
+                category: compendiumCategory(for: preferredKind),
+                title: node.name,
+                body: node.summary,
+                tags: tags
+            )
+            project.compendium.append(entry)
+            resolvedCompendiumID = entry.id
+            selectedCompendiumID = entry.id
+        }
+
+        node.resolvedCompendiumID = resolvedCompendiumID
+        if let entryIndex = compendiumIndex(for: resolvedCompendiumID) {
+            node.kind = storyKnowledgeNodeKind(for: project.compendium[entryIndex].category)
+        }
+        node.status = .canonical
+        node.updatedAt = .now
+        project.storyKnowledgeNodes[nodeIndex] = node
+        saveProject()
+    }
+
+    func acceptStoryKnowledgeEdge(_ edgeID: UUID) {
+        guard isProjectOpen,
+              let edgeIndex = project.storyKnowledgeEdges.firstIndex(where: { $0.id == edgeID }),
+              isActiveStoryKnowledgeEdge(project.storyKnowledgeEdges[edgeIndex]) else {
+            return
+        }
+
+        project.storyKnowledgeEdges[edgeIndex].status = .canonical
+        project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func rejectStoryKnowledgeNode(_ nodeID: UUID) {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }) else {
+            return
+        }
+        guard project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID == nil else {
+            return
+        }
+
+        project.storyKnowledgeNodes[nodeIndex].status = .rejected
+        project.storyKnowledgeNodes[nodeIndex].updatedAt = .now
+
+        for edgeIndex in project.storyKnowledgeEdges.indices
+        where project.storyKnowledgeEdges[edgeIndex].sourceNodeID == nodeID
+            || project.storyKnowledgeEdges[edgeIndex].targetNodeID == nodeID {
+            project.storyKnowledgeEdges[edgeIndex].status = .rejected
+            project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
+        }
+
+        sanitizeStructuredStoryMemories()
+        rebuildAllStoryMemoryRollups()
+        saveProject()
+    }
+
+    func rejectStoryKnowledgeEdge(_ edgeID: UUID) {
+        guard isProjectOpen,
+              let edgeIndex = project.storyKnowledgeEdges.firstIndex(where: { $0.id == edgeID }) else {
+            return
+        }
+
+        project.storyKnowledgeEdges[edgeIndex].status = .rejected
+        project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
+        saveProject(debounced: true)
+    }
+
+    func storyKnowledgeEdgeDisplayLabel(_ edge: StoryKnowledgeEdge) -> String {
+        let sourceName = storyKnowledgeNode(for: edge.sourceNodeID)?.name ?? "Unknown"
+        let targetName = storyKnowledgeNode(for: edge.targetNodeID)?.name ?? "Unknown"
+        let relation = edge.relation.replacingOccurrences(of: "_", with: " ")
+        return "\(sourceName) -> \(relation) -> \(targetName)"
+    }
+
+    func storyKnowledgeEvidenceItems(for node: StoryKnowledgeNode) -> [StoryKnowledgeEvidenceItem] {
+        storyKnowledgeEvidenceItems(forSceneIDs: node.evidenceSceneIDs)
+    }
+
+    func storyKnowledgeEvidenceItems(for edge: StoryKnowledgeEdge) -> [StoryKnowledgeEvidenceItem] {
+        storyKnowledgeEvidenceItems(forSceneIDs: edge.evidenceSceneIDs)
+    }
+
+    func revealStoryKnowledgeEvidenceScene(_ sceneID: UUID) {
+        guard let location = sceneLocation(for: sceneID) else { return }
+        let chapterID = project.chapters[location.chapterIndex].id
+        selectScene(sceneID, chapterID: chapterID)
     }
 
     func updateSelectedCompendiumTitle(_ title: String) {
@@ -4386,12 +4746,17 @@ final class AppStore: ObservableObject {
 
         generationStatus = "Generation undone."
         proseLiveUsage = nil
+        scheduleAutoStoryMemoryRefresh(for: selectedSceneID, force: true)
         saveProject(debounced: true)
     }
 
     func acceptLastInlineProseGeneration() {
         guard !isGenerating else { return }
+        let sceneID = inlineProseRegenerationState?.sceneID
         inlineProseRegenerationState = nil
+        if let sceneID {
+            scheduleAutoStoryMemoryRefresh(for: sceneID, force: true)
+        }
     }
 
     func dismissProseGenerationReview() {
@@ -4614,6 +4979,7 @@ final class AppStore: ObservableObject {
                 summary: normalizedSummary,
                 sourceContent: scene.content
             )
+            scheduleAutoStoryMemoryRefresh(for: sceneID, force: true)
             finishTaskSuccessToast(toastID, "Scene summary updated.")
             return normalizedSummary
         } catch is CancellationError {
@@ -7819,6 +8185,18 @@ final class AppStore: ObservableObject {
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
+        merged.storyKnowledgeNodes = mergeIdentifiedCollection(
+            current: merged.storyKnowledgeNodes,
+            source: checkpointProject.storyKnowledgeNodes,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.storyKnowledgeEdges = mergeIdentifiedCollection(
+            current: merged.storyKnowledgeEdges,
+            source: checkpointProject.storyKnowledgeEdges,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
     }
 
     private func applyCheckpointTemplateRestore(
@@ -7962,12 +8340,25 @@ final class AppStore: ObservableObject {
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
+        merged.sceneStoryMemoryByScene = mergeDictionaryEntries(
+            current: merged.sceneStoryMemoryByScene,
+            source: checkpointProject.sceneStoryMemoryByScene,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
         merged.rollingChapterMemoryByChapter = mergeDictionaryEntries(
             current: merged.rollingChapterMemoryByChapter,
             source: checkpointProject.rollingChapterMemoryByChapter,
             restoreDeletedEntries: options.restoreDeletedEntries,
             deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
         )
+        merged.chapterStoryMemoryByChapter = mergeDictionaryEntries(
+            current: merged.chapterStoryMemoryByChapter,
+            source: checkpointProject.chapterStoryMemoryByChapter,
+            restoreDeletedEntries: options.restoreDeletedEntries,
+            deleteEntriesNotInCheckpoint: options.deleteEntriesNotInCheckpoint
+        )
+        merged.projectStoryMemory = checkpointProject.projectStoryMemory ?? merged.projectStoryMemory
     }
 
     private func mergeChapterAndSceneContent(
@@ -8209,6 +8600,8 @@ final class AppStore: ObservableObject {
         if project.settings.provider.supportsModelDiscovery {
             scheduleModelDiscovery(immediate: true)
         }
+
+        scheduleSelectedSceneStoryMemoryRefreshIfNeeded()
     }
 
     private func setClosedProjectState(clearLastOpenedReference: Bool) {
@@ -8268,12 +8661,14 @@ final class AppStore: ObservableObject {
         modelDiscoveryTask?.cancel()
         workshopRequestTask?.cancel()
         workshopRollingMemoryTask?.cancel()
+        storyMemoryRefreshTask?.cancel()
         proseRunTask?.cancel()
 
         autosaveTask = nil
         modelDiscoveryTask = nil
         workshopRequestTask = nil
         workshopRollingMemoryTask = nil
+        storyMemoryRefreshTask = nil
         proseRunTask = nil
         proseRunID = nil
         proseRunPhase = nil
@@ -9455,6 +9850,798 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func scheduleAutoStoryMemoryRefresh(for sceneID: UUID, force: Bool = false) {
+        storyMemoryRefreshTask?.cancel()
+        storyMemoryRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            if !force {
+                try? await Task.sleep(nanoseconds: Self.autoStoryMemoryDebounceNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+            await self.refreshAutoStoryMemory(for: sceneID, force: force)
+        }
+    }
+
+    private func scheduleSelectedSceneStoryMemoryRefreshIfNeeded(force: Bool = false) {
+        guard let selectedSceneID else { return }
+        guard force || shouldRefreshAutoStoryMemory(for: selectedSceneID) else {
+            return
+        }
+        scheduleAutoStoryMemoryRefresh(for: selectedSceneID, force: force)
+    }
+
+    private func shouldRefreshAutoStoryMemory(for sceneID: UUID) -> Bool {
+        guard let scene = scene(for: sceneID) else { return false }
+        let trimmedContent = scene.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedContent.isEmpty else { return false }
+        guard let memory = project.sceneStoryMemoryByScene[sceneID.uuidString] else {
+            return true
+        }
+        return memory.sourceContentHash != stableContentHash(scene.content)
+    }
+
+    private func refreshAutoStoryMemory(
+        for sceneID: UUID,
+        force: Bool = false,
+        saveAfterUpdate: Bool = true
+    ) async {
+        guard isProjectOpen,
+              let location = sceneLocation(for: sceneID) else {
+            return
+        }
+
+        let chapter = project.chapters[location.chapterIndex]
+        let scene = chapter.scenes[location.sceneIndex]
+        let trimmedContent = scene.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentHash = stableContentHash(scene.content)
+        let existing = sceneStoryMemory(for: sceneID)
+
+        if trimmedContent.isEmpty {
+            project.sceneStoryMemoryByScene.removeValue(forKey: sceneID.uuidString)
+            rebuildChapterStoryMemory(for: chapter.id)
+            rebuildProjectStoryMemory()
+            if saveAfterUpdate {
+                saveProject(debounced: true)
+            }
+            return
+        }
+
+        if !force, existing?.sourceContentHash == currentHash {
+            return
+        }
+
+        let request = makeAutoStoryMemoryExtractionRequest(
+            scene: scene,
+            chapter: chapter
+        )
+
+        do {
+            let result = try await generateTextResult(request)
+            guard !Task.isCancelled else { return }
+            guard let payload = decodeStoryMemoryExtractionPayload(from: result.text) else {
+                return
+            }
+
+            applyAutoStoryMemoryExtraction(
+                payload,
+                scene: scene,
+                chapter: chapter,
+                sourceContentHash: currentHash
+            )
+            if saveAfterUpdate {
+                saveProject(debounced: true)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            return
+        }
+    }
+
+    private func makeAutoStoryMemoryExtractionRequest(
+        scene: Scene,
+        chapter: Chapter
+    ) -> TextGenerationRequest {
+        let systemPrompt = """
+        You extract structured project memory from fiction scenes.
+
+        Return only valid JSON with this shape:
+        {
+          "summary": "short high-signal scene memory",
+          "facts": ["stable fact", "..."],
+          "open_threads": ["unresolved question or tension", "..."],
+          "entities": [
+            {
+              "name": "entity name",
+              "kind": "character|location|object|concept|group|event|unknown",
+              "summary": "short description",
+              "aliases": ["alias"],
+              "compendium_hint": "matching compendium title if obvious",
+              "confidence": 0.0
+            }
+          ],
+          "relationships": [
+            {
+              "source": "entity name",
+              "target": "entity name",
+              "relation": "short_relation_label",
+              "note": "optional concise evidence",
+              "confidence": 0.0
+            }
+          ]
+        }
+
+        Rules:
+        - Use only facts supported by the scene text or provided scene summary.
+        - Prefer stable world facts, goals, constraints, and unresolved tensions.
+        - Skip low-confidence guesses instead of inventing.
+        - Keep summaries and notes concise.
+        """
+
+        let compendiumCatalog = storyKnowledgeCatalogPrompt()
+        let chapterTitle = displayChapterTitle(chapter)
+        let sceneTitle = displaySceneTitle(scene)
+        let sceneSummary = scene.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingMemory = sceneStoryMemory(for: scene.id)?.summary ?? ""
+
+        let userPrompt = """
+        PROJECT_CANON:
+        <<<
+        \(compendiumCatalog)
+        >>>
+
+        CHAPTER: \(chapterTitle)
+        SCENE: \(sceneTitle)
+
+        EXISTING_SCENE_MEMORY:
+        <<<
+        \(existingMemory)
+        >>>
+
+        SCENE_SUMMARY:
+        <<<
+        \(sceneSummary)
+        >>>
+
+        SCENE_TEXT:
+        <<<
+        \(scene.content)
+        >>>
+        """
+
+        return TextGenerationRequest(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            model: resolvedPrimaryModel(),
+            temperature: min(project.settings.temperature, 0.2),
+            maxTokens: min(project.settings.maxTokens, 1400)
+        )
+    }
+
+    private func decodeStoryMemoryExtractionPayload(from response: String) -> StoryMemoryExtractionPayload? {
+        guard let data = extractJSONObjectData(from: response) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(StoryMemoryExtractionPayload.self, from: data)
+    }
+
+    private func extractJSONObjectData(from response: String) -> Data? {
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let direct = trimmed.data(using: .utf8),
+           (try? JSONSerialization.jsonObject(with: direct)) != nil {
+            return direct
+        }
+
+        let fencePattern = #"```(?:json)?\s*\n?([\s\S]*?)```"#
+        if let regex = try? NSRegularExpression(pattern: fencePattern),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let range = Range(match.range(at: 1), in: trimmed) {
+            let fenced = String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let data = fenced.data(using: .utf8),
+               (try? JSONSerialization.jsonObject(with: data)) != nil {
+                return data
+            }
+        }
+
+        if let start = trimmed.firstIndex(of: "{"),
+           let end = trimmed.lastIndex(of: "}"),
+           start < end {
+            let candidate = String(trimmed[start...end])
+            if let data = candidate.data(using: .utf8),
+               (try? JSONSerialization.jsonObject(with: data)) != nil {
+                return data
+            }
+        }
+
+        return nil
+    }
+
+    private func applyAutoStoryMemoryExtraction(
+        _ payload: StoryMemoryExtractionPayload,
+        scene: Scene,
+        chapter: Chapter,
+        sourceContentHash: String
+    ) {
+        let sceneID = scene.id
+        let chapterID = chapter.id
+
+        var resolvedNodesByName: [String: UUID] = [:]
+        var resolvedNodeIDs: [UUID] = []
+        for entity in payload.entities {
+            guard let nodeID = resolveStoryKnowledgeNode(
+                entity,
+                sceneID: sceneID
+            ) else {
+                continue
+            }
+            resolvedNodesByName[normalizedStoryKnowledgeKey(entity.name)] = nodeID
+            if !resolvedNodeIDs.contains(nodeID) {
+                resolvedNodeIDs.append(nodeID)
+            }
+        }
+
+        for relationship in payload.relationships {
+            let sourceKey = normalizedStoryKnowledgeKey(relationship.source)
+            let targetKey = normalizedStoryKnowledgeKey(relationship.target)
+            guard let sourceNodeID = resolvedNodesByName[sourceKey] ?? storyKnowledgeNodeID(matching: sourceKey),
+                  let targetNodeID = resolvedNodesByName[targetKey] ?? storyKnowledgeNodeID(matching: targetKey) else {
+                continue
+            }
+            upsertStoryKnowledgeEdge(
+                sourceNodeID: sourceNodeID,
+                targetNodeID: targetNodeID,
+                relation: relationship.relation,
+                note: relationship.note ?? "",
+                confidence: relationship.confidence ?? 0.5,
+                sceneID: sceneID
+            )
+        }
+
+        let summary = normalizedRollingMemorySummary(
+            payload.summary,
+            maxChars: Self.autoStoryMemorySceneSummaryChars
+        )
+        let facts = normalizedStoryMemoryLines(
+            payload.facts,
+            maxCount: 8,
+            maxCharsPerLine: Self.autoStoryMemoryFactChars
+        )
+        let openThreads = normalizedStoryMemoryLines(
+            payload.openThreads,
+            maxCount: 8,
+            maxCharsPerLine: Self.autoStoryMemoryThreadChars
+        )
+
+        if summary.isEmpty && facts.isEmpty && openThreads.isEmpty && resolvedNodeIDs.isEmpty {
+            project.sceneStoryMemoryByScene.removeValue(forKey: sceneID.uuidString)
+        } else {
+            project.sceneStoryMemoryByScene[sceneID.uuidString] = SceneStoryMemory(
+                sceneID: sceneID,
+                chapterID: chapterID,
+                sourceContentHash: sourceContentHash,
+                summary: summary,
+                facts: facts,
+                openThreads: openThreads,
+                knowledgeNodeIDs: resolvedNodeIDs,
+                updatedAt: .now
+            )
+        }
+
+        rebuildChapterStoryMemory(for: chapterID)
+        rebuildProjectStoryMemory()
+    }
+
+    private func rebuildChapterStoryMemory(for chapterID: UUID) {
+        guard let chapter = chapter(for: chapterID) else {
+            project.chapterStoryMemoryByChapter.removeValue(forKey: chapterID.uuidString)
+            return
+        }
+
+        let validSceneMemory = chapter.scenes.compactMap { scene -> SceneStoryMemory? in
+            guard let memory = sceneStoryMemory(for: scene.id) else { return nil }
+            return memory
+        }
+
+        guard !validSceneMemory.isEmpty else {
+            project.chapterStoryMemoryByChapter.removeValue(forKey: chapterID.uuidString)
+            return
+        }
+
+        let sceneByID = Dictionary(uniqueKeysWithValues: chapter.scenes.map { ($0.id, $0) })
+        let summaryLines = validSceneMemory.compactMap { memory -> String? in
+            guard let scene = sceneByID[memory.sceneID] else { return nil }
+            let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty else { return nil }
+            return "- \(displaySceneTitle(scene)): \(summary)"
+        }
+
+        let openThreads = normalizedStoryMemoryLines(
+            validSceneMemory.flatMap(\.openThreads),
+            maxCount: 10,
+            maxCharsPerLine: Self.autoStoryMemoryThreadChars
+        )
+        let activeNodeIDs = activeStoryKnowledgeNodeIDs()
+        let knowledgeNodeIDs = deduplicatedUUIDs(validSceneMemory.flatMap(\.knowledgeNodeIDs))
+            .filter { activeNodeIDs.contains($0) }
+        let knowledgeLines = knowledgeNodeIDs.prefix(8).compactMap { nodeID -> String? in
+            guard let node = storyKnowledgeNode(for: nodeID),
+                  isActiveStoryKnowledgeNode(node) else { return nil }
+            return "- \(node.name)"
+        }
+
+        var sections: [String] = []
+        if !summaryLines.isEmpty {
+            sections.append("Scenes:\n" + summaryLines.joined(separator: "\n"))
+        }
+        if !openThreads.isEmpty {
+            sections.append("Open threads:\n" + openThreads.map { "- \($0)" }.joined(separator: "\n"))
+        }
+        if !knowledgeLines.isEmpty {
+            sections.append("Active entities:\n" + knowledgeLines.joined(separator: "\n"))
+        }
+
+        let summary = normalizedRollingMemorySummary(
+            sections.joined(separator: "\n\n"),
+            maxChars: Self.autoStoryMemoryChapterSummaryChars
+        )
+        guard !summary.isEmpty else {
+            project.chapterStoryMemoryByChapter.removeValue(forKey: chapterID.uuidString)
+            return
+        }
+
+        project.chapterStoryMemoryByChapter[chapterID.uuidString] = ChapterStoryMemory(
+            chapterID: chapterID,
+            sourceFingerprint: chapterSourceFingerprint(chapter: chapter),
+            summary: summary,
+            openThreads: openThreads,
+            knowledgeNodeIDs: knowledgeNodeIDs,
+            updatedAt: .now
+        )
+    }
+
+    private func rebuildProjectStoryMemory() {
+        let validChapterMemory = project.chapters.compactMap { chapter -> ChapterStoryMemory? in
+            guard let memory = chapterStoryMemory(for: chapter.id) else { return nil }
+            return memory
+        }
+
+        guard !validChapterMemory.isEmpty else {
+            project.projectStoryMemory = nil
+            return
+        }
+
+        let chapterByID = Dictionary(uniqueKeysWithValues: project.chapters.map { ($0.id, $0) })
+        let chapterLines = validChapterMemory.compactMap { memory -> String? in
+            guard let chapter = chapterByID[memory.chapterID] else { return nil }
+            let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty else { return nil }
+            return "- \(displayChapterTitle(chapter)): \(summary)"
+        }
+
+        let openThreads = normalizedStoryMemoryLines(
+            validChapterMemory.flatMap(\.openThreads),
+            maxCount: 12,
+            maxCharsPerLine: Self.autoStoryMemoryThreadChars
+        )
+        let activeNodeIDs = activeStoryKnowledgeNodeIDs()
+        let activeNodes = deduplicatedUUIDs(validChapterMemory.flatMap(\.knowledgeNodeIDs))
+            .filter { activeNodeIDs.contains($0) }
+        let nodeLines = activeNodes.prefix(10).compactMap { nodeID -> String? in
+            guard let node = storyKnowledgeNode(for: nodeID),
+                  isActiveStoryKnowledgeNode(node) else { return nil }
+            let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if summary.isEmpty {
+                return "- \(node.name)"
+            }
+            return "- \(node.name): \(summary)"
+        }
+
+        var sections: [String] = []
+        if !chapterLines.isEmpty {
+            sections.append("Chapter state:\n" + chapterLines.joined(separator: "\n"))
+        }
+        if !openThreads.isEmpty {
+            sections.append("Project threads:\n" + openThreads.map { "- \($0)" }.joined(separator: "\n"))
+        }
+        if !nodeLines.isEmpty {
+            sections.append("World knowledge:\n" + nodeLines.joined(separator: "\n"))
+        }
+
+        let fingerprint = projectStorySourceFingerprint()
+        let summary = normalizedRollingMemorySummary(
+            sections.joined(separator: "\n\n"),
+            maxChars: Self.autoStoryMemoryProjectSummaryChars
+        )
+        guard !summary.isEmpty else {
+            project.projectStoryMemory = nil
+            return
+        }
+
+        project.projectStoryMemory = ProjectStoryMemory(
+            sourceFingerprint: fingerprint,
+            summary: summary,
+            openThreads: openThreads,
+            updatedAt: .now
+        )
+    }
+
+    private func rebuildAllStoryMemoryRollups() {
+        for chapter in project.chapters {
+            rebuildChapterStoryMemory(for: chapter.id)
+        }
+        rebuildProjectStoryMemory()
+    }
+
+    private func storyKnowledgeCatalogPrompt() -> String {
+        var lines: [String] = []
+        for entry in project.compendium {
+            let title = displayCompendiumEntryTitle(entry)
+            let body = compactSingleLine(entry.body)
+            let bodySnippet = body.isEmpty ? "" : ": \(String(body.prefix(Self.autoStoryMemoryNodeSummaryChars)))"
+            lines.append("- [\(entry.category.label)] \(title)\(bodySnippet)")
+        }
+        for node in sortedStoryKnowledgeNodes(
+            project.storyKnowledgeNodes.filter { $0.status == .inferred }
+        ).prefix(24) {
+            let aliases = node.aliases.isEmpty ? "" : " [aliases: \(node.aliases.joined(separator: ", "))]"
+            let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = summary.isEmpty ? "" : ": \(String(summary.prefix(Self.autoStoryMemoryNodeSummaryChars)))"
+            lines.append("- [Inferred \(node.kind.rawValue)] \(node.name)\(aliases)\(suffix)")
+        }
+
+        return String(lines.joined(separator: "\n").prefix(Self.autoStoryMemoryCatalogChars))
+    }
+
+    private func normalizedStoryKnowledgeKey(_ value: String) -> String {
+        MentionParsing.normalize(value)
+    }
+
+    private func storyKnowledgeNodeKind(from rawValue: String?) -> StoryKnowledgeNodeKind {
+        guard let rawValue else { return .unknown }
+        switch normalizedStoryKnowledgeKey(rawValue) {
+        case "character", "person":
+            return .character
+        case "location", "place":
+            return .location
+        case "object", "item", "artifact":
+            return .object
+        case "concept", "idea", "lore":
+            return .concept
+        case "group", "organization", "faction":
+            return .group
+        case "event":
+            return .event
+        default:
+            return .unknown
+        }
+    }
+
+    private func storyKnowledgeNodeKind(for category: CompendiumCategory) -> StoryKnowledgeNodeKind {
+        switch category {
+        case .characters:
+            return .character
+        case .locations:
+            return .location
+        case .items:
+            return .object
+        case .lore:
+            return .concept
+        case .notes:
+            return .event
+        }
+    }
+
+    private func compendiumCategory(for nodeKind: StoryKnowledgeNodeKind) -> CompendiumCategory {
+        switch nodeKind {
+        case .character:
+            return .characters
+        case .location:
+            return .locations
+        case .object:
+            return .items
+        case .concept, .group:
+            return .lore
+        case .event, .unknown:
+            return .notes
+        }
+    }
+
+    private func matchingCompendiumEntry(
+        name: String,
+        hint: String?,
+        preferredKind: StoryKnowledgeNodeKind
+    ) -> CompendiumEntry? {
+        let normalizedName = normalizedStoryKnowledgeKey(name)
+        let normalizedHint = normalizedStoryKnowledgeKey(hint ?? "")
+
+        if !normalizedHint.isEmpty,
+           let exactHint = project.compendium.first(where: {
+               normalizedStoryKnowledgeKey($0.title) == normalizedHint
+           }) {
+            return exactHint
+        }
+
+        let kindScoped = project.compendium.first { entry in
+            let categoryKind = storyKnowledgeNodeKind(for: entry.category)
+            return categoryKind == preferredKind && normalizedStoryKnowledgeKey(entry.title) == normalizedName
+        }
+        if let kindScoped {
+            return kindScoped
+        }
+
+        return project.compendium.first { entry in
+            normalizedStoryKnowledgeKey(entry.title) == normalizedName
+        }
+    }
+
+    private func storyKnowledgeNodeID(matching normalizedKey: String) -> UUID? {
+        guard !normalizedKey.isEmpty else { return nil }
+        return project.storyKnowledgeNodes.first(where: { node in
+            isActiveStoryKnowledgeNode(node)
+                && (
+                    normalizedStoryKnowledgeKey(node.name) == normalizedKey
+                        || node.aliases.contains(where: { normalizedStoryKnowledgeKey($0) == normalizedKey })
+                )
+        })?.id
+    }
+
+    private func storyKnowledgeNode(for nodeID: UUID) -> StoryKnowledgeNode? {
+        project.storyKnowledgeNodes.first(where: { $0.id == nodeID })
+    }
+
+    private func resolveStoryKnowledgeNode(
+        _ entity: StoryMemoryExtractionPayload.Entity,
+        sceneID: UUID
+    ) -> UUID? {
+        let normalizedName = normalizedStoryKnowledgeKey(entity.name)
+        guard !normalizedName.isEmpty else { return nil }
+
+        let preferredKind = storyKnowledgeNodeKind(from: entity.kind)
+        let compendiumMatch = matchingCompendiumEntry(
+            name: entity.name,
+            hint: entity.compendiumHint,
+            preferredKind: preferredKind
+        )
+        let existingIndex: Int? = {
+            if let compendiumID = compendiumMatch?.id {
+                if let index = project.storyKnowledgeNodes.firstIndex(where: { $0.resolvedCompendiumID == compendiumID }) {
+                    return index
+                }
+            }
+            return project.storyKnowledgeNodes.firstIndex(where: { node in
+                normalizedStoryKnowledgeKey(node.name) == normalizedName
+                    || node.aliases.contains(where: { normalizedStoryKnowledgeKey($0) == normalizedName })
+            })
+        }()
+
+        let fallbackSummary = compendiumMatch.map { String(compactSingleLine($0.body).prefix(Self.autoStoryMemoryNodeSummaryChars)) } ?? ""
+        let mergedAliases = normalizedStoryMemoryLines(
+            entity.aliases ?? [],
+            maxCount: 8,
+            maxCharsPerLine: 80
+        )
+        let summary = normalizedRollingMemorySummary(
+            entity.summary ?? fallbackSummary,
+            maxChars: Self.autoStoryMemoryNodeSummaryChars
+        )
+        let resolvedKind = compendiumMatch.map { storyKnowledgeNodeKind(for: $0.category) }
+            ?? (preferredKind == .unknown ? .unknown : preferredKind)
+        let resolvedStatus: StoryKnowledgeRecordStatus = compendiumMatch == nil ? .inferred : .canonical
+        let confidence = min(max(entity.confidence ?? 0.5, 0), 1)
+
+        if let existingIndex {
+            var existing = project.storyKnowledgeNodes[existingIndex]
+            if existing.status == .rejected && compendiumMatch == nil {
+                return nil
+            }
+            existing.name = existing.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? entity.name : existing.name
+            if existing.kind == .unknown && resolvedKind != .unknown {
+                existing.kind = resolvedKind
+            }
+            if existing.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !summary.isEmpty {
+                existing.summary = summary
+            }
+            existing.aliases = normalizedStoryMemoryLines(
+                existing.aliases + mergedAliases,
+                maxCount: 10,
+                maxCharsPerLine: 80
+            )
+            existing.resolvedCompendiumID = compendiumMatch?.id ?? existing.resolvedCompendiumID
+            if existing.resolvedCompendiumID != nil {
+                existing.status = .canonical
+            } else if existing.status != .rejected {
+                existing.status = resolvedStatus
+            }
+            existing.confidence = max(existing.confidence, confidence)
+            existing.evidenceSceneIDs = deduplicatedUUIDs(existing.evidenceSceneIDs + [sceneID])
+            existing.updatedAt = .now
+            project.storyKnowledgeNodes[existingIndex] = existing
+            return existing.id
+        }
+
+        let node = StoryKnowledgeNode(
+            name: compendiumMatch?.title ?? entity.name,
+            kind: resolvedKind,
+            summary: summary.isEmpty ? fallbackSummary : summary,
+            aliases: mergedAliases,
+            resolvedCompendiumID: compendiumMatch?.id,
+            status: resolvedStatus,
+            confidence: confidence,
+            evidenceSceneIDs: [sceneID],
+            updatedAt: .now
+        )
+        project.storyKnowledgeNodes.append(node)
+        return node.id
+    }
+
+    private func upsertStoryKnowledgeEdge(
+        sourceNodeID: UUID,
+        targetNodeID: UUID,
+        relation: String,
+        note: String,
+        confidence: Double,
+        sceneID: UUID
+    ) {
+        guard sourceNodeID != targetNodeID else { return }
+        let normalizedRelation = normalizedStoryKnowledgeRelation(relation)
+        guard !normalizedRelation.isEmpty else { return }
+
+        if let index = project.storyKnowledgeEdges.firstIndex(where: { edge in
+            edge.sourceNodeID == sourceNodeID
+                && edge.targetNodeID == targetNodeID
+                && normalizedStoryKnowledgeRelation(edge.relation) == normalizedRelation
+        }) {
+            var existing = project.storyKnowledgeEdges[index]
+            if existing.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                existing.note = normalizedRollingMemorySummary(note, maxChars: 140)
+            }
+            existing.confidence = max(existing.confidence, min(max(confidence, 0), 1))
+            existing.evidenceSceneIDs = deduplicatedUUIDs(existing.evidenceSceneIDs + [sceneID])
+            existing.updatedAt = .now
+            project.storyKnowledgeEdges[index] = existing
+            return
+        }
+
+        project.storyKnowledgeEdges.append(
+            StoryKnowledgeEdge(
+                sourceNodeID: sourceNodeID,
+                targetNodeID: targetNodeID,
+                relation: normalizedRelation,
+                note: normalizedRollingMemorySummary(note, maxChars: 140),
+                status: .inferred,
+                confidence: confidence,
+                evidenceSceneIDs: [sceneID],
+                updatedAt: .now
+            )
+        )
+    }
+
+    private func normalizedStoryKnowledgeRelation(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    }
+
+    private func normalizedStoryMemoryLines(
+        _ values: [String],
+        maxCount: Int,
+        maxCharsPerLine: Int
+    ) -> [String] {
+        var seen = Set<String>()
+        var lines: [String] = []
+
+        for value in values {
+            let normalized = compactSingleLine(value)
+            guard !normalized.isEmpty else { continue }
+            let trimmed = String(normalized.prefix(maxCharsPerLine))
+            let key = trimmed.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            lines.append(trimmed)
+            if lines.count >= maxCount {
+                break
+            }
+        }
+
+        return lines
+    }
+
+    private func deduplicatedUUIDs(_ values: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        var ordered: [UUID] = []
+        for value in values where seen.insert(value).inserted {
+            ordered.append(value)
+        }
+        return ordered
+    }
+
+    private func projectStorySourceFingerprint() -> String {
+        let chapterComponents = project.chapters.map { chapter in
+            "\(chapter.id.uuidString):\(chapterSourceFingerprint(chapter: chapter))"
+        }
+        return stableContentHash(chapterComponents.joined(separator: "|"))
+    }
+
+    private func sceneStoryMemory(for sceneID: UUID?) -> SceneStoryMemory? {
+        guard let sceneID,
+              let scene = scene(for: sceneID),
+              let memory = project.sceneStoryMemoryByScene[sceneID.uuidString] else {
+            return nil
+        }
+
+        return memory.sourceContentHash == stableContentHash(scene.content) ? memory : nil
+    }
+
+    private func chapterStoryMemory(for chapterID: UUID?) -> ChapterStoryMemory? {
+        guard let chapterID,
+              let chapter = chapter(for: chapterID),
+              let memory = project.chapterStoryMemoryByChapter[chapterID.uuidString] else {
+            return nil
+        }
+
+        return memory.sourceFingerprint == chapterSourceFingerprint(chapter: chapter) ? memory : nil
+    }
+
+    private func relevantStoryKnowledgeContext(
+        sceneID: UUID?,
+        chapterID: UUID?
+    ) -> String {
+        let activeNodeIDs = activeStoryKnowledgeNodeIDs()
+        let focusNodeIDs = deduplicatedUUIDs(
+            (sceneStoryMemory(for: sceneID)?.knowledgeNodeIDs ?? [])
+                + (chapterStoryMemory(for: chapterID)?.knowledgeNodeIDs ?? [])
+        )
+        .filter { activeNodeIDs.contains($0) }
+
+        guard !focusNodeIDs.isEmpty else { return "" }
+
+        let nodes = focusNodeIDs.prefix(6).compactMap { nodeID -> String? in
+            guard let node = storyKnowledgeNode(for: nodeID) else { return nil }
+            let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            if summary.isEmpty {
+                return "- [\(node.kind.rawValue)] \(node.name)"
+            }
+            return "- [\(node.kind.rawValue)] \(node.name): \(summary)"
+        }
+
+        let focusSet = Set(focusNodeIDs)
+        let edges = project.storyKnowledgeEdges.filter { edge in
+            isActiveStoryKnowledgeEdge(edge)
+                && (focusSet.contains(edge.sourceNodeID) || focusSet.contains(edge.targetNodeID))
+        }
+        .sorted { lhs, rhs in
+            if lhs.status != rhs.status {
+                return lhs.status == .canonical
+            }
+            if lhs.confidence != rhs.confidence {
+                return lhs.confidence > rhs.confidence
+            }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        .prefix(8)
+        .compactMap { edge -> String? in
+            guard storyKnowledgeNode(for: edge.sourceNodeID) != nil,
+                  storyKnowledgeNode(for: edge.targetNodeID) != nil else {
+                return nil
+            }
+            if edge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "- \(storyKnowledgeEdgeDisplayLabel(edge))"
+            }
+            return "- \(storyKnowledgeEdgeDisplayLabel(edge)): \(edge.note)"
+        }
+
+        var sections: [String] = []
+        if !nodes.isEmpty {
+            sections.append("Knowledge nodes:\n" + nodes.joined(separator: "\n"))
+        }
+        if !edges.isEmpty {
+            sections.append("Knowledge edges:\n" + edges.joined(separator: "\n"))
+        }
+
+        return String(sections.joined(separator: "\n\n").prefix(Self.autoStoryMemoryKnowledgeContextChars))
+    }
+
     private func scheduleWorkshopRollingMemoryRefresh(for sessionID: UUID) {
         workshopRollingMemoryTask?.cancel()
         workshopRollingMemoryTask = Task { [weak self] in
@@ -10084,7 +11271,11 @@ final class AppStore: ObservableObject {
     private func combinedRollingSummaryText(
         chapterRolling: String,
         sceneRolling: String,
-        workshopRolling: String
+        workshopRolling: String,
+        autoSceneMemory: String,
+        autoChapterMemory: String,
+        autoProjectMemory: String,
+        relevantKnowledge: String
     ) -> String {
         var lines: [String] = []
         let trimmedWorkshop = workshopRolling.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -10100,6 +11291,26 @@ final class AppStore: ObservableObject {
         let trimmedScene = sceneRolling.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedScene.isEmpty {
             lines.append("- [Rolling Scene Memory] \(trimmedScene)")
+        }
+
+        let trimmedAutoProject = autoProjectMemory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAutoProject.isEmpty {
+            lines.append("- [Auto Project Memory] \(trimmedAutoProject)")
+        }
+
+        let trimmedAutoChapter = autoChapterMemory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAutoChapter.isEmpty {
+            lines.append("- [Auto Chapter Memory] \(trimmedAutoChapter)")
+        }
+
+        let trimmedAutoScene = autoSceneMemory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAutoScene.isEmpty {
+            lines.append("- [Auto Scene Memory] \(trimmedAutoScene)")
+        }
+
+        let trimmedKnowledge = relevantKnowledge.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedKnowledge.isEmpty {
+            lines.append(trimmedKnowledge)
         }
 
         return lines.joined(separator: "\n")
@@ -10159,6 +11370,24 @@ final class AppStore: ObservableObject {
         }
 
         return summary
+    }
+
+    private func autoSceneStoryMemorySummary(for sceneID: UUID?) -> String {
+        sceneStoryMemory(for: sceneID)?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func autoChapterStoryMemorySummary(for chapterID: UUID?) -> String {
+        chapterStoryMemory(for: chapterID)?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func autoProjectStoryMemorySummary() -> String {
+        guard let memory = project.projectStoryMemory else {
+            return ""
+        }
+        guard memory.sourceFingerprint == projectStorySourceFingerprint() else {
+            return ""
+        }
+        return memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func previewNotes(base: [String], renderWarnings: [String]) -> [String] {
@@ -10931,10 +12160,18 @@ final class AppStore: ObservableObject {
         let rollingChapter = rollingChapterSummary(for: resolvedChapterID)
         let rollingScene = rollingSceneSummary(for: sceneID)
         let rollingWorkshop = rollingWorkshopSummary(for: workshopSessionID)
+        let autoProjectMemory = autoProjectStoryMemorySummary()
+        let autoChapterMemory = autoChapterStoryMemorySummary(for: resolvedChapterID)
+        let autoSceneMemory = autoSceneStoryMemorySummary(for: sceneID)
+        let relevantKnowledge = relevantStoryKnowledgeContext(sceneID: sceneID, chapterID: resolvedChapterID)
         let rollingCombined = combinedRollingSummaryText(
             chapterRolling: rollingChapter,
             sceneRolling: rollingScene,
-            workshopRolling: rollingWorkshop
+            workshopRolling: rollingWorkshop,
+            autoSceneMemory: autoSceneMemory,
+            autoChapterMemory: autoChapterMemory,
+            autoProjectMemory: autoProjectMemory,
+            relevantKnowledge: relevantKnowledge
         )
         let contextWithRolling = mergedContextWithRolling(
             context: contextSections.combined,
@@ -10954,6 +12191,10 @@ final class AppStore: ObservableObject {
             "context_chapter_summaries": contextSections.chapterSummaries,
             "context_rolling": rollingCombined,
             "rolling_summary": rollingCombined,
+            "auto_project_memory": autoProjectMemory,
+            "auto_chapter_memory": autoChapterMemory,
+            "auto_scene_memory": autoSceneMemory,
+            "story_knowledge": relevantKnowledge,
             "rolling_chapter_summary": rollingChapter,
             "rolling_scene_summary": rollingScene,
             "rolling_workshop_summary": rollingWorkshop,
@@ -11456,6 +12697,154 @@ final class AppStore: ObservableObject {
         project.storyGraphEdges = sanitized
     }
 
+    private func sanitizeStoryKnowledgeGraph() {
+        let validCompendiumIDs = Set(project.compendium.map(\.id))
+        let validSceneIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
+
+        var sanitizedNodes: [StoryKnowledgeNode] = []
+        var seenNodeIDs = Set<UUID>()
+        for node in project.storyKnowledgeNodes {
+            guard seenNodeIDs.insert(node.id).inserted else { continue }
+            let normalizedName = compactSingleLine(node.name)
+            guard !normalizedName.isEmpty else { continue }
+
+            let resolvedCompendiumID: UUID?
+            if let compendiumID = node.resolvedCompendiumID,
+               validCompendiumIDs.contains(compendiumID) {
+                resolvedCompendiumID = compendiumID
+            } else {
+                resolvedCompendiumID = nil
+            }
+
+            let aliases = normalizedStoryMemoryLines(node.aliases, maxCount: 10, maxCharsPerLine: 80)
+                .filter { normalizedStoryKnowledgeKey($0) != normalizedStoryKnowledgeKey(normalizedName) }
+
+            sanitizedNodes.append(
+                StoryKnowledgeNode(
+                    id: node.id,
+                    name: normalizedName,
+                    kind: resolvedCompendiumID.flatMap { compendiumID in
+                        project.compendium.first(where: { $0.id == compendiumID }).map { storyKnowledgeNodeKind(for: $0.category) }
+                    } ?? node.kind,
+                    summary: normalizedRollingMemorySummary(node.summary, maxChars: Self.autoStoryMemoryNodeSummaryChars),
+                    aliases: aliases,
+                    resolvedCompendiumID: resolvedCompendiumID,
+                    status: resolvedCompendiumID == nil ? (node.status == .rejected ? .rejected : .inferred) : .canonical,
+                    confidence: min(max(node.confidence, 0), 1),
+                    evidenceSceneIDs: deduplicatedUUIDs(node.evidenceSceneIDs.filter { validSceneIDs.contains($0) }),
+                    updatedAt: node.updatedAt
+                )
+            )
+        }
+        project.storyKnowledgeNodes = sanitizedNodes
+
+        let validNodeIDs = Set(sanitizedNodes.map(\.id))
+        var sanitizedEdges: [StoryKnowledgeEdge] = []
+        var seenEdgeIDs = Set<UUID>()
+        for edge in project.storyKnowledgeEdges {
+            guard seenEdgeIDs.insert(edge.id).inserted else { continue }
+            guard validNodeIDs.contains(edge.sourceNodeID),
+                  validNodeIDs.contains(edge.targetNodeID),
+                  edge.sourceNodeID != edge.targetNodeID else {
+                continue
+            }
+
+            let relation = normalizedStoryKnowledgeRelation(edge.relation)
+            guard !relation.isEmpty else { continue }
+
+            sanitizedEdges.append(
+                StoryKnowledgeEdge(
+                    id: edge.id,
+                    sourceNodeID: edge.sourceNodeID,
+                    targetNodeID: edge.targetNodeID,
+                    relation: relation,
+                    note: normalizedRollingMemorySummary(edge.note, maxChars: 140),
+                    status: edge.status == .rejected ? .rejected : (edge.status == .canonical ? .canonical : .inferred),
+                    confidence: min(max(edge.confidence, 0), 1),
+                    evidenceSceneIDs: deduplicatedUUIDs(edge.evidenceSceneIDs.filter { validSceneIDs.contains($0) }),
+                    updatedAt: edge.updatedAt
+                )
+            )
+        }
+        project.storyKnowledgeEdges = sanitizedEdges
+    }
+
+    private func sanitizeStructuredStoryMemories() {
+        let sceneByKey = Dictionary(uniqueKeysWithValues: project.chapters.flatMap(\.scenes).map { ($0.id.uuidString, $0) })
+        let chapterByKey = Dictionary(uniqueKeysWithValues: project.chapters.map { ($0.id.uuidString, $0) })
+        let validNodeIDs = activeStoryKnowledgeNodeIDs()
+
+        var sanitizedSceneMemory: [String: SceneStoryMemory] = [:]
+        for (sceneKey, memory) in project.sceneStoryMemoryByScene {
+            guard let scene = sceneByKey[sceneKey],
+                  let chapterID = chapterIDForScene(scene.id) else {
+                continue
+            }
+
+            let summary = normalizedRollingMemorySummary(memory.summary, maxChars: Self.autoStoryMemorySceneSummaryChars)
+            let facts = normalizedStoryMemoryLines(memory.facts, maxCount: 8, maxCharsPerLine: Self.autoStoryMemoryFactChars)
+            let openThreads = normalizedStoryMemoryLines(memory.openThreads, maxCount: 8, maxCharsPerLine: Self.autoStoryMemoryThreadChars)
+            let knowledgeNodeIDs = deduplicatedUUIDs(memory.knowledgeNodeIDs.filter { validNodeIDs.contains($0) })
+            guard !summary.isEmpty || !facts.isEmpty || !openThreads.isEmpty || !knowledgeNodeIDs.isEmpty else {
+                continue
+            }
+
+            sanitizedSceneMemory[sceneKey] = SceneStoryMemory(
+                sceneID: scene.id,
+                chapterID: chapterID,
+                sourceContentHash: memory.sourceContentHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? stableContentHash(scene.content)
+                    : memory.sourceContentHash,
+                summary: summary,
+                facts: facts,
+                openThreads: openThreads,
+                knowledgeNodeIDs: knowledgeNodeIDs,
+                updatedAt: memory.updatedAt
+            )
+        }
+        project.sceneStoryMemoryByScene = sanitizedSceneMemory
+
+        var sanitizedChapterMemory: [String: ChapterStoryMemory] = [:]
+        for (chapterKey, memory) in project.chapterStoryMemoryByChapter {
+            guard let chapter = chapterByKey[chapterKey] else { continue }
+            let summary = normalizedRollingMemorySummary(memory.summary, maxChars: Self.autoStoryMemoryChapterSummaryChars)
+            let openThreads = normalizedStoryMemoryLines(memory.openThreads, maxCount: 10, maxCharsPerLine: Self.autoStoryMemoryThreadChars)
+            let knowledgeNodeIDs = deduplicatedUUIDs(memory.knowledgeNodeIDs.filter { validNodeIDs.contains($0) })
+            guard !summary.isEmpty || !openThreads.isEmpty || !knowledgeNodeIDs.isEmpty else {
+                continue
+            }
+
+            sanitizedChapterMemory[chapterKey] = ChapterStoryMemory(
+                chapterID: chapter.id,
+                sourceFingerprint: memory.sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? chapterSourceFingerprint(chapter: chapter)
+                    : memory.sourceFingerprint,
+                summary: summary,
+                openThreads: openThreads,
+                knowledgeNodeIDs: knowledgeNodeIDs,
+                updatedAt: memory.updatedAt
+            )
+        }
+        project.chapterStoryMemoryByChapter = sanitizedChapterMemory
+
+        if let projectStoryMemory = project.projectStoryMemory {
+            let summary = normalizedRollingMemorySummary(projectStoryMemory.summary, maxChars: Self.autoStoryMemoryProjectSummaryChars)
+            let openThreads = normalizedStoryMemoryLines(projectStoryMemory.openThreads, maxCount: 12, maxCharsPerLine: Self.autoStoryMemoryThreadChars)
+            if summary.isEmpty && openThreads.isEmpty {
+                project.projectStoryMemory = nil
+            } else {
+                project.projectStoryMemory = ProjectStoryMemory(
+                    sourceFingerprint: projectStoryMemory.sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? projectStorySourceFingerprint()
+                        : projectStoryMemory.sourceFingerprint,
+                    summary: summary,
+                    openThreads: openThreads,
+                    updatedAt: projectStoryMemory.updatedAt
+                )
+            }
+        }
+    }
+
     private func sanitizeProsePlanDrafts() {
         let validSceneIDs = Set(project.chapters.flatMap(\.scenes).map(\.id))
         var sanitized: [UUID: String] = [:]
@@ -11563,6 +12952,71 @@ final class AppStore: ObservableObject {
         project.rollingChapterMemoryByChapter = sanitizedChapterMemory
     }
 
+    private func storyKnowledgeEvidenceItems(forSceneIDs sceneIDs: [UUID]) -> [StoryKnowledgeEvidenceItem] {
+        deduplicatedUUIDs(sceneIDs).compactMap { sceneID in
+            guard let location = sceneLocation(for: sceneID) else { return nil }
+            let chapter = project.chapters[location.chapterIndex]
+            let scene = chapter.scenes[location.sceneIndex]
+            return StoryKnowledgeEvidenceItem(
+                sceneID: sceneID,
+                chapterID: chapter.id,
+                chapterTitle: displayChapterTitle(chapter),
+                sceneTitle: displaySceneTitle(scene)
+            )
+        }
+    }
+
+    private func isActiveStoryKnowledgeNode(_ node: StoryKnowledgeNode) -> Bool {
+        node.status != .rejected
+    }
+
+    private func activeStoryKnowledgeNodeIDs() -> Set<UUID> {
+        Set(
+            project.storyKnowledgeNodes
+                .filter { isActiveStoryKnowledgeNode($0) }
+                .map(\.id)
+        )
+    }
+
+    private func isActiveStoryKnowledgeEdge(_ edge: StoryKnowledgeEdge) -> Bool {
+        guard edge.status != .rejected else { return false }
+        let activeNodeIDs = activeStoryKnowledgeNodeIDs()
+        return activeNodeIDs.contains(edge.sourceNodeID)
+            && activeNodeIDs.contains(edge.targetNodeID)
+    }
+
+    private func sortedStoryKnowledgeNodes(_ nodes: [StoryKnowledgeNode]) -> [StoryKnowledgeNode] {
+        nodes.sorted { lhs, rhs in
+            if lhs.status != rhs.status {
+                return lhs.status == .canonical
+            }
+            if lhs.confidence != rhs.confidence {
+                return lhs.confidence > rhs.confidence
+            }
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func sortedStoryKnowledgeEdges(_ edges: [StoryKnowledgeEdge]) -> [StoryKnowledgeEdge] {
+        edges.sorted { lhs, rhs in
+            if lhs.status != rhs.status {
+                return lhs.status == .canonical
+            }
+            if lhs.confidence != rhs.confidence {
+                return lhs.confidence > rhs.confidence
+            }
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return storyKnowledgeEdgeDisplayLabel(lhs).localizedCaseInsensitiveCompare(
+                storyKnowledgeEdgeDisplayLabel(rhs)
+            ) == .orderedAscending
+        }
+    }
+
     private struct GenerationAppendBase {
         let content: String
         let richTextData: Data?
@@ -11654,6 +13108,7 @@ final class AppStore: ObservableObject {
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].content = updatedContent.content
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].contentRTFData = updatedContent.richTextData
         project.chapters[location.chapterIndex].scenes[location.sceneIndex].updatedAt = .now
+        scheduleAutoStoryMemoryRefresh(for: selectedSceneID)
     }
 
     private func sanitizedGeneratedInsertionText(_ generated: String, base: GenerationAppendBase) -> String {
@@ -12046,6 +13501,8 @@ final class AppStore: ObservableObject {
         sanitizeSceneNarrativeStates()
         sanitizeSceneProseOutputProfiles()
         sanitizeStoryGraphEdges()
+        sanitizeStoryKnowledgeGraph()
+        sanitizeStructuredStoryMemories()
         sanitizeProsePlanDrafts()
         sanitizeInputHistories()
         sanitizeRollingMemories()

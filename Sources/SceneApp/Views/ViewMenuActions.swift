@@ -5,6 +5,7 @@ struct ViewMenuActions {
     let switchToWriting: () -> Void
     let switchToWorkshop: () -> Void
     let toggleCompendium: () -> Void
+    let toggleKnowledge: () -> Void
     let toggleSummary: () -> Void
     let toggleNotes: () -> Void
     let togglePlan: () -> Void
