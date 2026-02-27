@@ -40,6 +40,9 @@ struct ContentView: View {
     @State private var workspaceColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var showingCheckpointRestoreSheet: Bool = false
 
+    private let rightSidebarMinWidth: CGFloat = 320
+    private let rightSidebarIdealWidth: CGFloat = 400
+
     private var selectedTab: WorkspaceTab {
         get { WorkspaceTab(rawValue: store.workspaceTab) ?? .writing }
         nonmutating set { store.workspaceTab = newValue.rawValue }
@@ -48,6 +51,10 @@ struct ContentView: View {
     private var writingSidePanel: WritingSidePanel {
         get { WritingSidePanel(rawValue: store.writingSidePanel) ?? .compendium }
         nonmutating set { store.writingSidePanel = newValue.rawValue }
+    }
+
+    private var isRightSidebarVisible: Bool {
+        writingSidePanel != .none
     }
 
     var body: some View {
@@ -225,8 +232,8 @@ struct ContentView: View {
             workspaceMainPanel
                 .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
 
-            if writingSidePanel != .none {
-                writingSidePanelContent
+            if isRightSidebarVisible {
+                rightSidebarContainer
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -255,29 +262,42 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var writingSidePanelContent: some View {
-        switch writingSidePanel {
-        case .compendium:
+    private var rightSidebarContainer: some View {
+        ZStack {
             CompendiumView()
-                .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
-        case .summary:
+                .zIndex(writingSidePanel == .compendium ? 1 : 0)
+                .opacity(writingSidePanel == .compendium ? 1 : 0)
+                .allowsHitTesting(writingSidePanel == .compendium)
+
             SceneSummaryPanelView(scope: $summaryScope)
-                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
-        case .notes:
+                .zIndex(writingSidePanel == .summary ? 1 : 0)
+                .opacity(writingSidePanel == .summary ? 1 : 0)
+                .allowsHitTesting(writingSidePanel == .summary)
+
             NotesPanelView(scope: $notesScope)
-                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
-        case .plan:
+                .zIndex(writingSidePanel == .notes ? 1 : 0)
+                .opacity(writingSidePanel == .notes ? 1 : 0)
+                .allowsHitTesting(writingSidePanel == .notes)
+
             ScenePlanPanelView()
-                .frame(minWidth: 320, idealWidth: 400, maxWidth: 540, maxHeight: .infinity)
-        case .conversations:
+                .zIndex(writingSidePanel == .plan ? 1 : 0)
+                .opacity(writingSidePanel == .plan ? 1 : 0)
+                .allowsHitTesting(writingSidePanel == .plan)
+
             WorkshopConversationsSidebarView { _ in
                 selectedTab = .workshop
             }
-            .frame(minWidth: 320, idealWidth: 380, maxWidth: 520, maxHeight: .infinity)
-        case .none:
-            EmptyView()
+            .zIndex(writingSidePanel == .conversations ? 1 : 0)
+            .opacity(writingSidePanel == .conversations ? 1 : 0)
+            .allowsHitTesting(writingSidePanel == .conversations)
         }
+        .frame(
+            minWidth: rightSidebarMinWidth,
+            idealWidth: rightSidebarIdealWidth,
+            maxWidth: .infinity,
+            maxHeight: .infinity
+        )
+        .id("writing-right-sidebar")
     }
 
     private var closedProjectView: some View {
