@@ -864,6 +864,7 @@ struct StoryKnowledgePanelView: View {
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 layoutMode: .neighborhood,
                 selectedClusterKind: nil,
+                focusedClusterLink: nil,
                 onSelectClusterKind: nil,
                 selectedNodeID: $graphSelectedNodeID,
                 selectedEdgeID: $graphSelectedEdgeID
@@ -938,6 +939,12 @@ struct StoryKnowledgePanelView: View {
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                     layoutMode: expandedGraphLayoutMode,
                     selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
+                    focusedClusterLink: activeExpandedGraphConnectionFocus.map {
+                        StoryKnowledgeNeighborhoodGraphView.FocusedClusterLink(
+                            sourceKind: $0.sourceKind,
+                            targetKind: $0.targetKind
+                        )
+                    },
                     onSelectClusterKind: expandedGraphLayoutMode == .kindClusters ? { kind in
                         toggleKindFilter(for: kind)
                     } : nil,

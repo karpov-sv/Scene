@@ -56,6 +56,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let status: StoryKnowledgeRecordStatus
     }
 
+    struct FocusedClusterLink: Equatable {
+        let sourceKind: StoryKnowledgeNodeKind
+        let targetKind: StoryKnowledgeNodeKind
+    }
+
     private struct ClusterLabel: Identifiable {
         let id: String
         let kind: StoryKnowledgeNodeKind
@@ -84,6 +89,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let preferredAnchorNodeIDs: [UUID]
     let layoutMode: LayoutMode
     let selectedClusterKind: StoryKnowledgeNodeKind?
+    let focusedClusterLink: FocusedClusterLink?
     let onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?
     @Binding var selectedNodeID: UUID?
     @Binding var selectedEdgeID: UUID?
@@ -177,18 +183,24 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                         continue
                                     }
 
-                                    var path = Path()
-                                    path.move(to: source)
-                                    path.addLine(to: target)
+                                    let path = edgePath(for: edge, source: source, target: target)
+
+                                    if isFocusedClusterLinkEdge(edge) {
+                                        context.stroke(
+                                            path,
+                                            with: .color(Color.accentColor.opacity(0.16)),
+                                            style: StrokeStyle(
+                                                lineWidth: edgeLineWidth(edge) + 4,
+                                                lineCap: .round,
+                                                dash: []
+                                            )
+                                        )
+                                    }
 
                                     context.stroke(
                                         path,
                                         with: .color(edgeColor(edge).opacity(edgeOpacity(edge))),
-                                        style: StrokeStyle(
-                                            lineWidth: selectedNodeID == nil ? 2 : 2.5,
-                                            lineCap: .round,
-                                            dash: edge.status == .inferred ? [6, 5] : []
-                                        )
+                                        style: edgeStrokeStyle(edge)
                                     )
                                 }
                             }
@@ -860,14 +872,42 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if selectedEdgeID == edge.id {
             return .accentColor
         }
+        if isFocusedClusterLinkEdge(edge) {
+            return .accentColor
+        }
         return edge.status == .canonical ? Color.accentColor : Color.secondary
     }
 
     private func edgeOpacity(_ edge: EdgeModel) -> Double {
+        if focusedClusterLink != nil {
+            let isFocused = isFocusedClusterLinkEdge(edge)
+            let fallback = layoutMode == .kindClusters ? 0.08 : 0.16
+
+            if let selectedEdgeID {
+                if edge.id == selectedEdgeID {
+                    return 1
+                }
+                return isFocused ? 0.92 : fallback
+            }
+            if let selectedNodeID {
+                let touchesSelectedNode = edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID
+                if touchesSelectedNode {
+                    return isFocused ? 1 : fallback
+                }
+                return fallback
+            }
+            return isFocused ? 0.96 : fallback
+        }
+
         if let selectedEdgeID {
             return edge.id == selectedEdgeID ? 1 : 0.22
         }
-        guard let selectedNodeID else { return 0.9 }
+        guard let selectedNodeID else {
+            if layoutMode == .kindClusters {
+                return isCrossClusterEdge(edge) ? 0.56 : 0.2
+            }
+            return 0.9
+        }
         return edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID ? 1 : 0.22
     }
 
@@ -888,6 +928,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func edgeSelectionOpacity(_ edge: EdgeModel) -> Double {
+        if focusedClusterLink != nil {
+            return isFocusedClusterLinkEdge(edge) ? 1 : 0.18
+        }
         if let selectedEdgeID {
             return edge.id == selectedEdgeID ? 1 : 0.5
         }
@@ -895,6 +938,96 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             return edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID ? 0.95 : 0.35
         }
         return 0.75
+    }
+
+    private func edgeStrokeStyle(_ edge: EdgeModel) -> StrokeStyle {
+        StrokeStyle(
+            lineWidth: edgeLineWidth(edge),
+            lineCap: .round,
+            dash: edge.status == .inferred ? [6, 5] : []
+        )
+    }
+
+    private func edgeLineWidth(_ edge: EdgeModel) -> CGFloat {
+        if selectedEdgeID == edge.id {
+            return 3.6
+        }
+        if isFocusedClusterLinkEdge(edge) {
+            return 3
+        }
+        if layoutMode == .kindClusters && isCrossClusterEdge(edge) {
+            return selectedNodeID == nil ? 2.25 : 2.6
+        }
+        return selectedNodeID == nil ? 2 : 2.5
+    }
+
+    private func edgePath(for edge: EdgeModel, source: CGPoint, target: CGPoint) -> Path {
+        guard layoutMode == .kindClusters, isCrossClusterEdge(edge) else {
+            var path = Path()
+            path.move(to: source)
+            path.addLine(to: target)
+            return path
+        }
+
+        let controlPoint = crossClusterControlPoint(for: edge, source: source, target: target)
+        var path = Path()
+        path.move(to: source)
+        path.addQuadCurve(to: target, control: controlPoint)
+        return path
+    }
+
+    private func crossClusterControlPoint(
+        for edge: EdgeModel,
+        source: CGPoint,
+        target: CGPoint
+    ) -> CGPoint {
+        let midpoint = CGPoint(
+            x: (source.x + target.x) / 2,
+            y: (source.y + target.y) / 2
+        )
+        let dx = target.x - source.x
+        let dy = target.y - source.y
+        let distance = max(sqrt(dx * dx + dy * dy), 1)
+        let normal = CGPoint(x: -dy / distance, y: dx / distance)
+        let offsetMagnitude = min(max(distance * 0.12, 18), 42)
+        let direction: CGFloat = edgeCurveDirection(for: edge)
+
+        return CGPoint(
+            x: midpoint.x + normal.x * offsetMagnitude * direction,
+            y: midpoint.y + normal.y * offsetMagnitude * direction
+        )
+    }
+
+    private func edgeCurveDirection(for edge: EdgeModel) -> CGFloat {
+        let relationValue = edge.relation.unicodeScalars.reduce(0) { partial, scalar in
+            partial + Int(scalar.value)
+        }
+        return relationValue.isMultiple(of: 2) ? 1 : -1
+    }
+
+    private func nodeKind(for nodeID: UUID) -> StoryKnowledgeNodeKind? {
+        nodes.first(where: { $0.id == nodeID })?.kind
+    }
+
+    private func edgeKinds(_ edge: EdgeModel) -> (source: StoryKnowledgeNodeKind, target: StoryKnowledgeNodeKind)? {
+        guard let sourceKind = nodeKind(for: edge.sourceNodeID),
+              let targetKind = nodeKind(for: edge.targetNodeID) else {
+            return nil
+        }
+        return (sourceKind, targetKind)
+    }
+
+    private func isCrossClusterEdge(_ edge: EdgeModel) -> Bool {
+        guard let kinds = edgeKinds(edge) else { return false }
+        return kinds.source != kinds.target
+    }
+
+    private func isFocusedClusterLinkEdge(_ edge: EdgeModel) -> Bool {
+        guard let focusedClusterLink,
+              let kinds = edgeKinds(edge) else {
+            return false
+        }
+        return kinds.source == focusedClusterLink.sourceKind && kinds.target == focusedClusterLink.targetKind
     }
 
     private func edgeSelectionBadge(_ edge: EdgeModel) -> some View {
@@ -961,26 +1094,43 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func clusterLabelBadge(_ clusterLabel: ClusterLabel) -> some View {
         let isSelected = selectedClusterKind == clusterLabel.kind
+        let isFocusedSourceCluster = focusedClusterLink?.sourceKind == clusterLabel.kind
+        let isFocusedTargetCluster = focusedClusterLink?.targetKind == clusterLabel.kind
+        let isPartOfFocusedLink = isFocusedSourceCluster || isFocusedTargetCluster
+        let foregroundColor: Color = {
+            if isSelected || isFocusedSourceCluster {
+                return .white
+            }
+            return clusterLabel.color
+        }()
+        let backgroundColor: Color = {
+            if isSelected || isFocusedSourceCluster {
+                return clusterLabel.color
+            }
+            if isFocusedTargetCluster {
+                return Color.accentColor.opacity(0.12)
+            }
+            return Color(nsColor: .windowBackgroundColor).opacity(0.94)
+        }()
+        let strokeColor: Color = {
+            if isSelected || isFocusedTargetCluster {
+                return .accentColor
+            }
+            return clusterLabel.color.opacity(0.45)
+        }()
 
         return Text(clusterLabel.title)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(isSelected ? Color.white : clusterLabel.color)
+            .foregroundStyle(foregroundColor)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(
-                Group {
-                    if isSelected {
-                        clusterLabel.color
-                    } else {
-                        Color(nsColor: .windowBackgroundColor).opacity(0.94)
-                    }
-                }
-            )
+            .background(backgroundColor)
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? clusterLabel.color : clusterLabel.color.opacity(0.45), lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(strokeColor, lineWidth: (isSelected || isPartOfFocusedLink) ? 1.8 : 1)
             )
             .clipShape(Capsule())
+            .opacity(focusedClusterLink == nil || isPartOfFocusedLink ? 1 : 0.55)
     }
 
     private func clusterHelpText(for clusterLabel: ClusterLabel) -> String {
