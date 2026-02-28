@@ -167,7 +167,7 @@ struct StoryKnowledgePanelView: View {
     @State private var expandedGraphConnectionFocus: GraphClusterConnectionFocus?
     @State private var expandedGraphRelationFocus: GraphRelationFocus?
     @State private var expandedGraphCollapsedKinds: Set<StoryKnowledgeNodeKind> = []
-    @State private var expandedGraphIsolatedKind: StoryKnowledgeNodeKind?
+    @State private var expandedGraphIsolatedKinds: Set<StoryKnowledgeNodeKind> = []
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -324,13 +324,23 @@ struct StoryKnowledgePanelView: View {
         return expandedGraphCollapsedKinds
     }
 
-    private var activeExpandedGraphIsolatedKind: StoryKnowledgeNodeKind? {
-        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return nil }
-        return expandedGraphIsolatedKind
+    private var activeExpandedGraphIsolatedKinds: Set<StoryKnowledgeNodeKind> {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return [] }
+        return expandedGraphIsolatedKinds
     }
 
     private var hasExpandedGraphClusterCanvasScope: Bool {
-        activeExpandedGraphIsolatedKind != nil || !activeExpandedGraphCollapsedKinds.isEmpty
+        !activeExpandedGraphIsolatedKinds.isEmpty || !activeExpandedGraphCollapsedKinds.isEmpty
+    }
+
+    private var isolatedClusterScopeLabel: String {
+        let names = activeExpandedGraphIsolatedKinds
+            .map(\.rawValue.capitalized)
+            .sorted()
+            .joined(separator: ", ")
+        return activeExpandedGraphIsolatedKinds.count == 1
+            ? "Isolated cluster: \(names)"
+            : "Isolated clusters: \(names)"
     }
 
     private var activeExpandedGraphRelationFocus: GraphRelationFocus? {
@@ -1334,7 +1344,7 @@ struct StoryKnowledgePanelView: View {
                 expandedGraphConnectionFocus = nil
                 expandedGraphRelationFocus = nil
                 expandedGraphCollapsedKinds = []
-                expandedGraphIsolatedKind = nil
+                expandedGraphIsolatedKinds = []
             }
         }
         .onChange(of: graphBaseEdges.map(\.id), initial: false) { _, _ in
@@ -1352,9 +1362,7 @@ struct StoryKnowledgePanelView: View {
         .onChange(of: graphCandidateNodes.map(\.kind), initial: false) { _, _ in
             let availableKinds = Set(graphCandidateNodes.map(\.kind))
             expandedGraphCollapsedKinds = expandedGraphCollapsedKinds.intersection(availableKinds)
-            if let expandedGraphIsolatedKind, !availableKinds.contains(expandedGraphIsolatedKind) {
-                self.expandedGraphIsolatedKind = nil
-            }
+            expandedGraphIsolatedKinds = expandedGraphIsolatedKinds.intersection(availableKinds)
         }
     }
 
@@ -1543,11 +1551,11 @@ struct StoryKnowledgePanelView: View {
                         )
                     }
 
-                    if let activeExpandedGraphIsolatedKind {
+                    if !activeExpandedGraphIsolatedKinds.isEmpty {
                         graphFocusScopeLine(
-                            label: "Isolated cluster: \(activeExpandedGraphIsolatedKind.rawValue.capitalized)",
+                            label: isolatedClusterScopeLabel,
                             systemImage: "scope",
-                            badges: ["local cluster scope"]
+                            badges: ["\(activeExpandedGraphIsolatedKinds.count) local"]
                         )
                     }
 
@@ -1703,11 +1711,11 @@ struct StoryKnowledgePanelView: View {
                                     )
                                 }
 
-                                if let activeExpandedGraphIsolatedKind {
+                                if !activeExpandedGraphIsolatedKinds.isEmpty {
                                     graphFocusScopeLine(
-                                        label: "Isolated cluster: \(activeExpandedGraphIsolatedKind.rawValue.capitalized)",
+                                        label: isolatedClusterScopeLabel,
                                         systemImage: "scope",
-                                        badges: ["local cluster scope"]
+                                        badges: ["\(activeExpandedGraphIsolatedKinds.count) local"]
                                     )
                                 }
 
@@ -1725,7 +1733,13 @@ struct StoryKnowledgePanelView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
                             if expandedGraphLayoutMode == .kindClusters,
-                               (!graphClusterSummaries.isEmpty || !activeExpandedGraphCollapsedKinds.isEmpty) {
+                               (!graphClusterSummaries.isEmpty
+                                || !activeExpandedGraphCollapsedKinds.isEmpty
+                                || !activeExpandedGraphIsolatedKinds.isEmpty) {
+                                if !activeExpandedGraphIsolatedKinds.isEmpty {
+                                    isolatedClusterSection
+                                }
+
                                 if !activeExpandedGraphCollapsedKinds.isEmpty {
                                     collapsedClusterSection
                                 }
@@ -1895,7 +1909,7 @@ struct StoryKnowledgePanelView: View {
             Text("Visible Clusters")
                 .font(.headline)
 
-            Text("Summarizes the currently rendered grouped canvas by node kind. Use these cards to narrow the graph to one cluster when needed.")
+            Text("Summarizes the currently rendered grouped canvas by node kind. Use these cards to filter, collapse, or isolate one or more local clusters when needed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1919,7 +1933,7 @@ struct StoryKnowledgePanelView: View {
                         .buttonStyle(.borderless)
                         .controlSize(.small)
 
-                        Button(isExpandedClusterIsolated(summary.kind) ? "Clear Isolate" : "Isolate") {
+                        Button(clusterIsolationActionTitle(for: summary.kind)) {
                             toggleExpandedClusterIsolation(summary.kind)
                         }
                         .buttonStyle(.borderless)
@@ -1950,6 +1964,38 @@ struct StoryKnowledgePanelView: View {
                             }
                         }
                     }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var isolatedClusterSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Isolated Clusters")
+                .font(.headline)
+
+            Text("These clusters stay emphasized only in the expanded grouped canvas. Add or clear isolated kinds here without changing the global graph filters.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(activeExpandedGraphIsolatedKinds).sorted { $0.rawValue < $1.rawValue }, id: \.rawValue) { kind in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(kind.rawValue.capitalized)
+                        .font(.subheadline.weight(.semibold))
+
+                    statusBadge("local")
+
+                    Spacer(minLength: 0)
+
+                    Button("Clear Isolate") {
+                        toggleExpandedClusterIsolation(kind)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2912,8 +2958,9 @@ struct StoryKnowledgePanelView: View {
                 return false
             }
 
-            if let isolatedKind = activeExpandedGraphIsolatedKind {
-                return sourceKind == isolatedKind || targetKind == isolatedKind
+            if !activeExpandedGraphIsolatedKinds.isEmpty {
+                return activeExpandedGraphIsolatedKinds.contains(sourceKind)
+                    || activeExpandedGraphIsolatedKinds.contains(targetKind)
             }
 
             return true
@@ -2925,7 +2972,17 @@ struct StoryKnowledgePanelView: View {
     }
 
     private func isExpandedClusterIsolated(_ kind: StoryKnowledgeNodeKind) -> Bool {
-        activeExpandedGraphIsolatedKind == kind
+        activeExpandedGraphIsolatedKinds.contains(kind)
+    }
+
+    private func clusterIsolationActionTitle(for kind: StoryKnowledgeNodeKind) -> String {
+        if isExpandedClusterIsolated(kind) {
+            return "Clear Isolate"
+        }
+        if !activeExpandedGraphIsolatedKinds.isEmpty {
+            return "Add Isolate"
+        }
+        return "Isolate"
     }
 
     private func toggleExpandedClusterCollapse(_ kind: StoryKnowledgeNodeKind) {
@@ -2933,24 +2990,22 @@ struct StoryKnowledgePanelView: View {
             expandedGraphCollapsedKinds.remove(kind)
         } else {
             expandedGraphCollapsedKinds.insert(kind)
-            if expandedGraphIsolatedKind == kind {
-                expandedGraphIsolatedKind = nil
-            }
+            expandedGraphIsolatedKinds.remove(kind)
         }
     }
 
     private func toggleExpandedClusterIsolation(_ kind: StoryKnowledgeNodeKind) {
-        if expandedGraphIsolatedKind == kind {
-            expandedGraphIsolatedKind = nil
+        if expandedGraphIsolatedKinds.contains(kind) {
+            expandedGraphIsolatedKinds.remove(kind)
         } else {
-            expandedGraphIsolatedKind = kind
+            expandedGraphIsolatedKinds.insert(kind)
             expandedGraphCollapsedKinds.remove(kind)
         }
     }
 
     private func clearExpandedClusterCanvasScope() {
         expandedGraphCollapsedKinds = []
-        expandedGraphIsolatedKind = nil
+        expandedGraphIsolatedKinds = []
     }
 
     private func isRelationFiltered(to relation: String) -> Bool {

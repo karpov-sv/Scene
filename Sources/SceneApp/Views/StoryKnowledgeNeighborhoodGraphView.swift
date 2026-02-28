@@ -164,6 +164,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var hoveredNodeID: UUID?
     @State private var hoveredEdgeID: UUID?
     @State private var previewedNavigationTarget: SelectionNavigation.Target?
+    @State private var previewGhostPhase = false
 
     let nodes: [NodeModel]
     let edges: [EdgeModel]
@@ -247,7 +248,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                         .foregroundStyle(.secondary)
 
                     Button {
-                        previewedNavigationTarget = nil
+                        clearNavigationPreview()
                         selectionNavigation.onPrevious()
                     } label: {
                         Image(systemName: "chevron.left.circle")
@@ -264,11 +265,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             : "Previous Edge (Option-Command-Up Arrow)"
                     )
                     .onHover { isHovering in
-                        previewedNavigationTarget = isHovering ? selectionNavigation.previousTarget : nil
+                        updateNavigationPreview(isHovering ? selectionNavigation.previousTarget : nil)
                     }
 
                     Button {
-                        previewedNavigationTarget = nil
+                        clearNavigationPreview()
                         selectionNavigation.onNext()
                     } label: {
                         Image(systemName: "chevron.right.circle")
@@ -285,7 +286,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             : "Next Edge (Option-Command-Down Arrow)"
                     )
                     .onHover { isHovering in
-                        previewedNavigationTarget = isHovering ? selectionNavigation.nextTarget : nil
+                        updateNavigationPreview(isHovering ? selectionNavigation.nextTarget : nil)
                     }
 
                     if let previewedNavigationTarget {
@@ -341,6 +342,18 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                     }
 
                                     let path = edgePath(for: edge, source: source, target: target, layout: layout)
+
+                                    if previewedEdgeID == edge.id {
+                                        context.stroke(
+                                            path,
+                                            with: .color(Color.accentColor.opacity(previewGhostOpacity)),
+                                            style: StrokeStyle(
+                                                lineWidth: edgeLineWidth(edge) + 7,
+                                                lineCap: .round,
+                                                dash: []
+                                            )
+                                        )
+                                    }
 
                                     if isFocusedClusterLinkEdge(edge) {
                                         context.stroke(
@@ -490,7 +503,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             resetViewport()
         }
         .onChange(of: selectionNavigation?.title, initial: false) { _, _ in
-            previewedNavigationTarget = nil
+            clearNavigationPreview()
+        }
+        .onChange(of: previewedNavigationTarget?.id, initial: true) { _, newPreviewID in
+            if newPreviewID == nil {
+                previewGhostPhase = false
+            } else {
+                previewGhostPhase = false
+                withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                    previewGhostPhase = true
+                }
+            }
         }
     }
 
@@ -640,6 +663,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         Int((effectiveScale * 100).rounded())
     }
 
+    private var previewGhostOpacity: Double {
+        previewGhostPhase ? 0.28 : 0.12
+    }
+
+    private var previewGhostScale: CGFloat {
+        previewGhostPhase ? 1.22 : 1.08
+    }
+
     private var fitButtonTitle: String {
         if selectedEdgeID != nil {
             return "Fit Pair"
@@ -688,6 +719,16 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         contentScale = clampedScale(contentScale * factor)
     }
 
+    private func updateNavigationPreview(_ target: SelectionNavigation.Target?) {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            previewedNavigationTarget = target
+        }
+    }
+
+    private func clearNavigationPreview() {
+        updateNavigationPreview(nil)
+    }
+
     private func fitViewport() {
         guard canvasSize.width > 0, canvasSize.height > 0 else { return }
         let layoutResult = layout(in: canvasSize)
@@ -711,6 +752,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         contentOffset = CGSize(
             width: -(boundsCenter.x - canvasCenter.x) * targetScale,
             height: -(boundsCenter.y - canvasCenter.y) * targetScale
+        )
+    }
+
+    private func centerViewport(on contentPoint: CGPoint, canvasSize: CGSize, scale: CGFloat? = nil) {
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return }
+        let targetScale = clampedScale(scale ?? effectiveScale)
+        let canvasCenter = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        contentScale = targetScale
+        contentOffset = CGSize(
+            width: canvasCenter.x - contentPoint.x * targetScale,
+            height: canvasCenter.y - contentPoint.y * targetScale
         )
     }
 
@@ -768,6 +820,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         isInteractingWithViewport = true
         hoveredNodeID = nil
         hoveredEdgeID = nil
+        clearNavigationPreview()
     }
 
     private func endViewportInteraction() {
@@ -946,6 +999,29 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 )
         }
         .frame(width: mapSize.width, height: mapSize.height)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    beginViewportInteraction()
+                    updateOverviewViewport(
+                        for: value.location,
+                        bounds: bounds,
+                        mapSize: mapSize,
+                        canvasSize: size
+                    )
+                }
+                .onEnded { value in
+                    updateOverviewViewport(
+                        for: value.location,
+                        bounds: bounds,
+                        mapSize: mapSize,
+                        canvasSize: size
+                    )
+                    endViewportInteraction()
+                }
+        )
+        .help("Overview. Click or drag to reposition the viewport.")
         .overlay(alignment: .bottomLeading) {
             Text("Overview")
                 .font(.caption2.weight(.semibold))
@@ -959,6 +1035,22 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             x: (point.x - bounds.minX) / max(bounds.width, 1) * size.width,
             y: (point.y - bounds.minY) / max(bounds.height, 1) * size.height
         )
+    }
+
+    private func updateOverviewViewport(
+        for location: CGPoint,
+        bounds: CGRect,
+        mapSize: CGSize,
+        canvasSize: CGSize
+    ) {
+        let clampedX = min(max(location.x, 0), mapSize.width)
+        let clampedY = min(max(location.y, 0), mapSize.height)
+        let contentPoint = CGPoint(
+            x: bounds.minX + (clampedX / max(mapSize.width, 1)) * bounds.width,
+            y: bounds.minY + (clampedY / max(mapSize.height, 1)) * bounds.height
+        )
+        clearNavigationPreview()
+        centerViewport(on: contentPoint, canvasSize: canvasSize, scale: effectiveScale)
     }
 
     private func visibleContentRect(in size: CGSize) -> CGRect {
@@ -1290,6 +1382,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .padding(.vertical, labelDensity == .sparse && !isSelected ? 6 : 8)
         .frame(width: bubbleWidth)
         .background(nodeFillColor(node).opacity(isSelected ? 0.28 : (isPreviewed ? 0.24 : 0.18)))
+        .background {
+            if isPreviewed && !isSelected {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor.opacity(previewGhostOpacity), lineWidth: 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.accentColor.opacity(previewGhostOpacity * 0.4))
+                    )
+                    .scaleEffect(previewGhostScale)
+            }
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(
@@ -1651,10 +1754,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func edgeSelectionBadge(_ edge: EdgeModel) -> some View {
-        Group {
+        let isFocusedRelation = isFocusedRelationEdge(edge)
+        let isPreviewed = previewedEdgeID == edge.id
+
+        return Group {
             if shouldShowEdgeLabel(for: edge) {
-                let isFocusedRelation = isFocusedRelationEdge(edge)
-                let isPreviewed = previewedEdgeID == edge.id
                 Text(edge.relation.replacingOccurrences(of: "_", with: " "))
                     .font(.caption2)
                     .foregroundStyle((selectedEdgeID == edge.id || isFocusedRelation || isPreviewed) ? Color.accentColor : Color.secondary)
@@ -1680,6 +1784,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     )
             }
         }
+        .scaleEffect(isPreviewed && selectedEdgeID != edge.id ? (previewGhostPhase ? 1.14 : 1.05) : 1)
     }
 
     private func shouldShowEdgeLabel(for edge: EdgeModel) -> Bool {
