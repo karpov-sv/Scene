@@ -75,6 +75,10 @@ struct StoryKnowledgePanelView: View {
         let count: Int
 
         var id: String { relation }
+
+        var displayLabel: String {
+            relation.replacingOccurrences(of: "_", with: " ").capitalized
+        }
     }
 
     private struct GraphClusterSummary: Identifiable {
@@ -87,6 +91,22 @@ struct StoryKnowledgePanelView: View {
         let topRelations: [GraphClusterRelationSummary]
 
         var id: String { kind.rawValue }
+    }
+
+    private struct GraphClusterConnectionSummary: Identifiable {
+        let sourceKind: StoryKnowledgeNodeKind
+        let targetKind: StoryKnowledgeNodeKind
+        let edgeCount: Int
+        let pendingEdgeCount: Int
+        let topRelations: [GraphClusterRelationSummary]
+
+        var id: String {
+            "\(sourceKind.rawValue)->\(targetKind.rawValue)"
+        }
+
+        var title: String {
+            "\(sourceKind.rawValue.capitalized) -> \(targetKind.rawValue.capitalized)"
+        }
     }
 
     private struct CollapsedRelationSummary: Identifiable {
@@ -420,6 +440,49 @@ struct StoryKnowledgePanelView: View {
                 crossKindEdgeCount: crossKindEdgeCount,
                 topRelations: Array(topRelations.prefix(3))
             )
+        }
+    }
+
+    private var graphClusterConnectionSummaries: [GraphClusterConnectionSummary] {
+        let groupedEdges = Dictionary(grouping: graphVisibleEdges.compactMap { edge -> (String, StoryKnowledgeEdge)? in
+            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind,
+                  sourceKind != targetKind else {
+                return nil
+            }
+            return ("\(sourceKind.rawValue)->\(targetKind.rawValue)", edge)
+        }, by: \.0)
+
+        return groupedEdges.compactMap { _, entries in
+            guard let firstEdge = entries.first?.1,
+                  let sourceKind = storyKnowledgeNodesByID[firstEdge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[firstEdge.targetNodeID]?.kind else {
+                return nil
+            }
+
+            let edges = entries.map(\.1)
+            let topRelations = Dictionary(grouping: edges) { $0.relation }
+                .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count {
+                        return lhs.count > rhs.count
+                    }
+                    return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+                }
+
+            return GraphClusterConnectionSummary(
+                sourceKind: sourceKind,
+                targetKind: targetKind,
+                edgeCount: edges.count,
+                pendingEdgeCount: edges.filter { $0.status == .inferred }.count,
+                topRelations: Array(topRelations.prefix(3))
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
     }
 
@@ -865,6 +928,10 @@ struct StoryKnowledgePanelView: View {
 
                             if expandedGraphLayoutMode == .kindClusters, !graphClusterSummaries.isEmpty {
                                 graphClusterSummarySection
+
+                                if !graphClusterConnectionSummaries.isEmpty {
+                                    graphClusterConnectionSection
+                                }
                             }
                         }
                     }
@@ -1059,6 +1126,63 @@ struct StoryKnowledgePanelView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var graphClusterConnectionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Cluster Connections")
+                .font(.headline)
+
+            Text("Summarizes visible cross-cluster edges in the grouped canvas so you can see which kinds are interacting most strongly.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(graphClusterConnectionSummaries.prefix(8)) { summary in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(summary.title)
+                            .font(.subheadline.weight(.semibold))
+
+                        statusBadge("\(summary.edgeCount) edge" + (summary.edgeCount == 1 ? "" : "s"))
+
+                        if summary.pendingEdgeCount > 0 {
+                            statusBadge("\(summary.pendingEdgeCount) pending")
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+
+                    if !summary.topRelations.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Dominant relations")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(summary.topRelations) { relation in
+                                HStack(spacing: 8) {
+                                    Text("\(relation.displayLabel) • \(relation.count)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+
+                                    Spacer(minLength: 0)
+
+                                    Button(isRelationFiltered(to: relation.relation) ? "Clear Relation Filter" : "Filter Relation") {
+                                        toggleRelationFilter(relation.relation)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.small)
+                                }
                             }
                         }
                     }
