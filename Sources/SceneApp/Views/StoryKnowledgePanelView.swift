@@ -97,6 +97,7 @@ struct StoryKnowledgePanelView: View {
         let sourceKind: StoryKnowledgeNodeKind
         let targetKind: StoryKnowledgeNodeKind
         let edgeCount: Int
+        let pairCount: Int
         let pendingEdgeCount: Int
         let topRelations: [GraphClusterRelationSummary]
         let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
@@ -130,6 +131,7 @@ struct StoryKnowledgePanelView: View {
     private struct GraphFocusedLinkRelationSummary: Identifiable {
         let relation: String
         let edgeCount: Int
+        let pairCount: Int
         let pendingEdgeCount: Int
         let pairLabels: [String]
         let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
@@ -539,6 +541,9 @@ struct StoryKnowledgePanelView: View {
             }
 
             let edges = entries.map(\.1)
+            let pairCount = Set(
+                edges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }
+            ).count
             let topRelations = Dictionary(grouping: edges) { $0.relation }
                 .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
                 .sorted { lhs, rhs in
@@ -552,6 +557,7 @@ struct StoryKnowledgePanelView: View {
                 sourceKind: sourceKind,
                 targetKind: targetKind,
                 edgeCount: edges.count,
+                pairCount: pairCount,
                 pendingEdgeCount: edges.filter { $0.status == .inferred }.count,
                 topRelations: Array(topRelations.prefix(3)),
                 evidenceItems: mergedEvidenceItems(
@@ -581,6 +587,42 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private var expandedGraphFocusHighlights: [StoryKnowledgeNeighborhoodGraphView.FocusHighlight] {
+        var highlights: [StoryKnowledgeNeighborhoodGraphView.FocusHighlight] = []
+
+        if let activeExpandedGraphConnectionFocus {
+            highlights.append(
+                StoryKnowledgeNeighborhoodGraphView.FocusHighlight(
+                    label: activeExpandedGraphConnectionFocus.label,
+                    systemImage: "point.3.filled.connected.trianglepath.dotted",
+                    badges: graphFocusCoverageBadges(
+                        edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                        pairCount: activeFocusedGraphConnectionSummary?.pairCount,
+                        pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
+                        evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
+                    )
+                )
+            )
+        }
+
+        if let activeExpandedGraphRelationFocus {
+            highlights.append(
+                StoryKnowledgeNeighborhoodGraphView.FocusHighlight(
+                    label: activeExpandedGraphRelationFocus.label,
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    badges: graphFocusCoverageBadges(
+                        edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                        pairCount: activeFocusedGraphRelationSummary?.pairCount,
+                        pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
+                        evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
+                    )
+                )
+            )
+        }
+
+        return highlights
+    }
+
     private var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] {
         guard activeExpandedGraphConnectionFocus != nil else { return [] }
 
@@ -590,6 +632,9 @@ struct StoryKnowledgePanelView: View {
         return groupedEdges.compactMap { _, relationEdges in
             guard let firstEdge = relationEdges.first else { return nil }
 
+            let pairCount = Set(
+                relationEdges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }
+            ).count
             let pairLabels = Array(
                 Set(relationEdges.map { store.storyKnowledgeEdgeDisplayLabel($0) })
             )
@@ -600,6 +645,7 @@ struct StoryKnowledgePanelView: View {
             return GraphFocusedLinkRelationSummary(
                 relation: firstEdge.relation,
                 edgeCount: relationEdges.count,
+                pairCount: pairCount,
                 pendingEdgeCount: relationEdges.filter { $0.status == .inferred }.count,
                 pairLabels: Array(pairLabels.prefix(3)),
                 evidenceItems: mergedEvidenceItems(
@@ -958,6 +1004,7 @@ struct StoryKnowledgePanelView: View {
                 edges: graphEdgeModels,
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 layoutMode: .neighborhood,
+                focusHighlights: [],
                 selectedClusterKind: nil,
                 focusedClusterLink: nil,
                 focusedRelation: nil,
@@ -991,6 +1038,7 @@ struct StoryKnowledgePanelView: View {
                             systemImage: "point.3.filled.connected.trianglepath.dotted",
                             badges: graphFocusCoverageBadges(
                                 edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                                pairCount: activeFocusedGraphConnectionSummary?.pairCount,
                                 pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
                                 evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
                             )
@@ -1003,6 +1051,7 @@ struct StoryKnowledgePanelView: View {
                             systemImage: "line.3.horizontal.decrease.circle",
                             badges: graphFocusCoverageBadges(
                                 edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                                pairCount: activeFocusedGraphRelationSummary?.pairCount,
                                 pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
                                 evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
                             )
@@ -1059,6 +1108,7 @@ struct StoryKnowledgePanelView: View {
                     edges: graphEdgeModels,
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                     layoutMode: expandedGraphLayoutMode,
+                    focusHighlights: expandedGraphFocusHighlights,
                     selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
                     focusedClusterLink: activeExpandedGraphConnectionFocus.map {
                         StoryKnowledgeNeighborhoodGraphView.FocusedClusterLink(
@@ -1121,6 +1171,7 @@ struct StoryKnowledgePanelView: View {
                                         systemImage: "point.3.filled.connected.trianglepath.dotted",
                                         badges: graphFocusCoverageBadges(
                                             edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                                            pairCount: activeFocusedGraphConnectionSummary?.pairCount,
                                             pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
                                             evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
                                         )
@@ -1133,6 +1184,7 @@ struct StoryKnowledgePanelView: View {
                                         systemImage: "line.3.horizontal.decrease.circle",
                                         badges: graphFocusCoverageBadges(
                                             edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                                            pairCount: activeFocusedGraphRelationSummary?.pairCount,
                                             pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
                                             evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
                                         )
@@ -1376,6 +1428,7 @@ struct StoryKnowledgePanelView: View {
                             .font(.subheadline.weight(.semibold))
 
                         statusBadge("\(summary.edgeCount) edge" + (summary.edgeCount == 1 ? "" : "s"))
+                        statusBadge("\(summary.pairCount) pair" + (summary.pairCount == 1 ? "" : "s"))
 
                         if summary.pendingEdgeCount > 0 {
                             statusBadge("\(summary.pendingEdgeCount) pending")
@@ -1468,6 +1521,7 @@ struct StoryKnowledgePanelView: View {
                             .font(.subheadline.weight(.semibold))
 
                         statusBadge("\(summary.edgeCount) edge" + (summary.edgeCount == 1 ? "" : "s"))
+                        statusBadge("\(summary.pairCount) pair" + (summary.pairCount == 1 ? "" : "s"))
 
                         if summary.pendingEdgeCount > 0 {
                             statusBadge("\(summary.pendingEdgeCount) pending")
@@ -2313,11 +2367,15 @@ struct StoryKnowledgePanelView: View {
 
     private func graphFocusCoverageBadges(
         edgeCount: Int,
+        pairCount: Int? = nil,
         pendingEdgeCount: Int,
         evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
     ) -> [String] {
         var labels: [String] = []
         labels.append("\(edgeCount) edge" + (edgeCount == 1 ? "" : "s"))
+        if let pairCount {
+            labels.append("\(pairCount) pair" + (pairCount == 1 ? "" : "s"))
+        }
         if pendingEdgeCount > 0 {
             labels.append("\(pendingEdgeCount) pending")
         }

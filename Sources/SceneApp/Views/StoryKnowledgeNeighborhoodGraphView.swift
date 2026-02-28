@@ -63,6 +63,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let targetKind: StoryKnowledgeNodeKind
     }
 
+    struct FocusHighlight: Identifiable {
+        let label: String
+        let systemImage: String
+        let badges: [String]
+
+        var id: String { "\(systemImage)-\(label)" }
+    }
+
     private struct ClusterLabel: Identifiable {
         let id: String
         let kind: StoryKnowledgeNodeKind
@@ -91,6 +99,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let edges: [EdgeModel]
     let preferredAnchorNodeIDs: [UUID]
     let layoutMode: LayoutMode
+    let focusHighlights: [FocusHighlight]
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
     let focusedRelation: String?
@@ -167,6 +176,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                         .padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.12))
                         .clipShape(Capsule())
+                }
+            }
+
+            if !focusHighlights.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(focusHighlights) { highlight in
+                        focusHighlightLine(highlight)
+                    }
                 }
             }
 
@@ -1226,6 +1243,34 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     )
             }
         }
+    }
+
+    @ViewBuilder
+    private func focusHighlightLine(_ highlight: FocusHighlight) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(highlight.label, systemImage: highlight.systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !highlight.badges.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(highlight.badges, id: \.self) { badge in
+                        scopeBadge(badge)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func scopeBadge(_ label: String) -> some View {
+        Text(label)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(Capsule())
     }
 
     private func hoverCard(title: String, detail: String, footnote: String? = nil) -> some View {
