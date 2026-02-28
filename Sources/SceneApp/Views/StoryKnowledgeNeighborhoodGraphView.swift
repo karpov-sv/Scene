@@ -32,6 +32,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var contentOffset: CGSize = .zero
     @State private var contentScale: CGFloat = 1
     @State private var canvasSize: CGSize = .zero
+    @State private var isInteractingWithViewport = false
     @State private var hoveredNodeID: UUID?
     @State private var hoveredEdgeID: UUID?
 
@@ -179,7 +180,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                 }
                             }
 
-                            if let hoveredEdgeID,
+                            if !isInteractingWithViewport,
+                               let hoveredEdgeID,
                                let edge = edges.first(where: { $0.id == hoveredEdgeID }),
                                let position = layout.labelPositions[hoveredEdgeID] {
                                 hoverCard(
@@ -189,7 +191,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                         : edge.note
                                 )
                                 .position(x: position.x, y: position.y - 42)
-                            } else if let hoveredNodeID,
+                            } else if !isInteractingWithViewport,
+                                      let hoveredNodeID,
                                       let node = nodes.first(where: { $0.id == hoveredNodeID }),
                                       let position = layout.positions[hoveredNodeID] {
                                 hoverCard(
@@ -273,9 +276,13 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             .updating($dragTranslation) { value, state, _ in
                 state = value.translation
             }
+            .onChanged { _ in
+                beginViewportInteraction()
+            }
             .onEnded { value in
                 contentOffset.width += value.translation.width
                 contentOffset.height += value.translation.height
+                endViewportInteraction()
             }
     }
 
@@ -284,8 +291,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             .updating($gestureScale) { value, state, _ in
                 state = value.magnification
             }
+            .onChanged { _ in
+                beginViewportInteraction()
+            }
             .onEnded { value in
                 contentScale = min(max(contentScale * value.magnification, 0.75), 2.2)
+                endViewportInteraction()
             }
     }
 
@@ -371,6 +382,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func clampedScale(_ scale: CGFloat) -> CGFloat {
         min(max(scale, 0.75), 2.2)
+    }
+
+    private func beginViewportInteraction() {
+        guard !isInteractingWithViewport else { return }
+        isInteractingWithViewport = true
+        hoveredNodeID = nil
+        hoveredEdgeID = nil
+    }
+
+    private func endViewportInteraction() {
+        isInteractingWithViewport = false
     }
 
     private func layout(in size: CGSize) -> LayoutResult {
