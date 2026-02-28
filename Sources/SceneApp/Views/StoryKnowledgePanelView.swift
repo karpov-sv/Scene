@@ -574,6 +574,13 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private var activeFocusedGraphRelationSummary: GraphFocusedLinkRelationSummary? {
+        guard let focus = activeExpandedGraphRelationFocus else { return nil }
+        return graphFocusedLinkRelationSummaries.first {
+            normalizedRelationKey($0.relation) == normalizedRelationKey(focus.relation)
+        }
+    }
+
     private var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] {
         guard activeExpandedGraphConnectionFocus != nil else { return [] }
 
@@ -979,15 +986,27 @@ struct StoryKnowledgePanelView: View {
                         .foregroundStyle(.secondary)
 
                     if let activeExpandedGraphConnectionFocus {
-                        Text(activeExpandedGraphConnectionFocus.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        graphFocusScopeLine(
+                            label: activeExpandedGraphConnectionFocus.label,
+                            systemImage: "point.3.filled.connected.trianglepath.dotted",
+                            badges: graphFocusCoverageBadges(
+                                edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                                pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
+                                evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
+                            )
+                        )
                     }
 
                     if let activeExpandedGraphRelationFocus {
-                        Text(activeExpandedGraphRelationFocus.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        graphFocusScopeLine(
+                            label: activeExpandedGraphRelationFocus.label,
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            badges: graphFocusCoverageBadges(
+                                edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                                pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
+                                evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
+                            )
+                        )
                     }
                 }
 
@@ -1097,15 +1116,27 @@ struct StoryKnowledgePanelView: View {
                                 }
 
                                 if let activeExpandedGraphConnectionFocus {
-                                    Label(activeExpandedGraphConnectionFocus.label, systemImage: "point.3.filled.connected.trianglepath.dotted")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    graphFocusScopeLine(
+                                        label: activeExpandedGraphConnectionFocus.label,
+                                        systemImage: "point.3.filled.connected.trianglepath.dotted",
+                                        badges: graphFocusCoverageBadges(
+                                            edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                                            pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
+                                            evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
+                                        )
+                                    )
                                 }
 
                                 if let activeExpandedGraphRelationFocus {
-                                    Label(activeExpandedGraphRelationFocus.label, systemImage: "line.3.horizontal.decrease.circle")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    graphFocusScopeLine(
+                                        label: activeExpandedGraphRelationFocus.label,
+                                        systemImage: "line.3.horizontal.decrease.circle",
+                                        badges: graphFocusCoverageBadges(
+                                            edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                                            pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
+                                            evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
+                                        )
+                                    )
                                 }
                             }
                             .padding(12)
@@ -2280,6 +2311,24 @@ struct StoryKnowledgePanelView: View {
         return orderedSceneIDs.compactMap { mergedBySceneID[$0] }
     }
 
+    private func graphFocusCoverageBadges(
+        edgeCount: Int,
+        pendingEdgeCount: Int,
+        evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
+    ) -> [String] {
+        var labels: [String] = []
+        labels.append("\(edgeCount) edge" + (edgeCount == 1 ? "" : "s"))
+        if pendingEdgeCount > 0 {
+            labels.append("\(pendingEdgeCount) pending")
+        }
+
+        let sceneCount = evidenceItems.count
+        if sceneCount > 0 {
+            labels.append("\(sceneCount) scene" + (sceneCount == 1 ? "" : "s"))
+        }
+        return labels
+    }
+
     private func graphEvidencePreviewText(
         _ items: [AppStore.StoryKnowledgeEvidenceItem],
         maxItems: Int = 2
@@ -2737,6 +2786,27 @@ private func evidenceSection(
                 onRevealScene(item.sceneID)
             }
             .buttonStyle(.link)
+        }
+    }
+}
+
+@ViewBuilder
+private func graphFocusScopeLine(
+    label: String,
+    systemImage: String,
+    badges: [String]
+) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        Label(label, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+        if !badges.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(badges, id: \.self) { badge in
+                    statusBadge(badge)
+                }
+            }
         }
     }
 }
