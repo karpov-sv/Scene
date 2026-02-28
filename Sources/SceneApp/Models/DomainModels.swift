@@ -416,6 +416,124 @@ enum StoryKnowledgeRecordStatus: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum StoryKnowledgePanelVisibilityFilter: String, Codable, CaseIterable, Identifiable {
+    case all
+    case accepted
+    case pending
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "All"
+        case .accepted:
+            return "Accepted"
+        case .pending:
+            return "Pending"
+        }
+    }
+}
+
+enum StoryKnowledgePanelSortMode: String, Codable, CaseIterable, Identifiable {
+    case recent
+    case confidence
+    case evidence
+    case name
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .recent:
+            return "Recent"
+        case .confidence:
+            return "Confidence"
+        case .evidence:
+            return "Evidence"
+        case .name:
+            return "Name"
+        }
+    }
+}
+
+enum StoryKnowledgePanelNodeKindFilter: String, Codable, CaseIterable, Identifiable {
+    case all
+    case character
+    case location
+    case object
+    case concept
+    case group
+    case event
+    case unknown
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "All Kinds"
+        case .character:
+            return "Characters"
+        case .location:
+            return "Locations"
+        case .object:
+            return "Objects"
+        case .concept:
+            return "Concepts"
+        case .group:
+            return "Groups"
+        case .event:
+            return "Events"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var nodeKind: StoryKnowledgeNodeKind? {
+        switch self {
+        case .all:
+            return nil
+        case .character:
+            return .character
+        case .location:
+            return .location
+        case .object:
+            return .object
+        case .concept:
+            return .concept
+        case .group:
+            return .group
+        case .event:
+            return .event
+        case .unknown:
+            return .unknown
+        }
+    }
+}
+
+struct StoryKnowledgePanelState: Codable, Equatable {
+    var visibilityFilter: StoryKnowledgePanelVisibilityFilter
+    var sortMode: StoryKnowledgePanelSortMode
+    var nodeKindFilter: StoryKnowledgePanelNodeKindFilter
+    var relationFilter: String
+    var searchText: String
+
+    init(
+        visibilityFilter: StoryKnowledgePanelVisibilityFilter = .all,
+        sortMode: StoryKnowledgePanelSortMode = .recent,
+        nodeKindFilter: StoryKnowledgePanelNodeKindFilter = .all,
+        relationFilter: String = "",
+        searchText: String = ""
+    ) {
+        self.visibilityFilter = visibilityFilter
+        self.sortMode = sortMode
+        self.nodeKindFilter = nodeKindFilter
+        self.relationFilter = relationFilter
+        self.searchText = searchText
+    }
+}
+
 struct StoryKnowledgeNode: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
@@ -1847,6 +1965,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
     var storyGraphEdges: [StoryGraphEdge]
     var storyKnowledgeNodes: [StoryKnowledgeNode]
     var storyKnowledgeEdges: [StoryKnowledgeEdge]
+    var storyKnowledgePanelState: StoryKnowledgePanelState
     var sceneStoryMemoryByScene: [String: SceneStoryMemory]
     var chapterStoryMemoryByChapter: [String: ChapterStoryMemory]
     var projectStoryMemory: ProjectStoryMemory?
@@ -1884,6 +2003,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         storyGraphEdges: [StoryGraphEdge],
         storyKnowledgeNodes: [StoryKnowledgeNode],
         storyKnowledgeEdges: [StoryKnowledgeEdge],
+        storyKnowledgePanelState: StoryKnowledgePanelState = StoryKnowledgePanelState(),
         sceneStoryMemoryByScene: [String: SceneStoryMemory],
         chapterStoryMemoryByChapter: [String: ChapterStoryMemory],
         projectStoryMemory: ProjectStoryMemory? = nil,
@@ -1920,6 +2040,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         self.storyGraphEdges = storyGraphEdges
         self.storyKnowledgeNodes = storyKnowledgeNodes
         self.storyKnowledgeEdges = storyKnowledgeEdges
+        self.storyKnowledgePanelState = storyKnowledgePanelState
         self.sceneStoryMemoryByScene = sceneStoryMemoryByScene
         self.chapterStoryMemoryByChapter = chapterStoryMemoryByChapter
         self.projectStoryMemory = projectStoryMemory
@@ -1958,6 +2079,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         case storyGraphEdges
         case storyKnowledgeNodes
         case storyKnowledgeEdges
+        case storyKnowledgePanelState
         case sceneStoryMemoryByScene
         case chapterStoryMemoryByChapter
         case projectStoryMemory
@@ -1998,6 +2120,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
         storyGraphEdges = try container.decodeIfPresent([StoryGraphEdge].self, forKey: .storyGraphEdges) ?? []
         storyKnowledgeNodes = try container.decodeIfPresent([StoryKnowledgeNode].self, forKey: .storyKnowledgeNodes) ?? []
         storyKnowledgeEdges = try container.decodeIfPresent([StoryKnowledgeEdge].self, forKey: .storyKnowledgeEdges) ?? []
+        storyKnowledgePanelState = try container.decodeIfPresent(StoryKnowledgePanelState.self, forKey: .storyKnowledgePanelState) ?? StoryKnowledgePanelState()
         sceneStoryMemoryByScene = try container.decodeIfPresent([String: SceneStoryMemory].self, forKey: .sceneStoryMemoryByScene) ?? [:]
         chapterStoryMemoryByChapter = try container.decodeIfPresent([String: ChapterStoryMemory].self, forKey: .chapterStoryMemoryByChapter) ?? [:]
         projectStoryMemory = try container.decodeIfPresent(ProjectStoryMemory.self, forKey: .projectStoryMemory)
@@ -2068,6 +2191,7 @@ struct StoryProject: Codable, Identifiable, Equatable {
             storyGraphEdges: [],
             storyKnowledgeNodes: [],
             storyKnowledgeEdges: [],
+            storyKnowledgePanelState: StoryKnowledgePanelState(),
             sceneStoryMemoryByScene: [:],
             chapterStoryMemoryByChapter: [:],
             projectStoryMemory: nil,

@@ -197,7 +197,7 @@ struct ContentView: View {
             Button {
                 toggleKnowledgePanel()
             } label: {
-                Image(systemName: writingSidePanel == .knowledge ? "point.3.connected.trianglepath.dotted.fill" : "point.3.connected.trianglepath.dotted")
+                Image(systemName: writingSidePanel == .knowledge ? "point.3.filled.connected.trianglepath.dotted" : "point.3.connected.trianglepath.dotted")
             }
             .help(knowledgeToggleHelpText)
 

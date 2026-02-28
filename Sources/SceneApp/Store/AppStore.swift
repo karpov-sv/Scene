@@ -23,6 +23,32 @@ final class AppStore: ObservableObject {
         var id: UUID { sceneID }
     }
 
+    struct StoryKnowledgeCompendiumMergePreview: Identifiable, Equatable {
+        let nodeID: UUID
+        let nodeName: String
+        let compendiumID: UUID
+        let compendiumTitle: String
+        let currentTags: [String]
+        let updatedTags: [String]
+        let addedTags: [String]
+        let currentBody: String
+        let updatedBody: String
+
+        var id: UUID { nodeID }
+
+        var hasChanges: Bool {
+            currentTags != updatedTags || currentBody != updatedBody
+        }
+
+        var hasTagChanges: Bool {
+            currentTags != updatedTags
+        }
+
+        var bodyWillChange: Bool {
+            currentBody != updatedBody
+        }
+    }
+
     private enum DataExchangeError: LocalizedError {
         case projectNotOpen
         case invalidPayloadType(expected: String, actual: String)
@@ -1190,6 +1216,30 @@ final class AppStore: ObservableObject {
         sortedStoryKnowledgeEdges(
             project.storyKnowledgeEdges.filter { isActiveStoryKnowledgeEdge($0) }
         )
+    }
+
+    var storyKnowledgePanelState: StoryKnowledgePanelState {
+        project.storyKnowledgePanelState
+    }
+
+    func setStoryKnowledgePanelVisibilityFilter(_ filter: StoryKnowledgePanelVisibilityFilter) {
+        updateStoryKnowledgePanelState { $0.visibilityFilter = filter }
+    }
+
+    func setStoryKnowledgePanelSortMode(_ sortMode: StoryKnowledgePanelSortMode) {
+        updateStoryKnowledgePanelState { $0.sortMode = sortMode }
+    }
+
+    func setStoryKnowledgePanelNodeKindFilter(_ nodeKindFilter: StoryKnowledgePanelNodeKindFilter) {
+        updateStoryKnowledgePanelState { $0.nodeKindFilter = nodeKindFilter }
+    }
+
+    func setStoryKnowledgePanelRelationFilter(_ relationFilter: String) {
+        updateStoryKnowledgePanelState { $0.relationFilter = relationFilter }
+    }
+
+    func setStoryKnowledgePanelSearchText(_ searchText: String) {
+        updateStoryKnowledgePanelState { $0.searchText = searchText }
     }
 
     func acceptedStoryKnowledgeFacts(for sceneID: UUID?) -> [String] {
@@ -3520,6 +3570,7 @@ final class AppStore: ObservableObject {
         importedProject.rollingChapterMemoryByChapter = [:]
         importedProject.storyKnowledgeNodes = []
         importedProject.storyKnowledgeEdges = []
+        importedProject.storyKnowledgePanelState = StoryKnowledgePanelState()
         importedProject.sceneStoryMemoryByScene = [:]
         importedProject.chapterStoryMemoryByChapter = [:]
         importedProject.projectStoryMemory = nil
@@ -4191,22 +4242,42 @@ final class AppStore: ObservableObject {
     }
 
     func promoteStoryKnowledgeNodeToCompendium(_ nodeID: UUID) {
+        _ = promoteStoryKnowledgeNodeToCompendium(nodeID, shouldSave: true)
+    }
+
+    func promoteStoryKnowledgeNodesToCompendium(_ nodeIDs: [UUID]) {
+        var didMutate = false
+        for nodeID in deduplicatedUUIDs(nodeIDs) {
+            didMutate = promoteStoryKnowledgeNodeToCompendium(nodeID, shouldSave: false) || didMutate
+        }
+        guard didMutate else { return }
+        saveProject()
+    }
+
+    @discardableResult
+    private func promoteStoryKnowledgeNodeToCompendium(_ nodeID: UUID, shouldSave: Bool) -> Bool {
         guard isProjectOpen,
               let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }) else {
-            return
+            return false
         }
 
         var node = project.storyKnowledgeNodes[nodeIndex]
-        guard node.status != .rejected else { return }
+        guard node.status != .rejected else { return false }
+        var didMutate = false
 
         if let existingCompendiumID = node.resolvedCompendiumID,
            compendiumIndex(for: existingCompendiumID) != nil {
-            node.status = .canonical
-            node.updatedAt = .now
-            project.storyKnowledgeNodes[nodeIndex] = node
             selectedCompendiumID = existingCompendiumID
-            saveProject()
-            return
+            if node.status != .canonical {
+                node.status = .canonical
+                node.updatedAt = .now
+                project.storyKnowledgeNodes[nodeIndex] = node
+                didMutate = true
+            }
+            if didMutate && shouldSave {
+                saveProject()
+            }
+            return didMutate
         }
 
         let preferredKind = node.kind == .unknown ? .concept : node.kind
@@ -4235,37 +4306,99 @@ final class AppStore: ObservableObject {
             project.compendium.append(entry)
             resolvedCompendiumID = entry.id
             selectedCompendiumID = entry.id
+            didMutate = true
         }
 
-        node.resolvedCompendiumID = resolvedCompendiumID
-        if let entryIndex = compendiumIndex(for: resolvedCompendiumID) {
-            node.kind = storyKnowledgeNodeKind(for: project.compendium[entryIndex].category)
+        if node.resolvedCompendiumID != resolvedCompendiumID {
+            node.resolvedCompendiumID = resolvedCompendiumID
+            didMutate = true
         }
-        node.status = .canonical
+        if let entryIndex = compendiumIndex(for: resolvedCompendiumID) {
+            let resolvedKind = storyKnowledgeNodeKind(for: project.compendium[entryIndex].category)
+            if node.kind != resolvedKind {
+                node.kind = resolvedKind
+                didMutate = true
+            }
+        } else if node.kind != preferredKind {
+            node.kind = preferredKind
+            didMutate = true
+        }
+        if node.status != .canonical {
+            node.status = .canonical
+            didMutate = true
+        }
+        guard didMutate else { return false }
+
         node.updatedAt = .now
         project.storyKnowledgeNodes[nodeIndex] = node
-        saveProject()
+        if shouldSave {
+            saveProject()
+        }
+        return true
     }
 
     func acceptStoryKnowledgeEdge(_ edgeID: UUID) {
+        _ = acceptStoryKnowledgeEdge(edgeID, shouldSave: true)
+    }
+
+    func acceptStoryKnowledgeEdges(_ edgeIDs: [UUID]) {
+        var didMutate = false
+        for edgeID in deduplicatedUUIDs(edgeIDs) {
+            didMutate = acceptStoryKnowledgeEdge(edgeID, shouldSave: false) || didMutate
+        }
+        guard didMutate else { return }
+        saveProject()
+    }
+
+    @discardableResult
+    private func acceptStoryKnowledgeEdge(_ edgeID: UUID, shouldSave: Bool) -> Bool {
         guard isProjectOpen,
               let edgeIndex = project.storyKnowledgeEdges.firstIndex(where: { $0.id == edgeID }),
               isActiveStoryKnowledgeEdge(project.storyKnowledgeEdges[edgeIndex]) else {
-            return
+            return false
+        }
+        guard project.storyKnowledgeEdges[edgeIndex].status != .canonical else {
+            return false
         }
 
         project.storyKnowledgeEdges[edgeIndex].status = .canonical
         project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
-        saveProject(debounced: true)
+        if shouldSave {
+            saveProject(debounced: true)
+        }
+        return true
     }
 
     func rejectStoryKnowledgeNode(_ nodeID: UUID) {
+        let didMutate = rejectStoryKnowledgeNode(nodeID, shouldPersist: false)
+        guard didMutate else { return }
+        sanitizeStructuredStoryMemories()
+        rebuildAllStoryMemoryRollups()
+        saveProject()
+    }
+
+    func rejectStoryKnowledgeNodes(_ nodeIDs: [UUID]) {
+        var didMutate = false
+        for nodeID in deduplicatedUUIDs(nodeIDs) {
+            didMutate = rejectStoryKnowledgeNode(nodeID, shouldPersist: false) || didMutate
+        }
+        guard didMutate else { return }
+        sanitizeStructuredStoryMemories()
+        rebuildAllStoryMemoryRollups()
+        saveProject()
+    }
+
+    @discardableResult
+    private func rejectStoryKnowledgeNode(_ nodeID: UUID, shouldPersist: Bool) -> Bool {
         guard isProjectOpen,
               let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }) else {
-            return
+            return false
         }
         guard project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID == nil else {
-            return
+            return false
+        }
+        guard project.storyKnowledgeNodes[nodeIndex].status != .rejected else {
+            return false
         }
 
         project.storyKnowledgeNodes[nodeIndex].status = .rejected
@@ -4277,21 +4410,43 @@ final class AppStore: ObservableObject {
             project.storyKnowledgeEdges[edgeIndex].status = .rejected
             project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
         }
-
-        sanitizeStructuredStoryMemories()
-        rebuildAllStoryMemoryRollups()
-        saveProject()
+        if shouldPersist {
+            sanitizeStructuredStoryMemories()
+            rebuildAllStoryMemoryRollups()
+            saveProject()
+        }
+        return true
     }
 
     func rejectStoryKnowledgeEdge(_ edgeID: UUID) {
+        _ = rejectStoryKnowledgeEdge(edgeID, shouldSave: true)
+    }
+
+    func rejectStoryKnowledgeEdges(_ edgeIDs: [UUID]) {
+        var didMutate = false
+        for edgeID in deduplicatedUUIDs(edgeIDs) {
+            didMutate = rejectStoryKnowledgeEdge(edgeID, shouldSave: false) || didMutate
+        }
+        guard didMutate else { return }
+        saveProject()
+    }
+
+    @discardableResult
+    private func rejectStoryKnowledgeEdge(_ edgeID: UUID, shouldSave: Bool) -> Bool {
         guard isProjectOpen,
               let edgeIndex = project.storyKnowledgeEdges.firstIndex(where: { $0.id == edgeID }) else {
-            return
+            return false
+        }
+        guard project.storyKnowledgeEdges[edgeIndex].status != .rejected else {
+            return false
         }
 
         project.storyKnowledgeEdges[edgeIndex].status = .rejected
         project.storyKnowledgeEdges[edgeIndex].updatedAt = .now
-        saveProject(debounced: true)
+        if shouldSave {
+            saveProject(debounced: true)
+        }
+        return true
     }
 
     func storyKnowledgeEdgeDisplayLabel(_ edge: StoryKnowledgeEdge) -> String {
@@ -4315,7 +4470,47 @@ final class AppStore: ObservableObject {
         selectScene(sceneID, chapterID: chapterID)
     }
 
+    func storyKnowledgeCompendiumMergePreview(for nodeID: UUID) -> StoryKnowledgeCompendiumMergePreview? {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }),
+              let compendiumID = project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID,
+              let entryIndex = compendiumIndex(for: compendiumID) else {
+            return nil
+        }
+
+        let node = project.storyKnowledgeNodes[nodeIndex]
+        let entry = project.compendium[entryIndex]
+        let plan = storyKnowledgeCompendiumMergePlan(entry: entry, node: node)
+        return StoryKnowledgeCompendiumMergePreview(
+            nodeID: node.id,
+            nodeName: node.name,
+            compendiumID: compendiumID,
+            compendiumTitle: entry.title,
+            currentTags: entry.tags,
+            updatedTags: plan.mergedTags,
+            addedTags: plan.addedTags,
+            currentBody: entry.body,
+            updatedBody: plan.mergedBody
+        )
+    }
+
     func mergeStoryKnowledgeNodeIntoCompendium(_ nodeID: UUID) {
+        applyStoryKnowledgeNodeCompendiumMerge(nodeID, includeTags: true, includeBody: true)
+    }
+
+    func mergeStoryKnowledgeNodeTagsIntoCompendium(_ nodeID: UUID) {
+        applyStoryKnowledgeNodeCompendiumMerge(nodeID, includeTags: true, includeBody: false)
+    }
+
+    func mergeStoryKnowledgeNodeSummaryIntoCompendium(_ nodeID: UUID) {
+        applyStoryKnowledgeNodeCompendiumMerge(nodeID, includeTags: false, includeBody: true)
+    }
+
+    private func applyStoryKnowledgeNodeCompendiumMerge(
+        _ nodeID: UUID,
+        includeTags: Bool,
+        includeBody: Bool
+    ) {
         guard isProjectOpen,
               let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }),
               let compendiumID = project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID,
@@ -4325,37 +4520,19 @@ final class AppStore: ObservableObject {
 
         let node = project.storyKnowledgeNodes[nodeIndex]
         var entry = project.compendium[entryIndex]
-        var didMutate = false
-
-        let mergedTags = mergedCompendiumTags(
-            existing: entry.tags,
-            additional: node.aliases,
-            excluding: [entry.title, node.name]
-        )
-        if entry.tags != mergedTags {
-            entry.tags = mergedTags
-            didMutate = true
+        let plan = storyKnowledgeCompendiumMergePlan(entry: entry, node: node)
+        if includeTags {
+            entry.tags = plan.mergedTags
         }
-
-        let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !summary.isEmpty {
-            let normalizedSummary = compactSingleLine(summary).lowercased()
-            let normalizedExistingBody = compactSingleLine(entry.body).lowercased()
-            let updateLine = "Story knowledge: \(summary)"
-            let normalizedUpdateLine = compactSingleLine(updateLine).lowercased()
-
-            if normalizedExistingBody.isEmpty {
-                entry.body = summary
-                didMutate = true
-            } else if !normalizedExistingBody.contains(normalizedSummary)
-                        && !normalizedExistingBody.contains(normalizedUpdateLine) {
-                entry.body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + updateLine
-                didMutate = true
-            }
+        if includeBody {
+            entry.body = plan.mergedBody
         }
 
         selectedCompendiumID = compendiumID
-        guard didMutate else { return }
+        guard entry.tags != project.compendium[entryIndex].tags
+                || entry.body != project.compendium[entryIndex].body else {
+            return
+        }
 
         entry.updatedAt = .now
         project.compendium[entryIndex] = entry
@@ -13107,6 +13284,53 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private struct StoryKnowledgeCompendiumMergePlan {
+        var mergedTags: [String]
+        var addedTags: [String]
+        var mergedBody: String
+        var didMutate: Bool
+    }
+
+    private func storyKnowledgeCompendiumMergePlan(
+        entry: CompendiumEntry,
+        node: StoryKnowledgeNode
+    ) -> StoryKnowledgeCompendiumMergePlan {
+        let mergedTags = mergedCompendiumTags(
+            existing: entry.tags,
+            additional: node.aliases,
+            excluding: [entry.title, node.name]
+        )
+        let existingTagKeys = Set(
+            entry.tags
+                .map { normalizedStoryKnowledgeKey($0) }
+                .filter { !$0.isEmpty }
+        )
+        let addedTags = mergedTags.filter { !existingTagKeys.contains(normalizedStoryKnowledgeKey($0)) }
+
+        var mergedBody = entry.body
+        let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summary.isEmpty {
+            let normalizedSummary = compactSingleLine(summary).lowercased()
+            let normalizedExistingBody = compactSingleLine(entry.body).lowercased()
+            let updateLine = "Story knowledge: \(summary)"
+            let normalizedUpdateLine = compactSingleLine(updateLine).lowercased()
+
+            if normalizedExistingBody.isEmpty {
+                mergedBody = summary
+            } else if !normalizedExistingBody.contains(normalizedSummary)
+                        && !normalizedExistingBody.contains(normalizedUpdateLine) {
+                mergedBody = entry.body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + updateLine
+            }
+        }
+
+        return StoryKnowledgeCompendiumMergePlan(
+            mergedTags: mergedTags,
+            addedTags: addedTags,
+            mergedBody: mergedBody,
+            didMutate: entry.tags != mergedTags || entry.body != mergedBody
+        )
+    }
+
     private func mergedCompendiumTags(
         existing: [String],
         additional: [String],
@@ -13183,6 +13407,16 @@ final class AppStore: ObservableObject {
                 storyKnowledgeEdgeDisplayLabel(rhs)
             ) == .orderedAscending
         }
+    }
+
+    private func updateStoryKnowledgePanelState(
+        _ mutate: (inout StoryKnowledgePanelState) -> Void
+    ) {
+        var updatedState = project.storyKnowledgePanelState
+        mutate(&updatedState)
+        guard updatedState != project.storyKnowledgePanelState else { return }
+        project.storyKnowledgePanelState = updatedState
+        saveProject(debounced: true)
     }
 
     private struct GenerationAppendBase {

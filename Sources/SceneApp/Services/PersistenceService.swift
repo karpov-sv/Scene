@@ -365,6 +365,7 @@ final class ProjectPersistence {
         var storyGraphEdges: [StoryGraphEdge]?
         var storyKnowledgeNodes: [StoryKnowledgeNode]?
         var storyKnowledgeEdges: [StoryKnowledgeEdge]?
+        var storyKnowledgePanelState: StoryKnowledgePanelState?
         var sceneStoryMemoryByScene: [String: SceneStoryMemory]?
         var chapterStoryMemoryByChapter: [String: ChapterStoryMemory]?
         var projectStoryMemory: ProjectStoryMemory?
@@ -677,6 +678,7 @@ final class ProjectPersistence {
             storyGraphEdges: manifest.storyGraphEdges ?? [],
             storyKnowledgeNodes: manifest.storyKnowledgeNodes ?? [],
             storyKnowledgeEdges: manifest.storyKnowledgeEdges ?? [],
+            storyKnowledgePanelState: manifest.storyKnowledgePanelState ?? StoryKnowledgePanelState(),
             sceneStoryMemoryByScene: manifest.sceneStoryMemoryByScene ?? [:],
             chapterStoryMemoryByChapter: manifest.chapterStoryMemoryByChapter ?? [:],
             projectStoryMemory: manifest.projectStoryMemory,
@@ -824,6 +826,7 @@ final class ProjectPersistence {
             storyGraphEdges: project.storyGraphEdges,
             storyKnowledgeNodes: project.storyKnowledgeNodes,
             storyKnowledgeEdges: project.storyKnowledgeEdges,
+            storyKnowledgePanelState: project.storyKnowledgePanelState,
             sceneStoryMemoryByScene: project.sceneStoryMemoryByScene,
             chapterStoryMemoryByChapter: project.chapterStoryMemoryByChapter,
             projectStoryMemory: project.projectStoryMemory,
