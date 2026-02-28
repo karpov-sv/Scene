@@ -73,6 +73,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         var id: String { "\(systemImage)-\(label)" }
     }
 
+    struct EmptyState {
+        let title: String
+        let systemImage: String
+        let description: String
+        let actionTitle: String?
+        let action: (() -> Void)?
+    }
+
     private struct ClusterLabel: Identifiable {
         let id: String
         let kind: StoryKnowledgeNodeKind
@@ -102,6 +110,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let preferredAnchorNodeIDs: [UUID]
     let layoutMode: LayoutMode
     let focusHighlights: [FocusHighlight]
+    let emptyState: EmptyState?
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
     let focusedRelation: String?
@@ -196,13 +205,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             legendView
 
             if nodes.isEmpty {
-                ContentUnavailableView(
-                    "No Graph Data",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Adjust filters or accept more knowledge to render a neighborhood graph.")
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: 220)
+                emptyStateView
             } else {
                 GeometryReader { geometry in
                     let layout = layout(in: geometry.size)
@@ -351,6 +354,35 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         }
         .onChange(of: nodes.map(\.id), initial: false) { _, _ in
             resetViewport()
+        }
+    }
+
+    @ViewBuilder
+    private var emptyStateView: some View {
+        if let emptyState {
+            ContentUnavailableView(
+                emptyState.title,
+                systemImage: emptyState.systemImage,
+                description: Text(emptyState.description)
+            )
+            .overlay(alignment: .bottom) {
+                if let actionTitle = emptyState.actionTitle,
+                   let action = emptyState.action {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.borderless)
+                        .padding(.bottom, 20)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 240)
+        } else {
+            ContentUnavailableView(
+                "No Graph Data",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                description: Text("Adjust filters or accept more knowledge to render a neighborhood graph.")
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 220)
         }
     }
 

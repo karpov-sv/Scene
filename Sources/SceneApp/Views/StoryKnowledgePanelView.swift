@@ -632,6 +632,41 @@ struct StoryKnowledgePanelView: View {
         return highlights
     }
 
+    private var expandedGraphEmptyState: StoryKnowledgeNeighborhoodGraphView.EmptyState? {
+        guard showingExpandedGraph, graphVisibleNodes.isEmpty else { return nil }
+
+        if let relationFocus = activeExpandedGraphRelationFocus {
+            switch visibilityFilter {
+            case .accepted where graphBaseAcceptedEdges.isEmpty && !graphBasePendingEdges.isEmpty:
+                return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                    title: "Focused Relation Hidden by Visibility",
+                    systemImage: "eye.slash",
+                    description: "\(relationFocus.label) currently only has pending edges in the active grouped scope. Show accepted and pending edges together to render it again.",
+                    actionTitle: "Show All",
+                    action: { store.setStoryKnowledgePanelVisibilityFilter(.all) }
+                )
+            case .pending where !graphBaseAcceptedEdges.isEmpty && graphBasePendingEdges.isEmpty:
+                return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                    title: "Focused Relation Hidden by Visibility",
+                    systemImage: "eye.slash",
+                    description: "\(relationFocus.label) currently only has accepted edges in the active grouped scope. Show accepted and pending edges together to render it again.",
+                    actionTitle: "Show All",
+                    action: { store.setStoryKnowledgePanelVisibilityFilter(.all) }
+                )
+            default:
+                return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                    title: "No Visible Edges in Focused Relation",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: "\(relationFocus.label) has no visible edges under the current grouped canvas filters. Clear the local relation focus or broaden the current graph filters.",
+                    actionTitle: "Clear Relation",
+                    action: { expandedGraphRelationFocus = nil }
+                )
+            }
+        }
+
+        return nil
+    }
+
     private var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] {
         guard activeExpandedGraphConnectionFocus != nil else { return [] }
 
@@ -1014,6 +1049,7 @@ struct StoryKnowledgePanelView: View {
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 layoutMode: .neighborhood,
                 focusHighlights: [],
+                emptyState: nil,
                 selectedClusterKind: nil,
                 focusedClusterLink: nil,
                 focusedRelation: nil,
@@ -1118,6 +1154,7 @@ struct StoryKnowledgePanelView: View {
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                     layoutMode: expandedGraphLayoutMode,
                     focusHighlights: expandedGraphFocusHighlights,
+                    emptyState: expandedGraphEmptyState,
                     selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
                     focusedClusterLink: activeExpandedGraphConnectionFocus.map {
                         StoryKnowledgeNeighborhoodGraphView.FocusedClusterLink(
