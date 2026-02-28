@@ -35,6 +35,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         }
     }
 
+    enum LabelDensity {
+        case standard
+        case compact
+        case sparse
+    }
+
     struct NodeModel: Identifiable, Equatable {
         let id: UUID
         let title: String
@@ -149,6 +155,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let edges: [EdgeModel]
     let preferredAnchorNodeIDs: [UUID]
     let layoutMode: LayoutMode
+    let labelDensity: LabelDensity
     let focusHighlights: [FocusHighlight]
     let emptyState: EmptyState?
     let selectionNavigation: SelectionNavigation?
@@ -1105,34 +1112,50 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func nodeBubble(_ node: NodeModel) -> some View {
-        VStack(spacing: 4) {
+        let isSelected = selectedNodeID == node.id
+        let showsTitle = labelDensity != .sparse || isSelected
+        let showsSubtitle = labelDensity == .standard || isSelected
+        let showsStatus = labelDensity != .sparse || isSelected
+        let bubbleWidth: CGFloat = switch labelDensity {
+        case .standard: 122
+        case .compact: 94
+        case .sparse: isSelected ? 122 : 48
+        }
+
+        return VStack(spacing: labelDensity == .sparse && !isSelected ? 0 : 4) {
             HStack(spacing: 6) {
                 Image(systemName: nodeKindSymbol(node.kind))
-                    .font(.caption)
-                Text(node.title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-            }
-
-            Text(node.subtitle)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            HStack(spacing: 4) {
-                Text(node.status.rawValue.capitalized)
-                    .font(.caption2)
-                if node.isLinkedToCompendium {
-                    Image(systemName: "book.closed")
-                        .font(.caption2)
+                    .font(labelDensity == .sparse && !isSelected ? .body : .caption)
+                if showsTitle {
+                    Text(node.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(labelDensity == .standard || isSelected ? 2 : 1)
+                        .multilineTextAlignment(.center)
                 }
             }
-            .foregroundStyle(.secondary)
+
+            if showsSubtitle {
+                Text(node.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if showsStatus {
+                HStack(spacing: 4) {
+                    Text(node.status.rawValue.capitalized)
+                        .font(.caption2)
+                    if node.isLinkedToCompendium {
+                        Image(systemName: "book.closed")
+                            .font(.caption2)
+                    }
+                }
+                .foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(width: 122)
+        .padding(.horizontal, labelDensity == .sparse && !isSelected ? 6 : 10)
+        .padding(.vertical, labelDensity == .sparse && !isSelected ? 6 : 8)
+        .frame(width: bubbleWidth)
         .background(nodeFillColor(node).opacity(selectedNodeID == node.id ? 0.28 : 0.18))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
@@ -1456,7 +1479,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func edgeSelectionBadge(_ edge: EdgeModel) -> some View {
         Group {
-            if edges.count <= 16 || selectedEdgeID == edge.id {
+            if shouldShowEdgeLabel(for: edge) {
                 let isFocusedRelation = isFocusedRelationEdge(edge)
                 Text(edge.relation.replacingOccurrences(of: "_", with: " "))
                     .font(.caption2)
@@ -1482,6 +1505,28 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             .stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1)
                     )
             }
+        }
+    }
+
+    private func shouldShowEdgeLabel(for edge: EdgeModel) -> Bool {
+        if selectedEdgeID == edge.id {
+            return true
+        }
+        if let selectedNodeID,
+           edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID {
+            return true
+        }
+        if isFocusedRelationEdge(edge) {
+            return true
+        }
+
+        switch labelDensity {
+        case .standard:
+            return edges.count <= 16
+        case .compact:
+            return edges.count <= 10
+        case .sparse:
+            return false
         }
     }
 

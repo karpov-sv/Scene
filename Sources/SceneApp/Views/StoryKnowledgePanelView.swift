@@ -32,7 +32,7 @@ struct StoryKnowledgePanelView: View {
             case .wide:
                 return 56
             case .project:
-                return 84
+                return 112
             }
         }
 
@@ -43,7 +43,7 @@ struct StoryKnowledgePanelView: View {
             case .wide:
                 return 28
             case .project:
-                return 40
+                return 52
             }
         }
 
@@ -54,7 +54,7 @@ struct StoryKnowledgePanelView: View {
             case .wide:
                 return 80
             case .project:
-                return 120
+                return 164
             }
         }
 
@@ -65,7 +65,7 @@ struct StoryKnowledgePanelView: View {
             case .wide:
                 return 48
             case .project:
-                return 68
+                return 96
             }
         }
     }
@@ -384,6 +384,17 @@ struct StoryKnowledgePanelView: View {
 
     private var activeGraphDensityMode: GraphDensityMode? {
         showingExpandedGraph ? expandedGraphDensity : nil
+    }
+
+    private var expandedGraphLabelDensity: StoryKnowledgeNeighborhoodGraphView.LabelDensity {
+        switch expandedGraphDensity {
+        case .balanced:
+            return .standard
+        case .wide:
+            return .compact
+        case .project:
+            return .sparse
+        }
     }
 
     private var graphVisibleEdges: [StoryKnowledgeEdge] {
@@ -1371,6 +1382,7 @@ struct StoryKnowledgePanelView: View {
                 edges: graphEdgeModels,
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 layoutMode: .neighborhood,
+                labelDensity: .standard,
                 focusHighlights: [],
                 emptyState: nil,
                 selectionNavigation: nil,
@@ -1478,6 +1490,7 @@ struct StoryKnowledgePanelView: View {
                     edges: graphEdgeModels,
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                     layoutMode: expandedGraphLayoutMode,
+                    labelDensity: expandedGraphLabelDensity,
                     focusHighlights: expandedGraphFocusHighlights,
                     emptyState: expandedGraphEmptyState,
                     selectionNavigation: expandedGraphSelectionNavigation,
