@@ -440,6 +440,98 @@ struct StoryKnowledgePanelView: View {
         selectedGraphEdge != nil || selectedGraphNode != nil
     }
 
+    private var expandedGraphSelectionOverlay: StoryKnowledgeNeighborhoodGraphView.SelectionOverlay? {
+        guard showingExpandedGraph else { return nil }
+
+        if let selectedGraphEdge {
+            let diagnostics = store.storyKnowledgeObservedRelationDiagnostics(for: selectedGraphEdge)
+            let evidencePreview = graphEvidencePreviewText(
+                store.storyKnowledgeEvidenceItems(for: selectedGraphEdge),
+                maxItems: 3
+            )
+
+            return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
+                title: store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge),
+                subtitle: selectedGraphEdge.status.rawValue.capitalized,
+                badges: [
+                    selectedGraphEdge.status.rawValue.capitalized,
+                    confidenceLabel(selectedGraphEdge.confidence)
+                ],
+                detail: selectedGraphEdge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Relation: \(selectedGraphEdge.relation.replacingOccurrences(of: "_", with: " ").capitalized)"
+                    : selectedGraphEdge.note,
+                secondaryLines: Array(diagnostics.map(\.message).prefix(2)),
+                footnote: evidencePreview.isEmpty ? nil : evidencePreview,
+                actions: [
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: isSidebarFocused(on: selectedGraphEdge) ? "Clear Pair Focus" : "Focus Pair",
+                        action: { toggleSidebarFocus(for: selectedGraphEdge) }
+                    ),
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: isRelationFiltered(to: selectedGraphEdge.relation) ? "Clear Relation Filter" : "Filter Relation",
+                        action: { toggleRelationFilter(selectedGraphEdge.relation) }
+                    )
+                ],
+                dismiss: { clearGraphSelection() }
+            )
+        }
+
+        if let selectedGraphNode {
+            let evidencePreview = graphEvidencePreviewText(
+                store.storyKnowledgeEvidenceItems(for: selectedGraphNode),
+                maxItems: 3
+            )
+
+            var secondaryLines = Array(
+                selectedGraphNodeIncidentEdges.prefix(3).map { edge in
+                    "Visible: \(store.storyKnowledgeEdgeDisplayLabel(edge))"
+                }
+            )
+            if secondaryLines.isEmpty {
+                secondaryLines = ["Kind: \(selectedGraphNode.kind.rawValue.capitalized)"]
+            }
+
+            var actions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] = [
+                StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                    title: isSidebarFocused(on: selectedGraphNode) ? "Clear Sidebar Focus" : "Focus in Sidebar",
+                    action: { toggleSidebarFocus(for: selectedGraphNode) }
+                ),
+                StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                    title: isKindFiltered(to: selectedGraphNode.kind) ? "Clear Kind Filter" : "Filter Kind",
+                    action: { toggleKindFilter(for: selectedGraphNode.kind) }
+                )
+            ]
+
+            if let compendiumID = selectedGraphNode.resolvedCompendiumID {
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Open Compendium",
+                        action: { onOpenCompendiumEntry(compendiumID) }
+                    )
+                )
+            }
+
+            return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
+                title: selectedGraphNode.name,
+                subtitle: selectedGraphNode.kind.rawValue.capitalized,
+                badges: [
+                    selectedGraphNode.kind.rawValue.capitalized,
+                    selectedGraphNode.status.rawValue.capitalized,
+                    confidenceLabel(selectedGraphNode.confidence)
+                ],
+                detail: selectedGraphNode.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "Visible relations: \(selectedGraphNodeIncidentEdges.count)"
+                    : selectedGraphNode.summary,
+                secondaryLines: secondaryLines,
+                footnote: evidencePreview.isEmpty ? nil : evidencePreview,
+                actions: actions,
+                dismiss: { clearGraphSelection() }
+            )
+        }
+
+        return nil
+    }
+
     private var graphNodeModels: [StoryKnowledgeNeighborhoodGraphView.NodeModel] {
         graphVisibleNodes.map { node in
             StoryKnowledgeNeighborhoodGraphView.NodeModel(
@@ -1066,6 +1158,7 @@ struct StoryKnowledgePanelView: View {
                 layoutMode: .neighborhood,
                 focusHighlights: [],
                 emptyState: nil,
+                selectionOverlay: nil,
                 selectedClusterKind: nil,
                 focusedClusterLink: nil,
                 focusedRelation: nil,
@@ -1171,6 +1264,7 @@ struct StoryKnowledgePanelView: View {
                     layoutMode: expandedGraphLayoutMode,
                     focusHighlights: expandedGraphFocusHighlights,
                     emptyState: expandedGraphEmptyState,
+                    selectionOverlay: expandedGraphSelectionOverlay,
                     selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
                     focusedClusterLink: activeExpandedGraphConnectionFocus.map {
                         StoryKnowledgeNeighborhoodGraphView.FocusedClusterLink(

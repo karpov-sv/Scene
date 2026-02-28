@@ -81,6 +81,24 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let action: (() -> Void)?
     }
 
+    struct SelectionAction: Identifiable {
+        let title: String
+        let action: () -> Void
+
+        var id: String { title }
+    }
+
+    struct SelectionOverlay {
+        let title: String
+        let subtitle: String?
+        let badges: [String]
+        let detail: String
+        let secondaryLines: [String]
+        let footnote: String?
+        let actions: [SelectionAction]
+        let dismiss: (() -> Void)?
+    }
+
     private struct ClusterLabel: Identifiable {
         let id: String
         let kind: StoryKnowledgeNodeKind
@@ -111,6 +129,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let layoutMode: LayoutMode
     let focusHighlights: [FocusHighlight]
     let emptyState: EmptyState?
+    let selectionOverlay: SelectionOverlay?
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
     let focusedRelation: String?
@@ -342,6 +361,13 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     .clipped()
                     .simultaneousGesture(dragGesture)
                     .simultaneousGesture(magnificationGesture)
+                    .overlay(alignment: .bottomLeading) {
+                        if let selectionOverlay {
+                            selectionOverlayCard(selectionOverlay)
+                                .padding(14)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
                     .onAppear {
                         canvasSize = geometry.size
                     }
@@ -630,6 +656,88 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         case .kindClusters:
             return clusteredLayout(in: size)
         }
+    }
+
+    private func selectionOverlayCard(_ overlay: SelectionOverlay) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(overlay.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+
+                    if let subtitle = overlay.subtitle,
+                       !subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if let dismiss = overlay.dismiss {
+                    Button(action: dismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear Selection")
+                }
+            }
+
+            if !overlay.badges.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(overlay.badges, id: \.self) { badge in
+                        scopeBadge(badge)
+                    }
+                }
+            }
+
+            Text(overlay.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !overlay.secondaryLines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(overlay.secondaryLines, id: \.self) { line in
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+
+            if let footnote = overlay.footnote,
+               !footnote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(footnote)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !overlay.actions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(overlay.actions) { action in
+                        Button(action.title, action: action.action)
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 300, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 10, y: 4)
     }
 
     private func neighborhoodLayout(in size: CGSize) -> LayoutResult {
