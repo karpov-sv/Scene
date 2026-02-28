@@ -748,6 +748,8 @@ struct StoryKnowledgePanelView: View {
                 edges: graphEdgeModels,
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 layoutMode: .neighborhood,
+                selectedClusterKind: nil,
+                onSelectClusterKind: nil,
                 selectedNodeID: $graphSelectedNodeID,
                 selectedEdgeID: $graphSelectedEdgeID
             )
@@ -807,6 +809,10 @@ struct StoryKnowledgePanelView: View {
                     edges: graphEdgeModels,
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                     layoutMode: expandedGraphLayoutMode,
+                    selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
+                    onSelectClusterKind: expandedGraphLayoutMode == .kindClusters ? { kind in
+                        toggleKindFilter(for: kind)
+                    } : nil,
                     selectedNodeID: $graphSelectedNodeID,
                     selectedEdgeID: $graphSelectedEdgeID
                 )
@@ -826,6 +832,12 @@ struct StoryKnowledgePanelView: View {
                             Text("Select a node or edge to inspect it here. The expanded canvas shares the same filters, focus, and selection model as the sidebar graph.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            if expandedGraphLayoutMode == .kindClusters {
+                                Text("Click a cluster label in the canvas to toggle that node-kind filter.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
 
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Current Graph Scope")

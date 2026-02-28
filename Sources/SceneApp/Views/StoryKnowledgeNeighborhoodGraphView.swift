@@ -58,6 +58,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private struct ClusterLabel: Identifiable {
         let id: String
+        let kind: StoryKnowledgeNodeKind
         let title: String
         let center: CGPoint
         let color: Color
@@ -82,6 +83,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let edges: [EdgeModel]
     let preferredAnchorNodeIDs: [UUID]
     let layoutMode: LayoutMode
+    let selectedClusterKind: StoryKnowledgeNodeKind?
+    let onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?
     @Binding var selectedNodeID: UUID?
     @Binding var selectedEdgeID: UUID?
 
@@ -191,7 +194,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             }
 
                             ForEach(layout.clusterLabels) { clusterLabel in
-                                clusterLabelBadge(clusterLabel)
+                                clusterLabelButton(clusterLabel)
                                     .position(x: clusterLabel.center.x, y: clusterLabel.center.y - 54)
                             }
 
@@ -619,6 +622,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             clusterLabels.append(
                 ClusterLabel(
                     id: kind.rawValue,
+                    kind: kind,
                     title: kind.rawValue.capitalized,
                     center: center,
                     color: nodeFillColor(kind: kind)
@@ -944,19 +948,46 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .allowsHitTesting(false)
     }
 
+    private func clusterLabelButton(_ clusterLabel: ClusterLabel) -> some View {
+        Button {
+            onSelectClusterKind?(clusterLabel.kind)
+        } label: {
+            clusterLabelBadge(clusterLabel)
+        }
+        .buttonStyle(.plain)
+        .disabled(onSelectClusterKind == nil)
+        .help(onSelectClusterKind == nil ? "" : clusterHelpText(for: clusterLabel))
+    }
+
     private func clusterLabelBadge(_ clusterLabel: ClusterLabel) -> some View {
-        Text(clusterLabel.title)
+        let isSelected = selectedClusterKind == clusterLabel.kind
+
+        return Text(clusterLabel.title)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(clusterLabel.color)
+            .foregroundStyle(isSelected ? Color.white : clusterLabel.color)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.94))
+            .background(
+                Group {
+                    if isSelected {
+                        clusterLabel.color
+                    } else {
+                        Color(nsColor: .windowBackgroundColor).opacity(0.94)
+                    }
+                }
+            )
             .overlay(
                 Capsule()
-                    .stroke(clusterLabel.color.opacity(0.45), lineWidth: 1)
+                    .stroke(isSelected ? clusterLabel.color : clusterLabel.color.opacity(0.45), lineWidth: isSelected ? 1.5 : 1)
             )
             .clipShape(Capsule())
-            .allowsHitTesting(false)
+    }
+
+    private func clusterHelpText(for clusterLabel: ClusterLabel) -> String {
+        if selectedClusterKind == clusterLabel.kind {
+            return "Clear \(clusterLabel.title) filter"
+        }
+        return "Filter to \(clusterLabel.title)"
     }
 
     private func legendNodeStatusSample(
