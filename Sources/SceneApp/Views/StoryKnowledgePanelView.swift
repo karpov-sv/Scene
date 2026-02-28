@@ -119,6 +119,14 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private struct GraphRelationFocus: Equatable {
+        let relation: String
+
+        var label: String {
+            "Focused relation: \(relation.replacingOccurrences(of: "_", with: " ").capitalized)"
+        }
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -141,6 +149,7 @@ struct StoryKnowledgePanelView: View {
     @State private var expandedGraphDensity: GraphDensityMode = .balanced
     @State private var expandedGraphLayoutMode: StoryKnowledgeNeighborhoodGraphView.LayoutMode = .neighborhood
     @State private var expandedGraphConnectionFocus: GraphClusterConnectionFocus?
+    @State private var expandedGraphRelationFocus: GraphRelationFocus?
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -280,12 +289,25 @@ struct StoryKnowledgePanelView: View {
         return expandedGraphConnectionFocus
     }
 
-    private var graphBaseAcceptedEdges: [StoryKnowledgeEdge] {
+    private var activeExpandedGraphRelationFocus: GraphRelationFocus? {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return nil }
+        return expandedGraphRelationFocus
+    }
+
+    private var graphConnectionFocusedAcceptedEdges: [StoryKnowledgeEdge] {
         applyExpandedConnectionFocus(to: filteredAcceptedEdges)
     }
 
-    private var graphBasePendingEdges: [StoryKnowledgeEdge] {
+    private var graphConnectionFocusedPendingEdges: [StoryKnowledgeEdge] {
         applyExpandedConnectionFocus(to: filteredPendingEdges)
+    }
+
+    private var graphBaseAcceptedEdges: [StoryKnowledgeEdge] {
+        applyExpandedRelationFocus(to: graphConnectionFocusedAcceptedEdges)
+    }
+
+    private var graphBasePendingEdges: [StoryKnowledgeEdge] {
+        applyExpandedRelationFocus(to: graphConnectionFocusedPendingEdges)
     }
 
     private var graphBaseEdges: [StoryKnowledgeEdge] {
@@ -295,7 +317,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphBaseNodes: [StoryKnowledgeNode] {
-        if activeExpandedGraphConnectionFocus != nil {
+        if activeExpandedGraphConnectionFocus != nil || activeExpandedGraphRelationFocus != nil {
             let nodeIDs = Set(graphBaseEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
             return graphCandidateNodes.filter { nodeIDs.contains($0.id) }
         }
@@ -726,12 +748,19 @@ struct StoryKnowledgePanelView: View {
         .onChange(of: expandedGraphLayoutMode, initial: false) { _, newLayoutMode in
             if newLayoutMode != .kindClusters {
                 expandedGraphConnectionFocus = nil
+                expandedGraphRelationFocus = nil
             }
         }
         .onChange(of: graphBaseEdges.map(\.id), initial: false) { _, _ in
             guard let focus = expandedGraphConnectionFocus else { return }
             if !hasGraphEdges(for: focus) {
                 expandedGraphConnectionFocus = nil
+            }
+        }
+        .onChange(of: graphConnectionFocusedAcceptedEdges.map(\.id) + graphConnectionFocusedPendingEdges.map(\.id), initial: false) { _, _ in
+            guard let focus = expandedGraphRelationFocus else { return }
+            if !hasGraphEdges(forRelation: focus.relation) {
+                expandedGraphRelationFocus = nil
             }
         }
     }
@@ -894,6 +923,12 @@ struct StoryKnowledgePanelView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    if let activeExpandedGraphRelationFocus {
+                        Text(activeExpandedGraphRelationFocus.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -924,6 +959,13 @@ struct StoryKnowledgePanelView: View {
                 if activeExpandedGraphConnectionFocus != nil {
                     Button("Clear Link Focus") {
                         expandedGraphConnectionFocus = nil
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                if activeExpandedGraphRelationFocus != nil {
+                    Button("Clear Relation Focus") {
+                        expandedGraphRelationFocus = nil
                     }
                     .buttonStyle(.borderless)
                 }
@@ -995,6 +1037,12 @@ struct StoryKnowledgePanelView: View {
 
                                 if let activeExpandedGraphConnectionFocus {
                                     Label(activeExpandedGraphConnectionFocus.label, systemImage: "point.3.filled.connected.trianglepath.dotted")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let activeExpandedGraphRelationFocus {
+                                    Label(activeExpandedGraphRelationFocus.label, systemImage: "line.3.horizontal.decrease.circle")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -1276,6 +1324,12 @@ struct StoryKnowledgePanelView: View {
                                         .textSelection(.enabled)
 
                                     Spacer(minLength: 0)
+
+                                    Button(isExpandedRelationFocused(on: relation.relation) ? "Clear Relation Focus" : "Focus Relation") {
+                                        toggleExpandedRelationFocus(relation.relation)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.small)
 
                                     Button(isRelationFiltered(to: relation.relation) ? "Clear Relation Filter" : "Filter Relation") {
                                         toggleRelationFilter(relation.relation)
@@ -1703,6 +1757,13 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private func applyExpandedRelationFocus(
+        to edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeEdge] {
+        guard let focus = activeExpandedGraphRelationFocus else { return edges }
+        return edges.filter { normalizedRelationKey($0.relation) == normalizedRelationKey(focus.relation) }
+    }
+
     private func isExpandedConnectionFocused(on summary: GraphClusterConnectionSummary) -> Bool {
         guard let focus = expandedGraphConnectionFocus else { return false }
         return focus.sourceKind == summary.sourceKind && focus.targetKind == summary.targetKind
@@ -1720,6 +1781,20 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private func isExpandedRelationFocused(on relation: String) -> Bool {
+        guard let focus = expandedGraphRelationFocus else { return false }
+        return normalizedRelationKey(focus.relation) == normalizedRelationKey(relation)
+    }
+
+    private func toggleExpandedRelationFocus(_ relation: String) {
+        if isExpandedRelationFocused(on: relation) {
+            expandedGraphRelationFocus = nil
+        } else {
+            expandedGraphRelationFocus = GraphRelationFocus(relation: relation)
+            clearGraphSelection()
+        }
+    }
+
     private func hasGraphEdges(for focus: GraphClusterConnectionFocus) -> Bool {
         graphCandidateEdges.contains { edge in
             guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
@@ -1727,6 +1802,13 @@ struct StoryKnowledgePanelView: View {
                 return false
             }
             return sourceKind == focus.sourceKind && targetKind == focus.targetKind
+        }
+    }
+
+    private func hasGraphEdges(forRelation relation: String) -> Bool {
+        let relationKey = normalizedRelationKey(relation)
+        return (graphConnectionFocusedAcceptedEdges + graphConnectionFocusedPendingEdges).contains {
+            normalizedRelationKey($0.relation) == relationKey
         }
     }
 
