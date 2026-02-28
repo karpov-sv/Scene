@@ -127,6 +127,20 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private struct GraphFocusedLinkRelationSummary: Identifiable {
+        let relation: String
+        let edgeCount: Int
+        let pendingEdgeCount: Int
+        let pairLabels: [String]
+        let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
+
+        var id: String { relation }
+
+        var displayLabel: String {
+            relation.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -290,7 +304,9 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var activeExpandedGraphRelationFocus: GraphRelationFocus? {
-        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return nil }
+        guard showingExpandedGraph,
+              expandedGraphLayoutMode == .kindClusters,
+              activeExpandedGraphConnectionFocus != nil else { return nil }
         return expandedGraphRelationFocus
     }
 
@@ -546,6 +562,47 @@ struct StoryKnowledgePanelView: View {
                 return lhs.edgeCount > rhs.edgeCount
             }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    private var activeFocusedGraphConnectionSummary: GraphClusterConnectionSummary? {
+        guard let focus = activeExpandedGraphConnectionFocus else { return nil }
+        return graphClusterConnectionSummaries.first {
+            $0.sourceKind == focus.sourceKind && $0.targetKind == focus.targetKind
+        }
+    }
+
+    private var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] {
+        guard activeExpandedGraphConnectionFocus != nil else { return [] }
+
+        let edges = graphConnectionFocusedAcceptedEdges + graphConnectionFocusedPendingEdges
+        let groupedEdges = Dictionary(grouping: edges) { normalizedRelationKey($0.relation) }
+
+        return groupedEdges.compactMap { _, relationEdges in
+            guard let firstEdge = relationEdges.first else { return nil }
+
+            let pairLabels = Array(
+                Set(relationEdges.map { store.storyKnowledgeEdgeDisplayLabel($0) })
+            )
+            .sorted { lhs, rhs in
+                lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+            }
+
+            return GraphFocusedLinkRelationSummary(
+                relation: firstEdge.relation,
+                edgeCount: relationEdges.count,
+                pendingEdgeCount: relationEdges.filter { $0.status == .inferred }.count,
+                pairLabels: Array(pairLabels.prefix(3)),
+                evidenceItems: mergedEvidenceItems(
+                    relationEdges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
+                )
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
         }
     }
 
@@ -1057,6 +1114,10 @@ struct StoryKnowledgePanelView: View {
                             if expandedGraphLayoutMode == .kindClusters, !graphClusterSummaries.isEmpty {
                                 graphClusterSummarySection
 
+                                if activeExpandedGraphConnectionFocus != nil, !graphFocusedLinkRelationSummaries.isEmpty {
+                                    graphFocusedLinkRelationSection
+                                }
+
                                 if !graphClusterConnectionSummaries.isEmpty {
                                     graphClusterConnectionSection
                                 }
@@ -1327,8 +1388,8 @@ struct StoryKnowledgePanelView: View {
 
                                     Spacer(minLength: 0)
 
-                                    Button(isExpandedRelationFocused(on: relation.relation) ? "Clear Relation Focus" : "Focus Relation") {
-                                        toggleExpandedRelationFocus(relation.relation)
+                                    Button(isExpandedRelationFocused(on: relation.relation, within: summary) ? "Clear Relation Focus" : "Focus Relation") {
+                                        toggleExpandedRelationFocus(relation.relation, within: summary)
                                     }
                                     .buttonStyle(.borderless)
                                     .controlSize(.small)
@@ -1339,6 +1400,76 @@ struct StoryKnowledgePanelView: View {
                                     .buttonStyle(.borderless)
                                     .controlSize(.small)
                                 }
+                            }
+                        }
+                    }
+
+                    if !summary.evidenceItems.isEmpty {
+                        evidenceSection(
+                            items: summary.evidenceItems,
+                            onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) }
+                        )
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var graphFocusedLinkRelationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Focused Link Relations")
+                .font(.headline)
+
+            Text("Breaks the active kind-to-kind link into relation families so you can inspect which relation is driving that connection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(graphFocusedLinkRelationSummaries) { summary in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(summary.displayLabel)
+                            .font(.subheadline.weight(.semibold))
+
+                        statusBadge("\(summary.edgeCount) edge" + (summary.edgeCount == 1 ? "" : "s"))
+
+                        if summary.pendingEdgeCount > 0 {
+                            statusBadge("\(summary.pendingEdgeCount) pending")
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(isExpandedRelationFocused(on: summary.relation, within: activeFocusedGraphConnectionSummary) ? "Clear Relation Focus" : "Focus Relation") {
+                            toggleExpandedRelationFocus(summary.relation, within: activeFocusedGraphConnectionSummary)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Button(isRelationFiltered(to: summary.relation) ? "Clear Relation Filter" : "Filter Relation") {
+                            toggleRelationFilter(summary.relation)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Spacer(minLength: 0)
+                    }
+
+                    if !summary.pairLabels.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Visible pairs")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(summary.pairLabels, id: \.self) { label in
+                                Text(label)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
                             }
                         }
                     }
@@ -1774,24 +1905,40 @@ struct StoryKnowledgePanelView: View {
     private func toggleExpandedConnectionFocus(_ summary: GraphClusterConnectionSummary) {
         if isExpandedConnectionFocused(on: summary) {
             expandedGraphConnectionFocus = nil
+            expandedGraphRelationFocus = nil
         } else {
             expandedGraphConnectionFocus = GraphClusterConnectionFocus(
                 sourceKind: summary.sourceKind,
                 targetKind: summary.targetKind
             )
+            expandedGraphRelationFocus = nil
             clearGraphSelection()
         }
     }
 
-    private func isExpandedRelationFocused(on relation: String) -> Bool {
-        guard let focus = expandedGraphRelationFocus else { return false }
+    private func isExpandedRelationFocused(
+        on relation: String,
+        within summary: GraphClusterConnectionSummary?
+    ) -> Bool {
+        guard let focus = expandedGraphRelationFocus,
+              let summary,
+              isExpandedConnectionFocused(on: summary) else { return false }
         return normalizedRelationKey(focus.relation) == normalizedRelationKey(relation)
     }
 
-    private func toggleExpandedRelationFocus(_ relation: String) {
-        if isExpandedRelationFocused(on: relation) {
+    private func toggleExpandedRelationFocus(
+        _ relation: String,
+        within summary: GraphClusterConnectionSummary?
+    ) {
+        guard let summary else { return }
+
+        if isExpandedRelationFocused(on: relation, within: summary) {
             expandedGraphRelationFocus = nil
         } else {
+            expandedGraphConnectionFocus = GraphClusterConnectionFocus(
+                sourceKind: summary.sourceKind,
+                targetKind: summary.targetKind
+            )
             expandedGraphRelationFocus = GraphRelationFocus(relation: relation)
             clearGraphSelection()
         }
