@@ -445,10 +445,17 @@ struct StoryKnowledgePanelView: View {
 
         if let selectedGraphEdge {
             let diagnostics = store.storyKnowledgeObservedRelationDiagnostics(for: selectedGraphEdge)
+            let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphEdge)
             let evidencePreview = graphEvidencePreviewText(
-                store.storyKnowledgeEvidenceItems(for: selectedGraphEdge),
+                evidenceItems,
                 maxItems: 3
             )
+            let evidenceLinks = Array(evidenceItems.prefix(2)).map { item in
+                StoryKnowledgeNeighborhoodGraphView.SelectionEvidenceLink(
+                    title: "\(item.chapterTitle) / \(item.sceneTitle)",
+                    action: { store.revealStoryKnowledgeEvidenceScene(item.sceneID) }
+                )
+            }
 
             return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
                 title: store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge),
@@ -461,6 +468,7 @@ struct StoryKnowledgePanelView: View {
                     ? "Relation: \(selectedGraphEdge.relation.replacingOccurrences(of: "_", with: " ").capitalized)"
                     : selectedGraphEdge.note,
                 secondaryLines: Array(diagnostics.map(\.message).prefix(2)),
+                evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: [
                     StoryKnowledgeNeighborhoodGraphView.SelectionAction(
@@ -477,10 +485,17 @@ struct StoryKnowledgePanelView: View {
         }
 
         if let selectedGraphNode {
+            let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphNode)
             let evidencePreview = graphEvidencePreviewText(
-                store.storyKnowledgeEvidenceItems(for: selectedGraphNode),
+                evidenceItems,
                 maxItems: 3
             )
+            let evidenceLinks = Array(evidenceItems.prefix(2)).map { item in
+                StoryKnowledgeNeighborhoodGraphView.SelectionEvidenceLink(
+                    title: "\(item.chapterTitle) / \(item.sceneTitle)",
+                    action: { store.revealStoryKnowledgeEvidenceScene(item.sceneID) }
+                )
+            }
 
             var secondaryLines = Array(
                 selectedGraphNodeIncidentEdges.prefix(3).map { edge in
@@ -523,6 +538,7 @@ struct StoryKnowledgePanelView: View {
                     ? "Visible relations: \(selectedGraphNodeIncidentEdges.count)"
                     : selectedGraphNode.summary,
                 secondaryLines: secondaryLines,
+                evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: actions,
                 dismiss: { clearGraphSelection() }

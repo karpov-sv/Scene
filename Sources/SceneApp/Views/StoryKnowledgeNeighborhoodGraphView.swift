@@ -88,12 +88,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         var id: String { title }
     }
 
+    struct SelectionEvidenceLink: Identifiable {
+        let title: String
+        let action: () -> Void
+
+        var id: String { title }
+    }
+
     struct SelectionOverlay {
         let title: String
         let subtitle: String?
         let badges: [String]
         let detail: String
         let secondaryLines: [String]
+        let evidenceLinks: [SelectionEvidenceLink]
         let footnote: String?
         let actions: [SelectionAction]
         let dismiss: (() -> Void)?
@@ -707,6 +715,21 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
+                    }
+                }
+            }
+
+            if !overlay.evidenceLinks.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Evidence")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(overlay.evidenceLinks) { link in
+                        Button(link.title, action: link.action)
+                            .buttonStyle(.link)
+                            .font(.caption2)
+                            .lineLimit(1)
                     }
                 }
             }
