@@ -102,6 +102,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     struct SelectionNavigation {
+        struct Target {
+            let id: UUID
+            let title: String
+        }
+
         enum Kind {
             case node
             case edge
@@ -109,6 +114,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
         let kind: Kind
         let title: String
+        let previousTarget: Target
+        let nextTarget: Target
         let onPrevious: () -> Void
         let onNext: () -> Void
     }
@@ -156,6 +163,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var isInteractingWithViewport = false
     @State private var hoveredNodeID: UUID?
     @State private var hoveredEdgeID: UUID?
+    @State private var previewedNavigationTarget: SelectionNavigation.Target?
 
     let nodes: [NodeModel]
     let edges: [EdgeModel]
@@ -239,6 +247,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                         .foregroundStyle(.secondary)
 
                     Button {
+                        previewedNavigationTarget = nil
                         selectionNavigation.onPrevious()
                     } label: {
                         Image(systemName: "chevron.left.circle")
@@ -254,8 +263,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             ? "Previous Node (Option-Command-Left Arrow)"
                             : "Previous Edge (Option-Command-Up Arrow)"
                     )
+                    .onHover { isHovering in
+                        previewedNavigationTarget = isHovering ? selectionNavigation.previousTarget : nil
+                    }
 
                     Button {
+                        previewedNavigationTarget = nil
                         selectionNavigation.onNext()
                     } label: {
                         Image(systemName: "chevron.right.circle")
@@ -271,6 +284,16 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             ? "Next Node (Option-Command-Right Arrow)"
                             : "Next Edge (Option-Command-Down Arrow)"
                     )
+                    .onHover { isHovering in
+                        previewedNavigationTarget = isHovering ? selectionNavigation.nextTarget : nil
+                    }
+
+                    if let previewedNavigationTarget {
+                        Text("Preview: \(previewedNavigationTarget.title)")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(1)
+                    }
                 }
 
                 Text("\(nodes.count) nodes • \(edges.count) edges")
@@ -447,6 +470,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if shouldShowOverviewMap {
+                            overviewMap(layout: layout, size: geometry.size)
+                                .padding(14)
+                        }
+                    }
                     .onAppear {
                         canvasSize = geometry.size
                     }
@@ -459,6 +488,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         }
         .onChange(of: nodes.map(\.id), initial: false) { _, _ in
             resetViewport()
+        }
+        .onChange(of: selectionNavigation?.title, initial: false) { _, _ in
+            previewedNavigationTarget = nil
         }
     }
 
@@ -577,6 +609,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     private var focusedRelationDisplayLabel: String? {
         guard let focusedRelationKey else { return nil }
         return focusedRelationKey.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var previewedNodeID: UUID? {
+        guard selectionNavigation?.kind == .node else { return nil }
+        return previewedNavigationTarget?.id
+    }
+
+    private var previewedEdgeID: UUID? {
+        guard selectionNavigation?.kind == .edge else { return nil }
+        return previewedNavigationTarget?.id
+    }
+
+    private var shouldShowOverviewMap: Bool {
+        labelDensity == .sparse && nodes.count >= 12 && canvasSize.width > 0 && canvasSize.height > 0
     }
 
     private var effectiveScale: CGFloat {
@@ -852,6 +898,85 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .shadow(color: Color.black.opacity(0.08), radius: 10, y: 4)
     }
 
+    private func overviewMap(layout: LayoutResult, size: CGSize) -> some View {
+        let mapSize = CGSize(width: 150, height: 108)
+        let positions = nodes.compactMap { layout.positions[$0.id] }
+        let bounds = expandedBounds(for: positions, nodePadding: CGSize(width: 42, height: 34))
+            ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let visibleRect = visibleContentRect(in: size)
+
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                )
+
+            ForEach(edges) { edge in
+                if let source = layout.positions[edge.sourceNodeID],
+                   let target = layout.positions[edge.targetNodeID] {
+                    Path { path in
+                        path.move(to: scaledOverviewPoint(source, bounds: bounds, size: mapSize))
+                        path.addLine(to: scaledOverviewPoint(target, bounds: bounds, size: mapSize))
+                    }
+                    .stroke(edgeColor(edge).opacity(0.3), lineWidth: 0.9)
+                }
+            }
+
+            ForEach(nodes) { node in
+                let point = scaledOverviewPoint(layout.positions[node.id] ?? .zero, bounds: bounds, size: mapSize)
+                Circle()
+                    .fill(overviewNodeColor(node))
+                    .frame(width: previewedNodeID == node.id || selectedNodeID == node.id ? 7 : 5,
+                           height: previewedNodeID == node.id || selectedNodeID == node.id ? 7 : 5)
+                    .position(point)
+            }
+
+            Rectangle()
+                .stroke(Color.accentColor, lineWidth: 1)
+                .background(Color.accentColor.opacity(0.08))
+                .frame(
+                    width: max(14, visibleRect.width / max(bounds.width, 1) * mapSize.width),
+                    height: max(12, visibleRect.height / max(bounds.height, 1) * mapSize.height)
+                )
+                .position(
+                    x: scaledOverviewPoint(CGPoint(x: visibleRect.midX, y: visibleRect.midY), bounds: bounds, size: mapSize).x,
+                    y: scaledOverviewPoint(CGPoint(x: visibleRect.midX, y: visibleRect.midY), bounds: bounds, size: mapSize).y
+                )
+        }
+        .frame(width: mapSize.width, height: mapSize.height)
+        .overlay(alignment: .bottomLeading) {
+            Text("Overview")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(8)
+        }
+    }
+
+    private func scaledOverviewPoint(_ point: CGPoint, bounds: CGRect, size: CGSize) -> CGPoint {
+        CGPoint(
+            x: (point.x - bounds.minX) / max(bounds.width, 1) * size.width,
+            y: (point.y - bounds.minY) / max(bounds.height, 1) * size.height
+        )
+    }
+
+    private func visibleContentRect(in size: CGSize) -> CGRect {
+        CGRect(
+            x: (0 - effectiveOffset.width) / effectiveScale,
+            y: (0 - effectiveOffset.height) / effectiveScale,
+            width: size.width / effectiveScale,
+            height: size.height / effectiveScale
+        )
+    }
+
+    private func overviewNodeColor(_ node: NodeModel) -> Color {
+        if selectedNodeID == node.id || previewedNodeID == node.id {
+            return .accentColor
+        }
+        return nodeFillColor(node)
+    }
+
     private func neighborhoodLayout(in size: CGSize) -> LayoutResult {
         let sortedNodes = nodes.sorted { lhs, rhs in
             lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
@@ -1120,6 +1245,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func nodeBubble(_ node: NodeModel) -> some View {
         let isSelected = selectedNodeID == node.id
+        let isPreviewed = previewedNodeID == node.id
         let showsTitle = labelDensity != .sparse || isSelected
         let showsSubtitle = labelDensity == .standard || isSelected
         let showsStatus = labelDensity != .sparse || isSelected
@@ -1163,10 +1289,16 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .padding(.horizontal, labelDensity == .sparse && !isSelected ? 6 : 10)
         .padding(.vertical, labelDensity == .sparse && !isSelected ? 6 : 8)
         .frame(width: bubbleWidth)
-        .background(nodeFillColor(node).opacity(selectedNodeID == node.id ? 0.28 : 0.18))
+        .background(nodeFillColor(node).opacity(isSelected ? 0.28 : (isPreviewed ? 0.24 : 0.18)))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(selectionRingColor(node), lineWidth: selectedNodeID == node.id ? 2 : 1)
+                .stroke(
+                    selectionRingColor(node),
+                    style: StrokeStyle(
+                        lineWidth: isSelected || isPreviewed ? 2 : 1,
+                        dash: isPreviewed && !isSelected ? [4, 3] : []
+                    )
+                )
         )
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -1217,6 +1349,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if selectedNodeID == node.id {
             return .accentColor
         }
+        if previewedNodeID == node.id {
+            return .accentColor
+        }
         if node.status == .canonical {
             return nodeFillColor(node)
         }
@@ -1225,6 +1360,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func edgeColor(_ edge: EdgeModel) -> Color {
         if selectedEdgeID == edge.id {
+            return .accentColor
+        }
+        if previewedEdgeID == edge.id {
             return .accentColor
         }
         if isFocusedRelationEdge(edge) {
@@ -1240,6 +1378,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if focusedRelationKey != nil {
             if let selectedEdgeID {
                 return edge.id == selectedEdgeID ? 1 : 0.94
+            }
+            if let previewedEdgeID {
+                return edge.id == previewedEdgeID ? 1 : 0.8
             }
             if let selectedNodeID {
                 let touchesSelectedNode = edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID
@@ -1258,6 +1399,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 }
                 return isFocused ? 0.92 : fallback
             }
+            if let previewedEdgeID {
+                if edge.id == previewedEdgeID {
+                    return 1
+                }
+                return isFocused ? 0.88 : fallback
+            }
             if let selectedNodeID {
                 let touchesSelectedNode = edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID
                 if touchesSelectedNode {
@@ -1270,6 +1417,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
         if let selectedEdgeID {
             return edge.id == selectedEdgeID ? 1 : 0.22
+        }
+        if let previewedEdgeID {
+            return edge.id == previewedEdgeID ? 1 : 0.28
         }
         guard let selectedNodeID else {
             if layoutMode == .kindClusters {
@@ -1285,8 +1435,15 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
            let edge = edges.first(where: { $0.id == selectedEdgeID }) {
             return edge.sourceNodeID == nodeID || edge.targetNodeID == nodeID ? 1 : 0.3
         }
+        if let previewedEdgeID,
+           let edge = edges.first(where: { $0.id == previewedEdgeID }) {
+            return edge.sourceNodeID == nodeID || edge.targetNodeID == nodeID ? 1 : 0.36
+        }
         guard let selectedNodeID else { return 1 }
         if nodeID == selectedNodeID {
+            return 1
+        }
+        if let previewedNodeID, nodeID == previewedNodeID {
             return 1
         }
         let isAdjacent = edges.contains { edge in
@@ -1306,8 +1463,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if let selectedEdgeID {
             return edge.id == selectedEdgeID ? 1 : 0.5
         }
+        if let previewedEdgeID {
+            return edge.id == previewedEdgeID ? 1 : 0.55
+        }
         if let selectedNodeID {
             return edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID ? 0.95 : 0.35
+        }
+        if let previewedNodeID {
+            return edge.sourceNodeID == previewedNodeID || edge.targetNodeID == previewedNodeID ? 0.95 : 0.4
         }
         return 0.75
     }
@@ -1323,6 +1486,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     private func edgeLineWidth(_ edge: EdgeModel) -> CGFloat {
         if selectedEdgeID == edge.id {
             return 3.6
+        }
+        if previewedEdgeID == edge.id {
+            return 3.2
         }
         if isFocusedRelationEdge(edge) {
             return 3.2
@@ -1488,19 +1654,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         Group {
             if shouldShowEdgeLabel(for: edge) {
                 let isFocusedRelation = isFocusedRelationEdge(edge)
+                let isPreviewed = previewedEdgeID == edge.id
                 Text(edge.relation.replacingOccurrences(of: "_", with: " "))
                     .font(.caption2)
-                    .foregroundStyle((selectedEdgeID == edge.id || isFocusedRelation) ? Color.accentColor : Color.secondary)
+                    .foregroundStyle((selectedEdgeID == edge.id || isFocusedRelation || isPreviewed) ? Color.accentColor : Color.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
-                        (selectedEdgeID == edge.id || isFocusedRelation)
+                        (selectedEdgeID == edge.id || isFocusedRelation || isPreviewed)
                             ? Color.accentColor.opacity(0.12)
                             : Color(nsColor: .windowBackgroundColor).opacity(0.92)
                     )
                     .overlay(
                         Capsule()
-                            .stroke((selectedEdgeID == edge.id || isFocusedRelation) ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1)
+                            .stroke((selectedEdgeID == edge.id || isFocusedRelation || isPreviewed) ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1)
                     )
                     .clipShape(Capsule())
             } else {
@@ -1519,8 +1686,15 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if selectedEdgeID == edge.id {
             return true
         }
+        if previewedEdgeID == edge.id {
+            return true
+        }
         if let selectedNodeID,
            edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID {
+            return true
+        }
+        if let previewedNodeID,
+           edge.sourceNodeID == previewedNodeID || edge.targetNodeID == previewedNodeID {
             return true
         }
         if isFocusedRelationEdge(edge) {

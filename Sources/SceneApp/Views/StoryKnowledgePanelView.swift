@@ -166,6 +166,8 @@ struct StoryKnowledgePanelView: View {
     @State private var expandedGraphLayoutMode: StoryKnowledgeNeighborhoodGraphView.LayoutMode = .neighborhood
     @State private var expandedGraphConnectionFocus: GraphClusterConnectionFocus?
     @State private var expandedGraphRelationFocus: GraphRelationFocus?
+    @State private var expandedGraphCollapsedKinds: Set<StoryKnowledgeNodeKind> = []
+    @State private var expandedGraphIsolatedKind: StoryKnowledgeNodeKind?
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -317,6 +319,20 @@ struct StoryKnowledgePanelView: View {
         return expandedGraphConnectionFocus
     }
 
+    private var activeExpandedGraphCollapsedKinds: Set<StoryKnowledgeNodeKind> {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return [] }
+        return expandedGraphCollapsedKinds
+    }
+
+    private var activeExpandedGraphIsolatedKind: StoryKnowledgeNodeKind? {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return nil }
+        return expandedGraphIsolatedKind
+    }
+
+    private var hasExpandedGraphClusterCanvasScope: Bool {
+        activeExpandedGraphIsolatedKind != nil || !activeExpandedGraphCollapsedKinds.isEmpty
+    }
+
     private var activeExpandedGraphRelationFocus: GraphRelationFocus? {
         guard showingExpandedGraph,
               expandedGraphLayoutMode == .kindClusters,
@@ -324,20 +340,36 @@ struct StoryKnowledgePanelView: View {
         return expandedGraphRelationFocus
     }
 
+    private var graphClusterScopedAcceptedEdges: [StoryKnowledgeEdge] {
+        applyExpandedClusterCanvasScope(to: filteredAcceptedEdges)
+    }
+
+    private var graphClusterScopedPendingEdges: [StoryKnowledgeEdge] {
+        applyExpandedClusterCanvasScope(to: filteredPendingEdges)
+    }
+
+    private var graphClusterScopedAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedClusterCanvasScope(to: filteredAcceptedEdgesIgnoringSearch)
+    }
+
+    private var graphClusterScopedPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedClusterCanvasScope(to: filteredPendingEdgesIgnoringSearch)
+    }
+
     private var graphConnectionFocusedAcceptedEdges: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: filteredAcceptedEdges)
+        applyExpandedConnectionFocus(to: graphClusterScopedAcceptedEdges)
     }
 
     private var graphConnectionFocusedPendingEdges: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: filteredPendingEdges)
+        applyExpandedConnectionFocus(to: graphClusterScopedPendingEdges)
     }
 
     private var graphConnectionFocusedAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: filteredAcceptedEdgesIgnoringSearch)
+        applyExpandedConnectionFocus(to: graphClusterScopedAcceptedEdgesIgnoringSearch)
     }
 
     private var graphConnectionFocusedPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: filteredPendingEdgesIgnoringSearch)
+        applyExpandedConnectionFocus(to: graphClusterScopedPendingEdgesIgnoringSearch)
     }
 
     private var graphConnectionVisibleEdges: [StoryKnowledgeEdge] {
@@ -375,7 +407,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphBaseNodes: [StoryKnowledgeNode] {
-        if activeExpandedGraphConnectionFocus != nil || activeExpandedGraphRelationFocus != nil {
+        if activeExpandedGraphConnectionFocus != nil || activeExpandedGraphRelationFocus != nil || hasExpandedGraphClusterCanvasScope {
             let nodeIDs = Set(graphBaseEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
             return graphCandidateNodes.filter { nodeIDs.contains($0.id) }
         }
@@ -501,9 +533,13 @@ struct StoryKnowledgePanelView: View {
         if let selectedGraphNode,
            graphNavigableNodes.count > 1,
            let currentIndex = graphNavigableNodes.firstIndex(where: { $0.id == selectedGraphNode.id }) {
+            let previousNode = graphNavigableNodes[wrappedIndex(from: currentIndex, step: -1, count: graphNavigableNodes.count)]
+            let nextNode = graphNavigableNodes[wrappedIndex(from: currentIndex, step: 1, count: graphNavigableNodes.count)]
             return StoryKnowledgeNeighborhoodGraphView.SelectionNavigation(
                 kind: .node,
                 title: "Node \(currentIndex + 1) of \(graphNavigableNodes.count)",
+                previousTarget: .init(id: previousNode.id, title: previousNode.name),
+                nextTarget: .init(id: nextNode.id, title: nextNode.name),
                 onPrevious: { cycleVisibleNodeSelection(step: -1) },
                 onNext: { cycleVisibleNodeSelection(step: 1) }
             )
@@ -512,9 +548,13 @@ struct StoryKnowledgePanelView: View {
         if let selectedGraphEdge,
            graphNavigableEdges.count > 1,
            let currentIndex = graphNavigableEdges.firstIndex(where: { $0.id == selectedGraphEdge.id }) {
+            let previousEdge = graphNavigableEdges[wrappedIndex(from: currentIndex, step: -1, count: graphNavigableEdges.count)]
+            let nextEdge = graphNavigableEdges[wrappedIndex(from: currentIndex, step: 1, count: graphNavigableEdges.count)]
             return StoryKnowledgeNeighborhoodGraphView.SelectionNavigation(
                 kind: .edge,
                 title: "Edge \(currentIndex + 1) of \(graphNavigableEdges.count)",
+                previousTarget: .init(id: previousEdge.id, title: store.storyKnowledgeEdgeDisplayLabel(previousEdge)),
+                nextTarget: .init(id: nextEdge.id, title: store.storyKnowledgeEdgeDisplayLabel(nextEdge)),
                 onPrevious: { cycleVisibleEdgeSelection(step: -1) },
                 onNext: { cycleVisibleEdgeSelection(step: 1) }
             )
@@ -1293,6 +1333,8 @@ struct StoryKnowledgePanelView: View {
             if newLayoutMode != .kindClusters {
                 expandedGraphConnectionFocus = nil
                 expandedGraphRelationFocus = nil
+                expandedGraphCollapsedKinds = []
+                expandedGraphIsolatedKind = nil
             }
         }
         .onChange(of: graphBaseEdges.map(\.id), initial: false) { _, _ in
@@ -1305,6 +1347,13 @@ struct StoryKnowledgePanelView: View {
             guard let focus = expandedGraphRelationFocus else { return }
             if !hasGraphEdges(forRelation: focus.relation) {
                 expandedGraphRelationFocus = nil
+            }
+        }
+        .onChange(of: graphCandidateNodes.map(\.kind), initial: false) { _, _ in
+            let availableKinds = Set(graphCandidateNodes.map(\.kind))
+            expandedGraphCollapsedKinds = expandedGraphCollapsedKinds.intersection(availableKinds)
+            if let expandedGraphIsolatedKind, !availableKinds.contains(expandedGraphIsolatedKind) {
+                self.expandedGraphIsolatedKind = nil
             }
         }
     }
@@ -1493,6 +1542,22 @@ struct StoryKnowledgePanelView: View {
                             )
                         )
                     }
+
+                    if let activeExpandedGraphIsolatedKind {
+                        graphFocusScopeLine(
+                            label: "Isolated cluster: \(activeExpandedGraphIsolatedKind.rawValue.capitalized)",
+                            systemImage: "scope",
+                            badges: ["local cluster scope"]
+                        )
+                    }
+
+                    if !activeExpandedGraphCollapsedKinds.isEmpty {
+                        graphFocusScopeLine(
+                            label: "Collapsed clusters: \(activeExpandedGraphCollapsedKinds.map(\.rawValue.capitalized).sorted().joined(separator: ", "))",
+                            systemImage: "eye.slash",
+                            badges: ["\(activeExpandedGraphCollapsedKinds.count) hidden"]
+                        )
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -1530,6 +1595,13 @@ struct StoryKnowledgePanelView: View {
                 if activeExpandedGraphRelationFocus != nil {
                     Button("Clear Relation Focus") {
                         expandedGraphRelationFocus = nil
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                if hasExpandedGraphClusterCanvasScope {
+                    Button("Clear Cluster Scope") {
+                        clearExpandedClusterCanvasScope()
                     }
                     .buttonStyle(.borderless)
                 }
@@ -1630,14 +1702,37 @@ struct StoryKnowledgePanelView: View {
                                         )
                                     )
                                 }
+
+                                if let activeExpandedGraphIsolatedKind {
+                                    graphFocusScopeLine(
+                                        label: "Isolated cluster: \(activeExpandedGraphIsolatedKind.rawValue.capitalized)",
+                                        systemImage: "scope",
+                                        badges: ["local cluster scope"]
+                                    )
+                                }
+
+                                if !activeExpandedGraphCollapsedKinds.isEmpty {
+                                    graphFocusScopeLine(
+                                        label: "Collapsed clusters: \(activeExpandedGraphCollapsedKinds.map(\.rawValue.capitalized).sorted().joined(separator: ", "))",
+                                        systemImage: "eye.slash",
+                                        badges: ["\(activeExpandedGraphCollapsedKinds.count) hidden"]
+                                    )
+                                }
                             }
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                            if expandedGraphLayoutMode == .kindClusters, !graphClusterSummaries.isEmpty {
-                                graphClusterSummarySection
+                            if expandedGraphLayoutMode == .kindClusters,
+                               (!graphClusterSummaries.isEmpty || !activeExpandedGraphCollapsedKinds.isEmpty) {
+                                if !activeExpandedGraphCollapsedKinds.isEmpty {
+                                    collapsedClusterSection
+                                }
+
+                                if !graphClusterSummaries.isEmpty {
+                                    graphClusterSummarySection
+                                }
 
                                 if activeExpandedGraphConnectionFocus != nil, !graphFocusedLinkRelationSummaries.isEmpty {
                                     graphFocusedLinkRelationSection
@@ -1823,6 +1918,18 @@ struct StoryKnowledgePanelView: View {
                         }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
+
+                        Button(isExpandedClusterIsolated(summary.kind) ? "Clear Isolate" : "Isolate") {
+                            toggleExpandedClusterIsolation(summary.kind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Button(isExpandedClusterCollapsed(summary.kind) ? "Show Cluster" : "Collapse") {
+                            toggleExpandedClusterCollapse(summary.kind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
                     }
 
                     Text("\(summary.canonicalNodeCount) canonical • \(summary.incidentEdgeCount) visible relations • \(summary.crossKindEdgeCount) cross-cluster")
@@ -1843,6 +1950,38 @@ struct StoryKnowledgePanelView: View {
                             }
                         }
                     }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    private var collapsedClusterSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Collapsed Clusters")
+                .font(.headline)
+
+            Text("Clusters hidden only in the expanded grouped canvas. Restore them here without changing the global graph filters.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(activeExpandedGraphCollapsedKinds).sorted { $0.rawValue < $1.rawValue }, id: \.rawValue) { kind in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(kind.rawValue.capitalized)
+                        .font(.subheadline.weight(.semibold))
+
+                    statusBadge("hidden")
+
+                    Spacer(minLength: 0)
+
+                    Button("Show Cluster") {
+                        toggleExpandedClusterCollapse(kind)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2756,6 +2895,62 @@ struct StoryKnowledgePanelView: View {
             }
         }
         store.setStoryKnowledgePanelNodeKindFilter(nextFilter)
+    }
+
+    private func applyExpandedClusterCanvasScope(
+        to edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeEdge] {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return edges }
+
+        return edges.filter { edge in
+            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                return false
+            }
+
+            if activeExpandedGraphCollapsedKinds.contains(sourceKind) || activeExpandedGraphCollapsedKinds.contains(targetKind) {
+                return false
+            }
+
+            if let isolatedKind = activeExpandedGraphIsolatedKind {
+                return sourceKind == isolatedKind || targetKind == isolatedKind
+            }
+
+            return true
+        }
+    }
+
+    private func isExpandedClusterCollapsed(_ kind: StoryKnowledgeNodeKind) -> Bool {
+        activeExpandedGraphCollapsedKinds.contains(kind)
+    }
+
+    private func isExpandedClusterIsolated(_ kind: StoryKnowledgeNodeKind) -> Bool {
+        activeExpandedGraphIsolatedKind == kind
+    }
+
+    private func toggleExpandedClusterCollapse(_ kind: StoryKnowledgeNodeKind) {
+        if expandedGraphCollapsedKinds.contains(kind) {
+            expandedGraphCollapsedKinds.remove(kind)
+        } else {
+            expandedGraphCollapsedKinds.insert(kind)
+            if expandedGraphIsolatedKind == kind {
+                expandedGraphIsolatedKind = nil
+            }
+        }
+    }
+
+    private func toggleExpandedClusterIsolation(_ kind: StoryKnowledgeNodeKind) {
+        if expandedGraphIsolatedKind == kind {
+            expandedGraphIsolatedKind = nil
+        } else {
+            expandedGraphIsolatedKind = kind
+            expandedGraphCollapsedKinds.remove(kind)
+        }
+    }
+
+    private func clearExpandedClusterCanvasScope() {
+        expandedGraphCollapsedKinds = []
+        expandedGraphIsolatedKind = nil
     }
 
     private func isRelationFiltered(to relation: String) -> Bool {
