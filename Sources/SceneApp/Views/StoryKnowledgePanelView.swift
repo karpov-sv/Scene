@@ -70,6 +70,25 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private struct GraphClusterRelationSummary: Identifiable {
+        let relation: String
+        let count: Int
+
+        var id: String { relation }
+    }
+
+    private struct GraphClusterSummary: Identifiable {
+        let kind: StoryKnowledgeNodeKind
+        let nodeCount: Int
+        let canonicalNodeCount: Int
+        let pendingNodeCount: Int
+        let incidentEdgeCount: Int
+        let crossKindEdgeCount: Int
+        let topRelations: [GraphClusterRelationSummary]
+
+        var id: String { kind.rawValue }
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -357,6 +376,51 @@ struct StoryKnowledgePanelView: View {
         }
 
         return "Showing \(visibleNodeCount) of \(totalNodeCount) filtered nodes • \(visibleEdgeCount) of \(totalEdgeCount) filtered edges"
+    }
+
+    private var graphClusterSummaries: [GraphClusterSummary] {
+        let visibleNodes = graphVisibleNodes
+        let visibleEdges = graphVisibleEdges
+        let nodesByKind = Dictionary(grouping: visibleNodes) { $0.kind }
+
+        return StoryKnowledgeNodeKind.allCases.compactMap { kind in
+            let nodes = nodesByKind[kind] ?? []
+            guard !nodes.isEmpty else { return nil }
+
+            let nodeIDs = Set(nodes.map(\.id))
+            let incidentEdges = visibleEdges.filter { edge in
+                nodeIDs.contains(edge.sourceNodeID) || nodeIDs.contains(edge.targetNodeID)
+            }
+            let crossKindEdgeCount = incidentEdges.filter { edge in
+                guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                      let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                    return false
+                }
+                return sourceKind != targetKind
+            }
+            .count
+
+            let topRelations = Dictionary(grouping: incidentEdges) { edge in
+                store.storyKnowledgeEdgeDisplayLabel(edge)
+            }
+            .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
+            .sorted { lhs, rhs in
+                if lhs.count != rhs.count {
+                    return lhs.count > rhs.count
+                }
+                return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+            }
+
+            return GraphClusterSummary(
+                kind: kind,
+                nodeCount: nodes.count,
+                canonicalNodeCount: nodes.filter { $0.status == .canonical }.count,
+                pendingNodeCount: nodes.filter { $0.status == .inferred }.count,
+                incidentEdgeCount: incidentEdges.count,
+                crossKindEdgeCount: crossKindEdgeCount,
+                topRelations: Array(topRelations.prefix(3))
+            )
+        }
     }
 
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
@@ -786,6 +850,10 @@ struct StoryKnowledgePanelView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                            if expandedGraphLayoutMode == .kindClusters, !graphClusterSummaries.isEmpty {
+                                graphClusterSummarySection
+                            }
                         }
                     }
                     .padding(16)
@@ -930,6 +998,63 @@ struct StoryKnowledgePanelView: View {
                 if !evidenceItems.isEmpty {
                     evidenceSection(items: evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
                 }
+            }
+        }
+    }
+
+    private var graphClusterSummarySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Visible Clusters")
+                .font(.headline)
+
+            Text("Summarizes the currently rendered grouped canvas by node kind. Use these cards to narrow the graph to one cluster when needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(graphClusterSummaries) { summary in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(summary.kind.rawValue.capitalized)
+                            .font(.subheadline.weight(.semibold))
+
+                        statusBadge("\(summary.nodeCount) node" + (summary.nodeCount == 1 ? "" : "s"))
+
+                        if summary.pendingNodeCount > 0 {
+                            statusBadge("\(summary.pendingNodeCount) pending")
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Button(isKindFiltered(to: summary.kind) ? "Clear Kind Filter" : "Filter Kind") {
+                            toggleKindFilter(for: summary.kind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                    }
+
+                    Text("\(summary.canonicalNodeCount) canonical • \(summary.incidentEdgeCount) visible relations • \(summary.crossKindEdgeCount) cross-cluster")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if !summary.topRelations.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Top relations")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(summary.topRelations) { relation in
+                                Text("\(relation.relation) • \(relation.count)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
     }
