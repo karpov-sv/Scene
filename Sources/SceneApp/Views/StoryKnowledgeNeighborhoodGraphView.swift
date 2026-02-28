@@ -58,6 +58,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .keyboardShortcut("-", modifiers: [.command])
+                .help("Zoom Out (Command--)")
 
                 Text("\(zoomPercentage)%")
                     .font(.caption)
@@ -73,6 +75,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .keyboardShortcut("=", modifiers: [.command])
+                .help("Zoom In (Command-Plus)")
 
                 Button(fitButtonTitle) {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -82,6 +86,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .buttonStyle(.borderless)
                 .controlSize(.small)
                 .disabled(nodes.isEmpty)
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .help("\(fitButtonTitle) (Shift-Command-F)")
 
                 Button("Reset View") {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -90,15 +96,19 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .keyboardShortcut("0", modifiers: [.command])
+                .help("Reset View (Command-0)")
 
                 Text("\(nodes.count) nodes • \(edges.count) edges")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Text("Visualizes the current filtered knowledge neighborhood. Select a node to anchor and inspect its local graph. Drag to pan and pinch to zoom.")
+            Text("Visualizes the current filtered knowledge neighborhood. Select a node to anchor and inspect its local graph. Drag to pan, pinch to zoom, or use Command--, Command-Plus, Shift-Command-F, and Command-0.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            legendView
 
             if nodes.isEmpty {
                 ContentUnavailableView(
@@ -244,6 +254,59 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .onChange(of: nodes.map(\.id), initial: false) { _, _ in
             resetViewport()
         }
+    }
+
+    private var legendView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                Text("Legend")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                legendNodeStatusSample(
+                    title: "Canonical node",
+                    status: .canonical
+                )
+
+                legendNodeStatusSample(
+                    title: "Suggested node",
+                    status: .inferred
+                )
+
+                Divider()
+                    .frame(height: 16)
+
+                legendNodeKindSample(
+                    title: "Character",
+                    kind: .character
+                )
+
+                legendNodeKindSample(
+                    title: "Location",
+                    kind: .location
+                )
+
+                legendNodeKindSample(
+                    title: "Object",
+                    kind: .object
+                )
+
+                Divider()
+                    .frame(height: 16)
+
+                legendEdgeSample(
+                    title: "Canonical edge",
+                    status: .canonical
+                )
+
+                legendEdgeSample(
+                    title: "Suggested edge",
+                    status: .inferred
+                )
+            }
+            .padding(.vertical, 2)
+        }
+        .scrollClipDisabled()
     }
 
     private var effectiveScale: CGFloat {
@@ -623,7 +686,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func nodeFillColor(_ node: NodeModel) -> Color {
-        switch node.kind {
+        nodeFillColor(kind: node.kind)
+    }
+
+    private func nodeFillColor(kind: StoryKnowledgeNodeKind) -> Color {
+        switch kind {
         case .character:
             return .orange
         case .location:
@@ -741,5 +808,67 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(color: Color.black.opacity(0.08), radius: 6, y: 2)
         .allowsHitTesting(false)
+    }
+
+    private func legendNodeStatusSample(
+        title: String,
+        status: StoryKnowledgeRecordStatus
+    ) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(nodeFillColor(kind: .character).opacity(0.2))
+                .frame(width: 18, height: 14)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(
+                            status == .canonical ? nodeFillColor(kind: .character) : Color(nsColor: .separatorColor),
+                            lineWidth: 1.5
+                        )
+                )
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func legendNodeKindSample(
+        title: String,
+        kind: StoryKnowledgeNodeKind
+    ) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(nodeFillColor(kind: kind))
+                .frame(width: 10, height: 10)
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func legendEdgeSample(
+        title: String,
+        status: StoryKnowledgeRecordStatus
+    ) -> some View {
+        HStack(spacing: 6) {
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: 6))
+                path.addLine(to: CGPoint(x: 18, y: 6))
+            }
+            .stroke(
+                status == .canonical ? Color.accentColor : Color.secondary,
+                style: StrokeStyle(
+                    lineWidth: 2,
+                    lineCap: .round,
+                    dash: status == .inferred ? [4, 3] : []
+                )
+            )
+            .frame(width: 18, height: 12)
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 }
