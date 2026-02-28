@@ -215,6 +215,18 @@ struct StoryKnowledgePanelView: View {
         })
     }
 
+    private var filteredAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        sort(edges: acceptedEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
+        })
+    }
+
+    private var filteredPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        sort(edges: store.storyKnowledgePendingReviewEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
+        })
+    }
+
     private var hasAnyVisibleResults: Bool {
         !filteredConflictItems.isEmpty
             || !filteredAcceptedNodes.isEmpty
@@ -320,6 +332,14 @@ struct StoryKnowledgePanelView: View {
         applyExpandedConnectionFocus(to: filteredPendingEdges)
     }
 
+    private var graphConnectionFocusedAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedConnectionFocus(to: filteredAcceptedEdgesIgnoringSearch)
+    }
+
+    private var graphConnectionFocusedPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedConnectionFocus(to: filteredPendingEdgesIgnoringSearch)
+    }
+
     private var graphConnectionVisibleEdges: [StoryKnowledgeEdge] {
         let accepted = visibilityFilter == .pending ? [] : graphConnectionFocusedAcceptedEdges
         let pending = visibilityFilter == .accepted ? [] : graphConnectionFocusedPendingEdges
@@ -334,9 +354,23 @@ struct StoryKnowledgePanelView: View {
         applyExpandedRelationFocus(to: graphConnectionFocusedPendingEdges)
     }
 
+    private var graphBaseAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedRelationFocus(to: graphConnectionFocusedAcceptedEdgesIgnoringSearch)
+    }
+
+    private var graphBasePendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        applyExpandedRelationFocus(to: graphConnectionFocusedPendingEdgesIgnoringSearch)
+    }
+
     private var graphBaseEdges: [StoryKnowledgeEdge] {
         let accepted = visibilityFilter == .pending ? [] : graphBaseAcceptedEdges
         let pending = visibilityFilter == .accepted ? [] : graphBasePendingEdges
+        return accepted + pending
+    }
+
+    private var graphBaseEdgesIgnoringSearch: [StoryKnowledgeEdge] {
+        let accepted = visibilityFilter == .pending ? [] : graphBaseAcceptedEdgesIgnoringSearch
+        let pending = visibilityFilter == .accepted ? [] : graphBasePendingEdgesIgnoringSearch
         return accepted + pending
     }
 
@@ -748,6 +782,29 @@ struct StoryKnowledgePanelView: View {
 
     private var expandedGraphEmptyState: StoryKnowledgeNeighborhoodGraphView.EmptyState? {
         guard showingExpandedGraph, graphVisibleNodes.isEmpty else { return nil }
+
+        let searchText = store.storyKnowledgePanelState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !searchText.isEmpty, !graphBaseEdgesIgnoringSearch.isEmpty {
+            if let relationFocus = activeExpandedGraphRelationFocus {
+                return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                    title: "Focused Relation Hidden by Search",
+                    systemImage: "magnifyingglass",
+                    description: "\(relationFocus.label) still has edges in the active grouped scope, but the current search for \"\(searchText)\" filters them out. Clear the search to render that relation again.",
+                    actionTitle: "Clear Search",
+                    action: { store.setStoryKnowledgePanelSearchText("") }
+                )
+            }
+
+            if let connectionFocus = activeExpandedGraphConnectionFocus {
+                return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                    title: "Focused Link Hidden by Search",
+                    systemImage: "magnifyingglass",
+                    description: "\(connectionFocus.label) still has edges in the active grouped scope, but the current search for \"\(searchText)\" filters them out. Clear the search to bring that grouped link back into view.",
+                    actionTitle: "Clear Search",
+                    action: { store.setStoryKnowledgePanelSearchText("") }
+                )
+            }
+        }
 
         if let relationFocus = activeExpandedGraphRelationFocus {
             switch visibilityFilter {
