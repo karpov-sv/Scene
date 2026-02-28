@@ -90,6 +90,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let layoutMode: LayoutMode
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
+    let focusedRelation: String?
     let onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?
     @Binding var selectedNodeID: UUID?
     @Binding var selectedEdgeID: UUID?
@@ -154,6 +155,16 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 Text("\(nodes.count) nodes • \(edges.count) edges")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let focusedRelationDisplayLabel {
+                    Text("Rel: \(focusedRelationDisplayLabel)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(Capsule())
+                }
             }
 
             Text(layoutMode.graphDescription)
@@ -366,10 +377,45 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     title: "Suggested edge",
                     status: .inferred
                 )
+
+                if focusedClusterLink != nil || focusedRelationKey != nil {
+                    Divider()
+                        .frame(height: 16)
+                }
+
+                if focusedClusterLink != nil {
+                    legendFocusedClusterSample(
+                        title: "Source cluster",
+                        fillColor: .accentColor
+                    )
+
+                    legendFocusedClusterSample(
+                        title: "Target cluster",
+                        fillColor: Color.accentColor.opacity(0.14),
+                        strokeColor: .accentColor
+                    )
+                }
+
+                if focusedRelationKey != nil {
+                    legendFocusedRelationSample(title: "Focused relation")
+                }
             }
             .padding(.vertical, 2)
         }
         .scrollClipDisabled()
+    }
+
+    private var focusedRelationKey: String? {
+        guard let focusedRelation,
+              !focusedRelation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return normalizedRelationKey(focusedRelation)
+    }
+
+    private var focusedRelationDisplayLabel: String? {
+        guard let focusedRelationKey else { return nil }
+        return focusedRelationKey.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private var effectiveScale: CGFloat {
@@ -872,6 +918,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         if selectedEdgeID == edge.id {
             return .accentColor
         }
+        if isFocusedRelationEdge(edge) {
+            return .accentColor
+        }
         if isFocusedClusterLinkEdge(edge) {
             return .accentColor
         }
@@ -879,6 +928,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func edgeOpacity(_ edge: EdgeModel) -> Double {
+        if focusedRelationKey != nil {
+            if let selectedEdgeID {
+                return edge.id == selectedEdgeID ? 1 : 0.94
+            }
+            if let selectedNodeID {
+                let touchesSelectedNode = edge.sourceNodeID == selectedNodeID || edge.targetNodeID == selectedNodeID
+                return touchesSelectedNode ? 1 : 0.72
+            }
+            return 0.96
+        }
+
         if focusedClusterLink != nil {
             let isFocused = isFocusedClusterLinkEdge(edge)
             let fallback = layoutMode == .kindClusters ? 0.08 : 0.16
@@ -928,6 +988,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func edgeSelectionOpacity(_ edge: EdgeModel) -> Double {
+        if focusedRelationKey != nil {
+            return isFocusedRelationEdge(edge) ? 1 : 0.24
+        }
         if focusedClusterLink != nil {
             return isFocusedClusterLinkEdge(edge) ? 1 : 0.18
         }
@@ -951,6 +1014,9 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     private func edgeLineWidth(_ edge: EdgeModel) -> CGFloat {
         if selectedEdgeID == edge.id {
             return 3.6
+        }
+        if isFocusedRelationEdge(edge) {
+            return 3.2
         }
         if isFocusedClusterLinkEdge(edge) {
             return 3
@@ -1030,18 +1096,28 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         return kinds.source == focusedClusterLink.sourceKind && kinds.target == focusedClusterLink.targetKind
     }
 
+    private func isFocusedRelationEdge(_ edge: EdgeModel) -> Bool {
+        guard let focusedRelationKey else { return false }
+        return normalizedRelationKey(edge.relation) == focusedRelationKey
+    }
+
     private func edgeSelectionBadge(_ edge: EdgeModel) -> some View {
         Group {
             if edges.count <= 16 || selectedEdgeID == edge.id {
+                let isFocusedRelation = isFocusedRelationEdge(edge)
                 Text(edge.relation.replacingOccurrences(of: "_", with: " "))
                     .font(.caption2)
-                    .foregroundStyle(selectedEdgeID == edge.id ? Color.accentColor : Color.secondary)
+                    .foregroundStyle((selectedEdgeID == edge.id || isFocusedRelation) ? Color.accentColor : Color.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color(nsColor: .windowBackgroundColor).opacity(selectedEdgeID == edge.id ? 0.98 : 0.92))
+                    .background(
+                        (selectedEdgeID == edge.id || isFocusedRelation)
+                            ? Color.accentColor.opacity(0.12)
+                            : Color(nsColor: .windowBackgroundColor).opacity(0.92)
+                    )
                     .overlay(
                         Capsule()
-                            .stroke(selectedEdgeID == edge.id ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1)
+                            .stroke((selectedEdgeID == edge.id || isFocusedRelation) ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: 1)
                     )
                     .clipShape(Capsule())
             } else {
@@ -1140,6 +1216,13 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         return "Filter to \(clusterLabel.title)"
     }
 
+    private func normalizedRelationKey(_ relation: String) -> String {
+        relation
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "_")
+            .lowercased()
+    }
+
     private func legendNodeStatusSample(
         title: String,
         status: StoryKnowledgeRecordStatus
@@ -1195,6 +1278,42 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 )
             )
             .frame(width: 18, height: 12)
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func legendFocusedClusterSample(
+        title: String,
+        fillColor: Color,
+        strokeColor: Color? = nil
+    ) -> some View {
+        HStack(spacing: 6) {
+            Capsule()
+                .fill(fillColor)
+                .frame(width: 18, height: 10)
+                .overlay(
+                    Capsule()
+                        .stroke(strokeColor ?? fillColor, lineWidth: 1)
+                )
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func legendFocusedRelationSample(title: String) -> some View {
+        HStack(spacing: 6) {
+            Capsule()
+                .fill(Color.accentColor.opacity(0.16))
+                .frame(width: 18, height: 10)
+                .overlay(
+                    Capsule()
+                        .stroke(Color.accentColor, lineWidth: 1.2)
+                )
 
             Text(title)
                 .font(.caption2)

@@ -894,6 +894,7 @@ struct StoryKnowledgePanelView: View {
                 layoutMode: .neighborhood,
                 selectedClusterKind: nil,
                 focusedClusterLink: nil,
+                focusedRelation: nil,
                 onSelectClusterKind: nil,
                 selectedNodeID: $graphSelectedNodeID,
                 selectedEdgeID: $graphSelectedEdgeID
@@ -987,6 +988,7 @@ struct StoryKnowledgePanelView: View {
                             targetKind: $0.targetKind
                         )
                     },
+                    focusedRelation: expandedGraphLayoutMode == .kindClusters ? activeExpandedGraphRelationFocus?.relation : nil,
                     onSelectClusterKind: expandedGraphLayoutMode == .kindClusters ? { kind in
                         toggleKindFilter(for: kind)
                     } : nil,
