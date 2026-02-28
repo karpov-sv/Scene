@@ -174,19 +174,42 @@ struct StoryKnowledgePanelView: View {
         refreshTask != nil
     }
 
-    private var storyKnowledgeNodesByID: [UUID: StoryKnowledgeNode] {
-        Dictionary(
-            uniqueKeysWithValues: (store.storyKnowledgeActiveNodes + store.storyKnowledgePendingReviewNodes)
-                .map { ($0.id, $0) }
+    private var mergedStoryKnowledgeNodes: [StoryKnowledgeNode] {
+        deduplicatedStoryKnowledgeNodes(
+            store.storyKnowledgeActiveNodes + store.storyKnowledgePendingReviewNodes
         )
     }
 
+    private var deduplicatedAcceptedNodes: [StoryKnowledgeNode] {
+        deduplicatedStoryKnowledgeNodes(
+            store.storyKnowledgeActiveNodes.filter { $0.status == .canonical }
+        )
+    }
+
+    private var deduplicatedPendingNodes: [StoryKnowledgeNode] {
+        deduplicatedStoryKnowledgeNodes(store.storyKnowledgePendingReviewNodes)
+    }
+
+    private var deduplicatedAcceptedEdges: [StoryKnowledgeEdge] {
+        deduplicatedStoryKnowledgeEdges(
+            store.storyKnowledgeActiveEdges.filter { $0.status == .canonical }
+        )
+    }
+
+    private var deduplicatedPendingEdges: [StoryKnowledgeEdge] {
+        deduplicatedStoryKnowledgeEdges(store.storyKnowledgePendingReviewEdges)
+    }
+
+    private var storyKnowledgeNodesByID: [UUID: StoryKnowledgeNode] {
+        Dictionary(uniqueKeysWithValues: mergedStoryKnowledgeNodes.map { ($0.id, $0) })
+    }
+
     private var acceptedNodes: [StoryKnowledgeNode] {
-        store.storyKnowledgeActiveNodes.filter { $0.status == .canonical }
+        deduplicatedAcceptedNodes
     }
 
     private var acceptedEdges: [StoryKnowledgeEdge] {
-        store.storyKnowledgeActiveEdges.filter { $0.status == .canonical }
+        deduplicatedAcceptedEdges
     }
 
     private var filteredAcceptedNodes: [StoryKnowledgeNode] {
@@ -206,13 +229,13 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var filteredPendingNodes: [StoryKnowledgeNode] {
-        sort(nodes: store.storyKnowledgePendingReviewNodes.filter {
+        sort(nodes: deduplicatedPendingNodes.filter {
             matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
         })
     }
 
     private var filteredPendingEdges: [StoryKnowledgeEdge] {
-        sort(edges: store.storyKnowledgePendingReviewEdges.filter {
+        sort(edges: deduplicatedPendingEdges.filter {
             matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
         })
     }
@@ -224,7 +247,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var filteredPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        sort(edges: store.storyKnowledgePendingReviewEdges.filter {
+        sort(edges: deduplicatedPendingEdges.filter {
             matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
         })
     }
@@ -305,13 +328,18 @@ struct StoryKnowledgePanelView: View {
     private var graphCandidateEdges: [StoryKnowledgeEdge] {
         let accepted = visibilityFilter == .pending ? [] : filteredAcceptedEdges
         let pending = visibilityFilter == .accepted ? [] : filteredPendingEdges
-        return accepted + pending
+        return deduplicatedStoryKnowledgeEdges(accepted + pending)
     }
 
     private var graphCandidateNodes: [StoryKnowledgeNode] {
-        visibilityFilter == .pending
-            ? filteredPendingNodes
-            : (visibilityFilter == .accepted ? filteredAcceptedNodes : filteredAcceptedNodes + filteredPendingNodes)
+        switch visibilityFilter {
+        case .pending:
+            return filteredPendingNodes
+        case .accepted:
+            return filteredAcceptedNodes
+        case .all:
+            return deduplicatedStoryKnowledgeNodes(filteredAcceptedNodes + filteredPendingNodes)
+        }
     }
 
     private var activeExpandedGraphConnectionFocus: GraphClusterConnectionFocus? {
@@ -3033,6 +3061,163 @@ struct StoryKnowledgePanelView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "_", with: " ")
             .lowercased()
+    }
+
+    private func deduplicatedStoryKnowledgeNodes(
+        _ nodes: [StoryKnowledgeNode]
+    ) -> [StoryKnowledgeNode] {
+        var mergedByID: [UUID: StoryKnowledgeNode] = [:]
+        var orderedIDs: [UUID] = []
+
+        for node in nodes {
+            if let existing = mergedByID[node.id] {
+                mergedByID[node.id] = mergeStoryKnowledgeNode(existing, node)
+            } else {
+                orderedIDs.append(node.id)
+                mergedByID[node.id] = node
+            }
+        }
+
+        return orderedIDs.compactMap { mergedByID[$0] }
+    }
+
+    private func deduplicatedStoryKnowledgeEdges(
+        _ edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeEdge] {
+        var mergedByID: [UUID: StoryKnowledgeEdge] = [:]
+        var orderedIDs: [UUID] = []
+
+        for edge in edges {
+            if let existing = mergedByID[edge.id] {
+                mergedByID[edge.id] = mergeStoryKnowledgeEdge(existing, edge)
+            } else {
+                orderedIDs.append(edge.id)
+                mergedByID[edge.id] = edge
+            }
+        }
+
+        return orderedIDs.compactMap { mergedByID[$0] }
+    }
+
+    private func mergeStoryKnowledgeNode(
+        _ lhs: StoryKnowledgeNode,
+        _ rhs: StoryKnowledgeNode
+    ) -> StoryKnowledgeNode {
+        let preferred = preferredStoryKnowledgeNode(lhs, rhs)
+        let secondary = preferred.id == lhs.id
+            && preferred.updatedAt == lhs.updatedAt
+            && preferred.name == lhs.name
+            && preferred.kind == lhs.kind
+            && preferred.summary == lhs.summary
+            && preferred.status == lhs.status
+            && preferred.confidence == lhs.confidence
+            && preferred.resolvedCompendiumID == lhs.resolvedCompendiumID
+            && preferred.aliases == lhs.aliases
+            && preferred.evidenceSceneIDs == lhs.evidenceSceneIDs ? rhs : lhs
+
+        var merged = preferred
+        if merged.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.name = secondary.name
+        }
+        if merged.kind == .unknown, secondary.kind != .unknown {
+            merged.kind = secondary.kind
+        }
+        if merged.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.summary = secondary.summary
+        }
+        if merged.resolvedCompendiumID == nil {
+            merged.resolvedCompendiumID = secondary.resolvedCompendiumID
+        }
+        merged.aliases = Array(Set(merged.aliases + secondary.aliases))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        merged.evidenceSceneIDs = Array(Set(merged.evidenceSceneIDs + secondary.evidenceSceneIDs))
+            .sorted { $0.uuidString < $1.uuidString }
+        merged.confidence = max(merged.confidence, secondary.confidence)
+        merged.updatedAt = max(merged.updatedAt, secondary.updatedAt)
+        return merged
+    }
+
+    private func mergeStoryKnowledgeEdge(
+        _ lhs: StoryKnowledgeEdge,
+        _ rhs: StoryKnowledgeEdge
+    ) -> StoryKnowledgeEdge {
+        let preferred = preferredStoryKnowledgeEdge(lhs, rhs)
+        let secondary = preferred.id == lhs.id
+            && preferred.updatedAt == lhs.updatedAt
+            && preferred.relation == lhs.relation
+            && preferred.note == lhs.note
+            && preferred.status == lhs.status
+            && preferred.confidence == lhs.confidence
+            && preferred.sourceNodeID == lhs.sourceNodeID
+            && preferred.targetNodeID == lhs.targetNodeID
+            && preferred.observedRelations == lhs.observedRelations
+            && preferred.evidenceSceneIDs == lhs.evidenceSceneIDs ? rhs : lhs
+
+        var merged = preferred
+        if merged.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.note = secondary.note
+        }
+        merged.observedRelations = mergedObservedRelations(
+            merged.observedRelations + secondary.observedRelations
+        )
+        merged.evidenceSceneIDs = Array(Set(merged.evidenceSceneIDs + secondary.evidenceSceneIDs))
+            .sorted { $0.uuidString < $1.uuidString }
+        merged.confidence = max(merged.confidence, secondary.confidence)
+        merged.updatedAt = max(merged.updatedAt, secondary.updatedAt)
+        return merged
+    }
+
+    private func preferredStoryKnowledgeNode(
+        _ lhs: StoryKnowledgeNode,
+        _ rhs: StoryKnowledgeNode
+    ) -> StoryKnowledgeNode {
+        if storyKnowledgeStatusPriority(lhs.status) != storyKnowledgeStatusPriority(rhs.status) {
+            return storyKnowledgeStatusPriority(lhs.status) > storyKnowledgeStatusPriority(rhs.status) ? lhs : rhs
+        }
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt >= rhs.updatedAt ? lhs : rhs
+        }
+        if lhs.confidence != rhs.confidence {
+            return lhs.confidence >= rhs.confidence ? lhs : rhs
+        }
+        let lhsSummaryLength = lhs.summary.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let rhsSummaryLength = rhs.summary.trimmingCharacters(in: .whitespacesAndNewlines).count
+        if lhsSummaryLength != rhsSummaryLength {
+            return lhsSummaryLength >= rhsSummaryLength ? lhs : rhs
+        }
+        return lhs
+    }
+
+    private func preferredStoryKnowledgeEdge(
+        _ lhs: StoryKnowledgeEdge,
+        _ rhs: StoryKnowledgeEdge
+    ) -> StoryKnowledgeEdge {
+        if storyKnowledgeStatusPriority(lhs.status) != storyKnowledgeStatusPriority(rhs.status) {
+            return storyKnowledgeStatusPriority(lhs.status) > storyKnowledgeStatusPriority(rhs.status) ? lhs : rhs
+        }
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt >= rhs.updatedAt ? lhs : rhs
+        }
+        if lhs.confidence != rhs.confidence {
+            return lhs.confidence >= rhs.confidence ? lhs : rhs
+        }
+        let lhsObservedCount = lhs.observedRelations.count
+        let rhsObservedCount = rhs.observedRelations.count
+        if lhsObservedCount != rhsObservedCount {
+            return lhsObservedCount >= rhsObservedCount ? lhs : rhs
+        }
+        return lhs
+    }
+
+    private func storyKnowledgeStatusPriority(_ status: StoryKnowledgeRecordStatus) -> Int {
+        switch status {
+        case .canonical:
+            return 2
+        case .inferred:
+            return 1
+        case .rejected:
+            return 0
+        }
     }
 
     private func mergedObservedRelations(
