@@ -542,6 +542,38 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private var selectedGraphNodeRelatedActions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] {
+        guard selectedGraphNode != nil else { return [] }
+
+        let grouped = Dictionary(grouping: selectedGraphNodeIncidentEdges) { normalizedRelationKey($0.relation) }
+
+        return grouped.compactMap { _, relationEdges -> (relation: String, count: Int)? in
+            guard let firstEdge = relationEdges.first else { return nil }
+            return (firstEdge.relation, relationEdges.count)
+        }
+        .sorted { lhs, rhs in
+            if lhs.count != rhs.count {
+                return lhs.count > rhs.count
+            }
+            return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+        }
+        .prefix(3)
+        .map { relation, count in
+            let displayLabel = relation.replacingOccurrences(of: "_", with: " ").capitalized
+            let title: String
+            if isRelationFiltered(to: relation) {
+                title = "Clear \(displayLabel) Filter"
+            } else {
+                title = "Filter \(displayLabel) • \(count)"
+            }
+
+            return StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                title: title,
+                action: { toggleRelationFilter(relation) }
+            )
+        }
+    }
+
     private var expandedGraphSelectionOverlay: StoryKnowledgeNeighborhoodGraphView.SelectionOverlay? {
         guard showingExpandedGraph else { return nil }
 
@@ -642,8 +674,8 @@ struct StoryKnowledgePanelView: View {
                     ? "Visible relations: \(selectedGraphNodeIncidentEdges.count)"
                     : selectedGraphNode.summary,
                 secondaryLines: secondaryLines,
-                relatedActionsTitle: nil,
-                relatedActions: [],
+                relatedActionsTitle: selectedGraphNodeRelatedActions.isEmpty ? nil : "Incident Relations",
+                relatedActions: selectedGraphNodeRelatedActions,
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: actions,
