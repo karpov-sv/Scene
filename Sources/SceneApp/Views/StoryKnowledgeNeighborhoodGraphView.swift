@@ -101,6 +101,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let badges: [String]
         let detail: String
         let secondaryLines: [String]
+        let relatedActionsTitle: String?
+        let relatedActions: [SelectionAction]
         let evidenceLinks: [SelectionEvidenceLink]
         let footnote: String?
         let actions: [SelectionAction]
@@ -715,6 +717,23 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
+                    }
+                }
+            }
+
+            if !overlay.relatedActions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let relatedActionsTitle = overlay.relatedActionsTitle,
+                       !relatedActionsTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(relatedActionsTitle)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(overlay.relatedActions) { action in
+                        Button(action.title, action: action.action)
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
                     }
                 }
             }

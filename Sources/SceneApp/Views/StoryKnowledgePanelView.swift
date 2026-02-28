@@ -474,6 +474,74 @@ struct StoryKnowledgePanelView: View {
         selectedGraphEdge != nil || selectedGraphNode != nil
     }
 
+    private var selectedGraphEdgeConnectionSummary: GraphClusterConnectionSummary? {
+        guard let selectedGraphEdge,
+              let sourceKind = storyKnowledgeNodesByID[selectedGraphEdge.sourceNodeID]?.kind,
+              let targetKind = storyKnowledgeNodesByID[selectedGraphEdge.targetNodeID]?.kind else {
+            return nil
+        }
+        return graphClusterConnectionSummaries.first {
+            $0.sourceKind == sourceKind && $0.targetKind == targetKind
+        }
+    }
+
+    private var selectedGraphEdgeRelatedActions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] {
+        guard let selectedGraphEdge else { return [] }
+
+        let selectedRelationKey = normalizedRelationKey(selectedGraphEdge.relation)
+        let samePairEdges = graphVisibleEdges.filter { edge in
+            edge.id != selectedGraphEdge.id
+                && edge.sourceNodeID == selectedGraphEdge.sourceNodeID
+                && edge.targetNodeID == selectedGraphEdge.targetNodeID
+        }
+
+        let relationSourceEdges: [StoryKnowledgeEdge]
+        if !samePairEdges.isEmpty {
+            relationSourceEdges = samePairEdges
+        } else if let connectionSummary = selectedGraphEdgeConnectionSummary {
+            relationSourceEdges = graphVisibleEdges.filter { edge in
+                guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                      let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                    return false
+                }
+                return sourceKind == connectionSummary.sourceKind
+                    && targetKind == connectionSummary.targetKind
+                    && normalizedRelationKey(edge.relation) != selectedRelationKey
+            }
+        } else {
+            relationSourceEdges = []
+        }
+
+        let grouped = Dictionary(grouping: relationSourceEdges) { normalizedRelationKey($0.relation) }
+
+        return grouped.compactMap { _, relationEdges -> (relation: String, count: Int)? in
+            guard let firstEdge = relationEdges.first else { return nil }
+            return (firstEdge.relation, relationEdges.count)
+        }
+        .sorted { lhs, rhs in
+            if lhs.count != rhs.count {
+                return lhs.count > rhs.count
+            }
+            return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+        }
+        .prefix(3)
+        .map { relation, count in
+            let displayLabel = relation.replacingOccurrences(of: "_", with: " ").capitalized
+            if expandedGraphLayoutMode == .kindClusters,
+               let connectionSummary = selectedGraphEdgeConnectionSummary {
+                return StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                    title: "Focus \(displayLabel) • \(count)",
+                    action: { toggleExpandedRelationFocus(relation, within: connectionSummary) }
+                )
+            }
+
+            return StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                title: "Filter \(displayLabel) • \(count)",
+                action: { toggleRelationFilter(relation) }
+            )
+        }
+    }
+
     private var expandedGraphSelectionOverlay: StoryKnowledgeNeighborhoodGraphView.SelectionOverlay? {
         guard showingExpandedGraph else { return nil }
 
@@ -502,6 +570,8 @@ struct StoryKnowledgePanelView: View {
                     ? "Relation: \(selectedGraphEdge.relation.replacingOccurrences(of: "_", with: " ").capitalized)"
                     : selectedGraphEdge.note,
                 secondaryLines: Array(diagnostics.map(\.message).prefix(2)),
+                relatedActionsTitle: selectedGraphEdgeRelatedActions.isEmpty ? nil : "Related Relations",
+                relatedActions: selectedGraphEdgeRelatedActions,
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: [
@@ -572,6 +642,8 @@ struct StoryKnowledgePanelView: View {
                     ? "Visible relations: \(selectedGraphNodeIncidentEdges.count)"
                     : selectedGraphNode.summary,
                 secondaryLines: secondaryLines,
+                relatedActionsTitle: nil,
+                relatedActions: [],
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: actions,
