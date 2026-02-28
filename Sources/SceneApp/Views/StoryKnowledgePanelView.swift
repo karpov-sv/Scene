@@ -623,6 +623,35 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private var selectedGraphNodeNeighborActions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] {
+        guard let selectedGraphNode else { return [] }
+
+        let grouped = Dictionary(grouping: selectedGraphNodeIncidentEdges) { edge -> UUID in
+            edge.sourceNodeID == selectedGraphNode.id ? edge.targetNodeID : edge.sourceNodeID
+        }
+
+        return grouped.compactMap { neighborNodeID, edges -> (node: StoryKnowledgeNode, count: Int)? in
+            guard let node = storyKnowledgeNodesByID[neighborNodeID] else { return nil }
+            return (node, edges.count)
+        }
+        .sorted { lhs, rhs in
+            if lhs.count != rhs.count {
+                return lhs.count > rhs.count
+            }
+            return lhs.node.name.localizedCaseInsensitiveCompare(rhs.node.name) == .orderedAscending
+        }
+        .prefix(3)
+        .map { neighbor, count in
+            StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                title: "Jump to \(neighbor.name) • \(count)",
+                action: {
+                    graphSelectedEdgeID = nil
+                    graphSelectedNodeID = neighbor.id
+                }
+            )
+        }
+    }
+
     private var expandedGraphSelectionOverlay: StoryKnowledgeNeighborhoodGraphView.SelectionOverlay? {
         guard showingExpandedGraph else { return nil }
 
@@ -639,6 +668,15 @@ struct StoryKnowledgePanelView: View {
                     action: { store.revealStoryKnowledgeEvidenceScene(item.sceneID) }
                 )
             }
+            let actionSections: [StoryKnowledgeNeighborhoodGraphView.SelectionActionSection] =
+                selectedGraphEdgeRelatedActions.isEmpty
+                ? []
+                : [
+                    StoryKnowledgeNeighborhoodGraphView.SelectionActionSection(
+                        title: "Related Relations",
+                        actions: selectedGraphEdgeRelatedActions
+                    )
+                ]
 
             return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
                 title: store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge),
@@ -651,8 +689,7 @@ struct StoryKnowledgePanelView: View {
                     ? "Relation: \(selectedGraphEdge.relation.replacingOccurrences(of: "_", with: " ").capitalized)"
                     : selectedGraphEdge.note,
                 secondaryLines: Array(diagnostics.map(\.message).prefix(2)),
-                relatedActionsTitle: selectedGraphEdgeRelatedActions.isEmpty ? nil : "Related Relations",
-                relatedActions: selectedGraphEdgeRelatedActions,
+                actionSections: actionSections,
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: [
@@ -711,6 +748,24 @@ struct StoryKnowledgePanelView: View {
                 )
             }
 
+            var actionSections: [StoryKnowledgeNeighborhoodGraphView.SelectionActionSection] = []
+            if !selectedGraphNodeRelatedActions.isEmpty {
+                actionSections.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionActionSection(
+                        title: "Incident Relations",
+                        actions: selectedGraphNodeRelatedActions
+                    )
+                )
+            }
+            if !selectedGraphNodeNeighborActions.isEmpty {
+                actionSections.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionActionSection(
+                        title: "Neighbor Nodes",
+                        actions: selectedGraphNodeNeighborActions
+                    )
+                )
+            }
+
             return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
                 title: selectedGraphNode.name,
                 subtitle: selectedGraphNode.kind.rawValue.capitalized,
@@ -723,8 +778,7 @@ struct StoryKnowledgePanelView: View {
                     ? "Visible relations: \(selectedGraphNodeIncidentEdges.count)"
                     : selectedGraphNode.summary,
                 secondaryLines: secondaryLines,
-                relatedActionsTitle: selectedGraphNodeRelatedActions.isEmpty ? nil : "Incident Relations",
-                relatedActions: selectedGraphNodeRelatedActions,
+                actionSections: actionSections,
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
                 actions: actions,

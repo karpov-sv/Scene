@@ -113,14 +113,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let onNext: () -> Void
     }
 
+    struct SelectionActionSection: Identifiable {
+        let title: String
+        let actions: [SelectionAction]
+
+        var id: String { title }
+    }
+
     struct SelectionOverlay {
         let title: String
         let subtitle: String?
         let badges: [String]
         let detail: String
         let secondaryLines: [String]
-        let relatedActionsTitle: String?
-        let relatedActions: [SelectionAction]
+        let actionSections: [SelectionActionSection]
         let evidenceLinks: [SelectionEvidenceLink]
         let footnote: String?
         let actions: [SelectionAction]
@@ -784,19 +790,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 }
             }
 
-            if !overlay.relatedActions.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let relatedActionsTitle = overlay.relatedActionsTitle,
-                       !relatedActionsTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(relatedActionsTitle)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+            if !overlay.actionSections.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(overlay.actionSections) { section in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(section.title)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
 
-                    ForEach(overlay.relatedActions) { action in
-                        Button(action.title, action: action.action)
-                            .buttonStyle(.borderless)
-                            .controlSize(.small)
+                            ForEach(section.actions) { action in
+                                Button(action.title, action: action.action)
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.small)
+                            }
+                        }
                     }
                 }
             }
