@@ -110,6 +110,15 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private struct GraphClusterConnectionFocus: Equatable {
+        let sourceKind: StoryKnowledgeNodeKind
+        let targetKind: StoryKnowledgeNodeKind
+
+        var label: String {
+            "Focused link: \(sourceKind.rawValue.capitalized) -> \(targetKind.rawValue.capitalized)"
+        }
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -131,6 +140,7 @@ struct StoryKnowledgePanelView: View {
     @State private var showingExpandedGraph = false
     @State private var expandedGraphDensity: GraphDensityMode = .balanced
     @State private var expandedGraphLayoutMode: StoryKnowledgeNeighborhoodGraphView.LayoutMode = .neighborhood
+    @State private var expandedGraphConnectionFocus: GraphClusterConnectionFocus?
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -265,6 +275,33 @@ struct StoryKnowledgePanelView: View {
             : (visibilityFilter == .accepted ? filteredAcceptedNodes : filteredAcceptedNodes + filteredPendingNodes)
     }
 
+    private var activeExpandedGraphConnectionFocus: GraphClusterConnectionFocus? {
+        guard showingExpandedGraph, expandedGraphLayoutMode == .kindClusters else { return nil }
+        return expandedGraphConnectionFocus
+    }
+
+    private var graphBaseAcceptedEdges: [StoryKnowledgeEdge] {
+        applyExpandedConnectionFocus(to: filteredAcceptedEdges)
+    }
+
+    private var graphBasePendingEdges: [StoryKnowledgeEdge] {
+        applyExpandedConnectionFocus(to: filteredPendingEdges)
+    }
+
+    private var graphBaseEdges: [StoryKnowledgeEdge] {
+        let accepted = visibilityFilter == .pending ? [] : graphBaseAcceptedEdges
+        let pending = visibilityFilter == .accepted ? [] : graphBasePendingEdges
+        return accepted + pending
+    }
+
+    private var graphBaseNodes: [StoryKnowledgeNode] {
+        if activeExpandedGraphConnectionFocus != nil {
+            let nodeIDs = Set(graphBaseEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
+            return graphCandidateNodes.filter { nodeIDs.contains($0.id) }
+        }
+        return graphCandidateNodes
+    }
+
     private var activeGraphDensityMode: GraphDensityMode? {
         showingExpandedGraph ? expandedGraphDensity : nil
     }
@@ -279,10 +316,10 @@ struct StoryKnowledgePanelView: View {
         var edges: [StoryKnowledgeEdge] = []
 
         if visibilityFilter != .pending {
-            edges.append(contentsOf: filteredAcceptedEdges.prefix(acceptedBudget))
+            edges.append(contentsOf: graphBaseAcceptedEdges.prefix(acceptedBudget))
         }
         if visibilityFilter != .accepted {
-            edges.append(contentsOf: filteredPendingEdges.prefix(pendingBudget))
+            edges.append(contentsOf: graphBasePendingEdges.prefix(pendingBudget))
         }
 
         return Array(edges.prefix(28))
@@ -309,7 +346,7 @@ struct StoryKnowledgePanelView: View {
             nodes.append(node)
         }
 
-        for node in graphCandidateNodes where seen.insert(node.id).inserted {
+        for node in graphBaseNodes where seen.insert(node.id).inserted {
             nodes.append(node)
             if nodes.count >= 18 {
                 break
@@ -389,8 +426,8 @@ struct StoryKnowledgePanelView: View {
     private var graphCoverageLabel: String {
         let visibleNodeCount = graphVisibleNodes.count
         let visibleEdgeCount = graphVisibleEdges.count
-        let totalNodeCount = graphCandidateNodes.count
-        let totalEdgeCount = graphCandidateEdges.count
+        let totalNodeCount = graphBaseNodes.count
+        let totalEdgeCount = graphBaseEdges.count
 
         if visibleNodeCount == totalNodeCount && visibleEdgeCount == totalEdgeCount {
             return "\(visibleNodeCount) filtered nodes • \(visibleEdgeCount) filtered edges"
@@ -686,6 +723,17 @@ struct StoryKnowledgePanelView: View {
                 self.graphSelectedEdgeID = nil
             }
         }
+        .onChange(of: expandedGraphLayoutMode, initial: false) { _, newLayoutMode in
+            if newLayoutMode != .kindClusters {
+                expandedGraphConnectionFocus = nil
+            }
+        }
+        .onChange(of: graphBaseEdges.map(\.id), initial: false) { _, _ in
+            guard let focus = expandedGraphConnectionFocus else { return }
+            if !hasGraphEdges(for: focus) {
+                expandedGraphConnectionFocus = nil
+            }
+        }
     }
 
     private var header: some View {
@@ -839,6 +887,12 @@ struct StoryKnowledgePanelView: View {
                     Text(graphCoverageLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    if let activeExpandedGraphConnectionFocus {
+                        Text(activeExpandedGraphConnectionFocus.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -862,6 +916,13 @@ struct StoryKnowledgePanelView: View {
                 if hasGraphSelection {
                     Button("Clear Selection") {
                         clearGraphSelection()
+                    }
+                    .buttonStyle(.borderless)
+                }
+
+                if activeExpandedGraphConnectionFocus != nil {
+                    Button("Clear Link Focus") {
+                        expandedGraphConnectionFocus = nil
                     }
                     .buttonStyle(.borderless)
                 }
@@ -921,6 +982,12 @@ struct StoryKnowledgePanelView: View {
 
                                 if let conflictFocus {
                                     Label(conflictFocus.label, systemImage: "scope")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                if let activeExpandedGraphConnectionFocus {
+                                    Label(activeExpandedGraphConnectionFocus.label, systemImage: "point.3.filled.connected.trianglepath.dotted")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -1175,6 +1242,12 @@ struct StoryKnowledgePanelView: View {
 
                         Button(isKindFiltered(to: summary.targetKind) ? "Clear \(summary.targetKind.rawValue.capitalized) Filter" : "Filter \(summary.targetKind.rawValue.capitalized)") {
                             toggleKindFilter(for: summary.targetKind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Button(isExpandedConnectionFocused(on: summary) ? "Clear Link Focus" : "Focus Link") {
+                            toggleExpandedConnectionFocus(summary)
                         }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
@@ -1560,16 +1633,16 @@ struct StoryKnowledgePanelView: View {
 
     private func graphVisibleEdges(for mode: GraphDensityMode) -> [StoryKnowledgeEdge] {
         let focusMultiplier = conflictFocus == nil ? 1 : 2
-        let acceptedBudget = min(mode.acceptedEdgeBudget * focusMultiplier, graphCandidateEdges.count)
-        let pendingBudget = min(mode.pendingEdgeBudget * focusMultiplier, graphCandidateEdges.count)
+        let acceptedBudget = min(mode.acceptedEdgeBudget * focusMultiplier, graphBaseAcceptedEdges.count)
+        let pendingBudget = min(mode.pendingEdgeBudget * focusMultiplier, graphBasePendingEdges.count)
 
         var edges: [StoryKnowledgeEdge] = []
 
         if visibilityFilter != .pending {
-            edges.append(contentsOf: filteredAcceptedEdges.prefix(acceptedBudget))
+            edges.append(contentsOf: graphBaseAcceptedEdges.prefix(acceptedBudget))
         }
         if visibilityFilter != .accepted {
-            edges.append(contentsOf: filteredPendingEdges.prefix(pendingBudget))
+            edges.append(contentsOf: graphBasePendingEdges.prefix(pendingBudget))
         }
 
         return Array(edges.prefix(mode.totalEdgeCap))
@@ -1595,7 +1668,7 @@ struct StoryKnowledgePanelView: View {
             nodes.append(node)
         }
 
-        for node in graphCandidateNodes where seen.insert(node.id).inserted {
+        for node in graphBaseNodes where seen.insert(node.id).inserted {
             nodes.append(node)
             if nodes.count >= mode.nodeCap {
                 break
@@ -1608,6 +1681,46 @@ struct StoryKnowledgePanelView: View {
     private func clearGraphSelection() {
         graphSelectedNodeID = nil
         graphSelectedEdgeID = nil
+    }
+
+    private func applyExpandedConnectionFocus(
+        to edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeEdge] {
+        guard let focus = activeExpandedGraphConnectionFocus else { return edges }
+        return edges.filter { edge in
+            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                return false
+            }
+            return sourceKind == focus.sourceKind && targetKind == focus.targetKind
+        }
+    }
+
+    private func isExpandedConnectionFocused(on summary: GraphClusterConnectionSummary) -> Bool {
+        guard let focus = expandedGraphConnectionFocus else { return false }
+        return focus.sourceKind == summary.sourceKind && focus.targetKind == summary.targetKind
+    }
+
+    private func toggleExpandedConnectionFocus(_ summary: GraphClusterConnectionSummary) {
+        if isExpandedConnectionFocused(on: summary) {
+            expandedGraphConnectionFocus = nil
+        } else {
+            expandedGraphConnectionFocus = GraphClusterConnectionFocus(
+                sourceKind: summary.sourceKind,
+                targetKind: summary.targetKind
+            )
+            clearGraphSelection()
+        }
+    }
+
+    private func hasGraphEdges(for focus: GraphClusterConnectionFocus) -> Bool {
+        graphCandidateEdges.contains { edge in
+            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                return false
+            }
+            return sourceKind == focus.sourceKind && targetKind == focus.targetKind
+        }
     }
 
     private func togglePendingNodeSelection(_ nodeID: UUID) {
