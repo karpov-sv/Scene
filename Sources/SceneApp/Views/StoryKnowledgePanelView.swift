@@ -165,6 +165,7 @@ struct StoryKnowledgePanelView: View {
                         isUpdating: isRefreshing,
                         onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
                         onOpenCompendiumEntry: onOpenCompendiumEntry,
+                        onUpdateCompendium: { store.mergeStoryKnowledgeNodeIntoCompendium(node.id) },
                         onPromote: { store.promoteStoryKnowledgeNodeToCompendium(node.id) },
                         onReject: { store.rejectStoryKnowledgeNode(node.id) }
                     )
@@ -247,6 +248,7 @@ private struct StoryKnowledgeNodeCard: View {
     let isUpdating: Bool
     let onRevealScene: @MainActor (UUID) -> Void
     let onOpenCompendiumEntry: (UUID) -> Void
+    let onUpdateCompendium: () -> Void
     let onPromote: () -> Void
     let onReject: () -> Void
 
@@ -291,6 +293,11 @@ private struct StoryKnowledgeNodeCard: View {
                 if let compendiumID = node.resolvedCompendiumID {
                     Button("Open Compendium") {
                         onOpenCompendiumEntry(compendiumID)
+                    }
+                    .disabled(isUpdating)
+
+                    Button("Update Compendium") {
+                        onUpdateCompendium()
                     }
                     .disabled(isUpdating)
                 }

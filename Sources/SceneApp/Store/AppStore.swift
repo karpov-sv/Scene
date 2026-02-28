@@ -4315,6 +4315,53 @@ final class AppStore: ObservableObject {
         selectScene(sceneID, chapterID: chapterID)
     }
 
+    func mergeStoryKnowledgeNodeIntoCompendium(_ nodeID: UUID) {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }),
+              let compendiumID = project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID,
+              let entryIndex = compendiumIndex(for: compendiumID) else {
+            return
+        }
+
+        let node = project.storyKnowledgeNodes[nodeIndex]
+        var entry = project.compendium[entryIndex]
+        var didMutate = false
+
+        let mergedTags = mergedCompendiumTags(
+            existing: entry.tags,
+            additional: node.aliases,
+            excluding: [entry.title, node.name]
+        )
+        if entry.tags != mergedTags {
+            entry.tags = mergedTags
+            didMutate = true
+        }
+
+        let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !summary.isEmpty {
+            let normalizedSummary = compactSingleLine(summary).lowercased()
+            let normalizedExistingBody = compactSingleLine(entry.body).lowercased()
+            let updateLine = "Story knowledge: \(summary)"
+            let normalizedUpdateLine = compactSingleLine(updateLine).lowercased()
+
+            if normalizedExistingBody.isEmpty {
+                entry.body = summary
+                didMutate = true
+            } else if !normalizedExistingBody.contains(normalizedSummary)
+                        && !normalizedExistingBody.contains(normalizedUpdateLine) {
+                entry.body = entry.body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + updateLine
+                didMutate = true
+            }
+        }
+
+        selectedCompendiumID = compendiumID
+        guard didMutate else { return }
+
+        entry.updatedAt = .now
+        project.compendium[entryIndex] = entry
+        saveProject()
+    }
+
     func updateSelectedCompendiumTitle(_ title: String) {
         guard let selectedCompendiumID,
               let index = compendiumIndex(for: selectedCompendiumID) else {
@@ -13058,6 +13105,33 @@ final class AppStore: ObservableObject {
                 sceneTitle: displaySceneTitle(scene)
             )
         }
+    }
+
+    private func mergedCompendiumTags(
+        existing: [String],
+        additional: [String],
+        excluding excludedValues: [String]
+    ) -> [String] {
+        let excludedKeys = Set(
+            excludedValues
+                .map { normalizedStoryKnowledgeKey($0) }
+                .filter { !$0.isEmpty }
+        )
+
+        var merged: [String] = []
+        var seen = Set<String>()
+        for value in existing + additional {
+            let normalizedValue = compactSingleLine(value)
+            let key = normalizedStoryKnowledgeKey(normalizedValue)
+            guard !normalizedValue.isEmpty,
+                  !key.isEmpty,
+                  !excludedKeys.contains(key),
+                  seen.insert(key).inserted else {
+                continue
+            }
+            merged.append(normalizedValue)
+        }
+        return merged
     }
 
     private func isActiveStoryKnowledgeNode(_ node: StoryKnowledgeNode) -> Bool {
