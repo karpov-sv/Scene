@@ -67,6 +67,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let label: String
         let systemImage: String
         let badges: [String]
+        let actionTitle: String?
+        let action: (() -> Void)?
 
         var id: String { "\(systemImage)-\(label)" }
     }
@@ -1248,9 +1250,20 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @ViewBuilder
     private func focusHighlightLine(_ highlight: FocusHighlight) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label(highlight.label, systemImage: highlight.systemImage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(highlight.label, systemImage: highlight.systemImage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                if let actionTitle = highlight.actionTitle,
+                   let action = highlight.action {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
+            }
 
             if !highlight.badges.isEmpty {
                 HStack(spacing: 6) {

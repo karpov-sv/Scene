@@ -600,7 +600,12 @@ struct StoryKnowledgePanelView: View {
                         pairCount: activeFocusedGraphConnectionSummary?.pairCount,
                         pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
                         evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
-                    )
+                    ),
+                    actionTitle: "Clear Link",
+                    action: {
+                        expandedGraphConnectionFocus = nil
+                        expandedGraphRelationFocus = nil
+                    }
                 )
             )
         }
@@ -615,7 +620,11 @@ struct StoryKnowledgePanelView: View {
                         pairCount: activeFocusedGraphRelationSummary?.pairCount,
                         pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
                         evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
-                    )
+                    ),
+                    actionTitle: "Clear Relation",
+                    action: {
+                        expandedGraphRelationFocus = nil
+                    }
                 )
             )
         }
