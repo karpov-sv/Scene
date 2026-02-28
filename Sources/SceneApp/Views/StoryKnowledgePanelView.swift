@@ -4,6 +4,7 @@ struct StoryKnowledgePanelView: View {
     @EnvironmentObject private var store: AppStore
     @State private var refreshTask: Task<Void, Never>?
     @State private var refreshError: String = ""
+    let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
         refreshTask != nil
@@ -163,6 +164,7 @@ struct StoryKnowledgePanelView: View {
                         evidenceItems: store.storyKnowledgeEvidenceItems(for: node),
                         isUpdating: isRefreshing,
                         onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
+                        onOpenCompendiumEntry: onOpenCompendiumEntry,
                         onPromote: { store.promoteStoryKnowledgeNodeToCompendium(node.id) },
                         onReject: { store.rejectStoryKnowledgeNode(node.id) }
                     )
@@ -244,6 +246,7 @@ private struct StoryKnowledgeNodeCard: View {
     let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
     let isUpdating: Bool
     let onRevealScene: @MainActor (UUID) -> Void
+    let onOpenCompendiumEntry: (UUID) -> Void
     let onPromote: () -> Void
     let onReject: () -> Void
 
@@ -284,8 +287,15 @@ private struct StoryKnowledgeNodeCard: View {
                 evidenceSection(items: evidenceItems, onRevealScene: onRevealScene)
             }
 
-            if node.status == .inferred {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                if let compendiumID = node.resolvedCompendiumID {
+                    Button("Open Compendium") {
+                        onOpenCompendiumEntry(compendiumID)
+                    }
+                    .disabled(isUpdating)
+                }
+
+                if node.status == .inferred {
                     Button("Promote to Compendium") {
                         onPromote()
                     }
@@ -296,8 +306,8 @@ private struct StoryKnowledgeNodeCard: View {
                     }
                     .disabled(isUpdating)
                 }
-                .buttonStyle(.borderless)
             }
+            .buttonStyle(.borderless)
         }
         .cardStyle()
     }

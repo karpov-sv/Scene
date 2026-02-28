@@ -128,9 +128,11 @@ final class AppStore: ObservableObject {
     private static let workshopSceneTailChars = 1800
     private static let graphPlannerNodeMaxCount = 140
     private static let graphPlannerEdgeMaxCount = 280
+    private static let graphPlannerFactMaxCount = 160
     private static let graphPlannerNodeSummaryChars = 220
     private static let graphPlannerNodesChars = 12000
     private static let graphPlannerEdgesChars = 14000
+    private static let graphPlannerFactsChars = 10000
     private static let inlineVariantsDefaultCount = 3
     private static let rollingWorkshopMemoryMinDeltaMessages = 4
     private static let rollingWorkshopMemoryDeltaWindow = 18
@@ -469,6 +471,7 @@ final class AppStore: ObservableObject {
     private struct GraphPlannerContext {
         let nodes: String
         let edges: String
+        let facts: String
         let frontier: String
     }
 
@@ -1187,6 +1190,12 @@ final class AppStore: ObservableObject {
         sortedStoryKnowledgeEdges(
             project.storyKnowledgeEdges.filter { isActiveStoryKnowledgeEdge($0) }
         )
+    }
+
+    func acceptedStoryKnowledgeFacts(for sceneID: UUID?) -> [String] {
+        let lines = acceptedStoryKnowledgeFactLines(for: sceneID, nodeRefByID: nil)
+        guard !lines.isEmpty else { return [] }
+        return lines.components(separatedBy: "\n")
     }
 
     var beatInputHistory: [String] {
@@ -7137,6 +7146,7 @@ final class AppStore: ObservableObject {
             return GraphPlannerContext(
                 nodes: "No compendium nodes available.",
                 edges: "No graph edges available.",
+                facts: "No accepted factual knowledge available.",
                 frontier: "No active nodes."
             )
         }
@@ -7239,13 +7249,85 @@ final class AppStore: ObservableObject {
 
         let nodesText = nodeLines.joined(separator: "\n")
         let edgesText = edgeLines.isEmpty ? "No graph edges available." : edgeLines.joined(separator: "\n")
+        let factsText = acceptedStoryKnowledgeFactLines(for: sceneID, nodeRefByID: nodeRefByID)
+        let normalizedFactsText = factsText.isEmpty ? "No accepted factual knowledge available." : factsText
         let frontierText = frontierLines.isEmpty ? "No active nodes." : frontierLines.joined(separator: "\n")
 
         return GraphPlannerContext(
             nodes: String(nodesText.prefix(Self.graphPlannerNodesChars)),
             edges: String(edgesText.prefix(Self.graphPlannerEdgesChars)),
+            facts: String(normalizedFactsText.prefix(Self.graphPlannerFactsChars)),
             frontier: frontierText
         )
+    }
+
+    private func acceptedStoryKnowledgeFactLines(
+        for sceneID: UUID?,
+        nodeRefByID: [UUID: String]?
+    ) -> String {
+        let chapterID = chapterIDForScene(sceneID)
+        let focusedCompendiumIDs = Set(
+            compendiumContextIDs(for: sceneID)
+                + (sceneStoryMemory(for: sceneID)?.knowledgeNodeIDs ?? []).compactMap { nodeID in
+                    storyKnowledgeNode(for: nodeID)?.resolvedCompendiumID
+                }
+                + (chapterStoryMemory(for: chapterID)?.knowledgeNodeIDs ?? []).compactMap { nodeID in
+                    storyKnowledgeNode(for: nodeID)?.resolvedCompendiumID
+                }
+        )
+
+        let compendiumByID = Dictionary(uniqueKeysWithValues: project.compendium.map { ($0.id, $0) })
+        let acceptedFacts = project.storyKnowledgeEdges.compactMap {
+            edge -> (edge: StoryKnowledgeEdge, sourceID: UUID, targetID: UUID)? in
+            guard edge.status == .canonical,
+                  isActiveStoryKnowledgeEdge(edge),
+                  let sourceNode = storyKnowledgeNode(for: edge.sourceNodeID),
+                  let targetNode = storyKnowledgeNode(for: edge.targetNodeID),
+                  let sourceID = sourceNode.resolvedCompendiumID,
+                  let targetID = targetNode.resolvedCompendiumID,
+                  sourceID != targetID,
+                  compendiumByID[sourceID] != nil,
+                  compendiumByID[targetID] != nil else {
+                return nil
+            }
+            if let nodeRefByID,
+               (nodeRefByID[sourceID] == nil || nodeRefByID[targetID] == nil) {
+                return nil
+            }
+            return (edge, sourceID, targetID)
+        }
+        .sorted { lhs, rhs in
+            let lhsFocused = focusedCompendiumIDs.contains(lhs.sourceID) || focusedCompendiumIDs.contains(lhs.targetID)
+            let rhsFocused = focusedCompendiumIDs.contains(rhs.sourceID) || focusedCompendiumIDs.contains(rhs.targetID)
+            if lhsFocused != rhsFocused {
+                return lhsFocused && !rhsFocused
+            }
+            if lhs.edge.confidence != rhs.edge.confidence {
+                return lhs.edge.confidence > rhs.edge.confidence
+            }
+            return lhs.edge.updatedAt > rhs.edge.updatedAt
+        }
+
+        var lines: [String] = []
+        var seen = Set<String>()
+        for item in acceptedFacts {
+            let key = "\(item.sourceID.uuidString)|\(item.edge.relation)|\(item.targetID.uuidString)"
+            guard seen.insert(key).inserted else { continue }
+
+            let sourceLabel = nodeRefByID?[item.sourceID]
+                ?? displayCompendiumEntryTitle(compendiumByID[item.sourceID]!)
+            let targetLabel = nodeRefByID?[item.targetID]
+                ?? displayCompendiumEntryTitle(compendiumByID[item.targetID]!)
+            let relationLabel = item.edge.relation.replacingOccurrences(of: "_", with: " ")
+            let note = compactSingleLine(item.edge.note)
+            let noteSuffix = note.isEmpty ? "" : " | \(String(note.prefix(120)))"
+            lines.append("- \(sourceLabel) ==[\(relationLabel)]=> \(targetLabel)\(noteSuffix)")
+            if lines.count >= Self.graphPlannerFactMaxCount {
+                break
+            }
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private func makeGraphPathPlanRequest(
@@ -7306,6 +7388,11 @@ final class AppStore: ObservableObject {
             {{graph_edges}}
             >>>
 
+            FACTUAL_KNOWLEDGE:
+            <<<
+            {{graph_facts}}
+            >>>
+
             {{scene_insertion_block}}
 
             CONTEXT_BACKGROUND:
@@ -7323,6 +7410,7 @@ final class AppStore: ObservableObject {
             <ACTIVE_GRAPH_FRONTIER>{{graph_frontier}}</ACTIVE_GRAPH_FRONTIER>
             <GRAPH_NODES>{{graph_nodes}}</GRAPH_NODES>
             <GRAPH_EDGES>{{graph_edges}}</GRAPH_EDGES>
+            <FACTUAL_KNOWLEDGE>{{graph_facts}}</FACTUAL_KNOWLEDGE>
             {{scene_insertion_block}}
             <CONTEXT_BACKGROUND>{{context}}</CONTEXT_BACKGROUND>
             """
@@ -7352,7 +7440,8 @@ final class AppStore: ObservableObject {
                 "is_caret_insertion": isCaretInsertion ? "true" : "false",
                 "graph_frontier": graphContext.frontier,
                 "graph_nodes": graphContext.nodes,
-                "graph_edges": graphContext.edges
+                "graph_edges": graphContext.edges,
+                "graph_facts": graphContext.facts
             ]
         )
 
@@ -7367,6 +7456,7 @@ final class AppStore: ObservableObject {
         - Do not write prose.
         - Return a 3-6 step numbered PATH.
         - Use node references from GRAPH_NODES (e.g. N3) when relevant.
+        - Treat FACTUAL_KNOWLEDGE as continuity constraints and accepted world facts.
         - Prefer causal progression and tension escalation.
         - Include at least one reveal, contradiction, or misdirection.
         - Do not resolve the main conflict completely.
@@ -11123,6 +11213,7 @@ final class AppStore: ObservableObject {
             summaryScope: "",
             source: transcript,
             workshopSessionID: sessionID,
+            includeAutoStoryMemory: false,
             extraVariables: [
                 "chat_name": selectedSessionName.isEmpty ? "Untitled Chat" : selectedSessionName,
                 "last_user_message": messages.reversed().first(where: { $0.role == .user })?.content ?? "",
@@ -12149,6 +12240,7 @@ final class AppStore: ObservableObject {
         summaryScope: String,
         source: String,
         workshopSessionID: UUID? = nil,
+        includeAutoStoryMemory: Bool = true,
         extraVariables: [String: String] = [:]
     ) -> PromptRenderer.Result {
         let stateStyle = narrativeStateBlockStyle(
@@ -12160,10 +12252,12 @@ final class AppStore: ObservableObject {
         let rollingChapter = rollingChapterSummary(for: resolvedChapterID)
         let rollingScene = rollingSceneSummary(for: sceneID)
         let rollingWorkshop = rollingWorkshopSummary(for: workshopSessionID)
-        let autoProjectMemory = autoProjectStoryMemorySummary()
-        let autoChapterMemory = autoChapterStoryMemorySummary(for: resolvedChapterID)
-        let autoSceneMemory = autoSceneStoryMemorySummary(for: sceneID)
-        let relevantKnowledge = relevantStoryKnowledgeContext(sceneID: sceneID, chapterID: resolvedChapterID)
+        let autoProjectMemory = includeAutoStoryMemory ? autoProjectStoryMemorySummary() : ""
+        let autoChapterMemory = includeAutoStoryMemory ? autoChapterStoryMemorySummary(for: resolvedChapterID) : ""
+        let autoSceneMemory = includeAutoStoryMemory ? autoSceneStoryMemorySummary(for: sceneID) : ""
+        let relevantKnowledge = includeAutoStoryMemory
+            ? relevantStoryKnowledgeContext(sceneID: sceneID, chapterID: resolvedChapterID)
+            : ""
         let rollingCombined = combinedRollingSummaryText(
             chapterRolling: rollingChapter,
             sceneRolling: rollingScene,

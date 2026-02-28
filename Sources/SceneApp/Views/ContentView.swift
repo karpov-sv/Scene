@@ -277,7 +277,13 @@ struct ContentView: View {
                 .opacity(writingSidePanel == .compendium ? 1 : 0)
                 .allowsHitTesting(writingSidePanel == .compendium)
 
-            StoryKnowledgePanelView()
+            StoryKnowledgePanelView(
+                onOpenCompendiumEntry: { entryID in
+                    selectedTab = .writing
+                    writingSidePanel = .compendium
+                    store.selectCompendiumEntry(entryID)
+                }
+            )
                 .zIndex(writingSidePanel == .knowledge ? 1 : 0)
                 .opacity(writingSidePanel == .knowledge ? 1 : 0)
                 .allowsHitTesting(writingSidePanel == .knowledge)

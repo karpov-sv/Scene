@@ -49,7 +49,7 @@ struct ScenePlanPanelView: View {
             Text("Scene Plan")
                 .font(.headline)
 
-            Text("Plan beats first, then draft prose from the plan. Use graph planning to derive paths from compendium nodes and graph edges.")
+            Text("Plan beats first, then draft prose from the plan. Use graph planning to derive paths from compendium nodes, scene planner edges, and accepted factual knowledge.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -202,6 +202,10 @@ private struct StoryGraphEdgesSheet: View {
         }
     }
 
+    private var acceptedFactLines: [String] {
+        store.acceptedStoryKnowledgeFacts(for: sceneID)
+    }
+
     private var canAddEdge: Bool {
         guard let fromID = draftFromID, let toID = draftToID else { return false }
         return fromID != toID
@@ -292,20 +296,48 @@ private struct StoryGraphEdgesSheet: View {
 
             Divider()
 
-            if sceneEdges.isEmpty {
-                ContentUnavailableView(
-                    "No Graph Edges",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Create scene-specific edges for graph planning.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(sceneEdges) { edge in
-                        storyGraphEdgeRow(edge)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Scene Planner Edges")
+                            .font(.subheadline.weight(.semibold))
+
+                        if sceneEdges.isEmpty {
+                            Text("No scene-specific planner edges yet.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(sceneEdges) { edge in
+                                storyGraphEdgeRow(edge)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Accepted Factual Knowledge")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("Read-only continuity facts inferred from story memory and accepted into the project knowledge graph.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if acceptedFactLines.isEmpty {
+                            Text("No accepted factual edges relevant to this scene.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(acceptedFactLines.enumerated()), id: \.offset) { item in
+                                Text(item.element)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                 }
-                .listStyle(.plain)
+                .padding(14)
             }
         }
         .frame(minWidth: 900, minHeight: 520)
