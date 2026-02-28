@@ -50,9 +50,16 @@ final class AppStore: ObservableObject {
     }
 
     struct StoryKnowledgeConflictItem: Identifiable, Equatable {
+        struct AcceptedAssertion: Identifiable, Equatable {
+            let id: String
+            let label: String
+            let evidenceItems: [StoryKnowledgeEvidenceItem]
+        }
+
         enum Kind: String, Equatable {
             case edgeRelationConflict
             case compendiumDrift
+            case compendiumMatchConflict
 
             var title: String {
                 switch self {
@@ -60,6 +67,8 @@ final class AppStore: ObservableObject {
                     return "Relation Conflict"
                 case .compendiumDrift:
                     return "Compendium Drift"
+                case .compendiumMatchConflict:
+                    return "Canonical Match"
                 }
             }
         }
@@ -68,13 +77,27 @@ final class AppStore: ObservableObject {
         let kind: Kind
         let title: String
         let detail: String
-        let acceptedReferences: [String]
+        let acceptedAssertions: [AcceptedAssertion]
         let nodeKinds: [StoryKnowledgeNodeKind]
         let relation: String?
+        let sourceNodeID: UUID?
+        let targetNodeID: UUID?
         let pendingEdgeID: UUID?
         let nodeID: UUID?
         let compendiumID: UUID?
         let evidenceItems: [StoryKnowledgeEvidenceItem]
+    }
+
+    private enum StoryKnowledgeRelationConflictKind: Hashable {
+        case semanticOpposition
+        case reverseDirection
+        case incompatibleReverseDirection
+    }
+
+    private struct CanonicalStoryKnowledgeEdgeDescriptor {
+        let sourceNodeID: UUID
+        let targetNodeID: UUID
+        let relation: String
     }
 
     private enum DataExchangeError: LocalizedError {
@@ -1259,19 +1282,40 @@ final class AppStore: ObservableObject {
         let acceptedEdgesByPair = Dictionary(grouping: acceptedEdges) {
             storyKnowledgePairKey(sourceNodeID: $0.sourceNodeID, targetNodeID: $0.targetNodeID)
         }
+        let linkedCompendiumIDs = Set(project.storyKnowledgeNodes.compactMap(\.resolvedCompendiumID))
 
         for edge in storyKnowledgePendingReviewEdges {
             let pairKey = storyKnowledgePairKey(sourceNodeID: edge.sourceNodeID, targetNodeID: edge.targetNodeID)
-            let normalizedPendingRelation = normalizedStoryKnowledgeKey(edge.relation)
-            let conflictingAcceptedEdges = (acceptedEdgesByPair[pairKey] ?? []).filter {
-                normalizedStoryKnowledgeKey($0.relation) != normalizedPendingRelation
+            let exactConflicts = (acceptedEdgesByPair[pairKey] ?? []).compactMap { acceptedEdge in
+                storyKnowledgeRelationConflictKind(
+                    pendingRelation: edge.relation,
+                    acceptedRelation: acceptedEdge.relation,
+                    reversed: false
+                ).map { (acceptedEdge, $0) }
             }
+            let reversePairKey = storyKnowledgePairKey(sourceNodeID: edge.targetNodeID, targetNodeID: edge.sourceNodeID)
+            let reverseConflicts = (acceptedEdgesByPair[reversePairKey] ?? []).compactMap { acceptedEdge in
+                storyKnowledgeRelationConflictKind(
+                    pendingRelation: edge.relation,
+                    acceptedRelation: acceptedEdge.relation,
+                    reversed: true
+                ).map { (acceptedEdge, $0) }
+            }
+            let conflictingAcceptedEdges = (exactConflicts + reverseConflicts).map(\.0)
             guard !conflictingAcceptedEdges.isEmpty else { continue }
 
             let sourceKind = storyKnowledgeNode(for: edge.sourceNodeID)?.kind
             let targetKind = storyKnowledgeNode(for: edge.targetNodeID)?.kind
-            let acceptedLabels = conflictingAcceptedEdges.map(storyKnowledgeEdgeDisplayLabel(_:))
-            let detail = "Accepted knowledge already connects these nodes with a different relation."
+            let detail = storyKnowledgeConflictDetail(
+                for: Set((exactConflicts + reverseConflicts).map(\.1))
+            )
+            let acceptedAssertions = conflictingAcceptedEdges.map { acceptedEdge in
+                StoryKnowledgeConflictItem.AcceptedAssertion(
+                    id: acceptedEdge.id.uuidString,
+                    label: storyKnowledgeEdgeDisplayLabel(acceptedEdge),
+                    evidenceItems: storyKnowledgeEvidenceItems(for: acceptedEdge)
+                )
+            }
 
             items.append(
                 StoryKnowledgeConflictItem(
@@ -1279,13 +1323,69 @@ final class AppStore: ObservableObject {
                     kind: .edgeRelationConflict,
                     title: storyKnowledgeEdgeDisplayLabel(edge),
                     detail: detail,
-                    acceptedReferences: acceptedLabels,
+                    acceptedAssertions: acceptedAssertions,
                     nodeKinds: [sourceKind, targetKind].compactMap { $0 },
                     relation: edge.relation,
+                    sourceNodeID: edge.sourceNodeID,
+                    targetNodeID: edge.targetNodeID,
                     pendingEdgeID: edge.id,
                     nodeID: nil,
                     compendiumID: nil,
                     evidenceItems: storyKnowledgeEvidenceItems(for: edge)
+                )
+            )
+        }
+
+        for node in storyKnowledgePendingReviewNodes {
+            let candidateKeys = Set(
+                ([node.name] + node.aliases)
+                    .map(normalizedStoryKnowledgeKey(_:))
+                    .filter { !$0.isEmpty }
+            )
+            guard !candidateKeys.isEmpty else { continue }
+
+            let matches = project.compendium.filter { entry in
+                let titleKey = normalizedStoryKnowledgeKey(entry.title)
+                let tagKeys = Set(entry.tags.map(normalizedStoryKnowledgeKey(_:)).filter { !$0.isEmpty })
+                return !linkedCompendiumIDs.contains(entry.id)
+                    && (candidateKeys.contains(titleKey) || !candidateKeys.isDisjoint(with: tagKeys))
+            }
+            guard matches.count == 1, let match = matches.first else { continue }
+
+            let matchedByTitle = candidateKeys.contains(normalizedStoryKnowledgeKey(match.title))
+            let matchedTags = match.tags.filter { candidateKeys.contains(normalizedStoryKnowledgeKey($0)) }
+            let detail: String
+            if matchedByTitle && !matchedTags.isEmpty {
+                detail = "Pending node matches an existing compendium entry by title and tag."
+            } else if matchedByTitle {
+                detail = "Pending node matches an existing compendium entry by title."
+            } else if let matchedTag = matchedTags.first {
+                detail = "Pending node matches an existing compendium entry by tag: \(matchedTag)."
+            } else {
+                detail = "Pending node matches an existing compendium entry by alias."
+            }
+
+            items.append(
+                StoryKnowledgeConflictItem(
+                    id: "match:\(node.id.uuidString):\(match.id.uuidString)",
+                    kind: .compendiumMatchConflict,
+                    title: "\(node.name) -> \(displayCompendiumEntryTitle(match))",
+                    detail: detail,
+                    acceptedAssertions: [
+                        StoryKnowledgeConflictItem.AcceptedAssertion(
+                            id: "compendium:\(match.id.uuidString)",
+                            label: displayCompendiumEntryTitle(match),
+                            evidenceItems: []
+                        )
+                    ],
+                    nodeKinds: [node.kind],
+                    relation: nil,
+                    sourceNodeID: node.id,
+                    targetNodeID: nil,
+                    pendingEdgeID: nil,
+                    nodeID: node.id,
+                    compendiumID: match.id,
+                    evidenceItems: storyKnowledgeEvidenceItems(for: node)
                 )
             )
         }
@@ -1314,9 +1414,11 @@ final class AppStore: ObservableObject {
                     kind: .compendiumDrift,
                     title: "\(node.name) -> \(preview.compendiumTitle)",
                     detail: detail,
-                    acceptedReferences: [],
+                    acceptedAssertions: [],
                     nodeKinds: [node.kind],
                     relation: nil,
+                    sourceNodeID: node.id,
+                    targetNodeID: nil,
                     pendingEdgeID: nil,
                     nodeID: node.id,
                     compendiumID: compendiumID,
@@ -1327,7 +1429,12 @@ final class AppStore: ObservableObject {
 
         return items.sorted { lhs, rhs in
             if lhs.kind != rhs.kind {
-                return lhs.kind == .edgeRelationConflict
+                let priority: [StoryKnowledgeConflictItem.Kind: Int] = [
+                    .edgeRelationConflict: 0,
+                    .compendiumMatchConflict: 1,
+                    .compendiumDrift: 2,
+                ]
+                return (priority[lhs.kind] ?? 99) < (priority[rhs.kind] ?? 99)
             }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
@@ -4358,6 +4465,22 @@ final class AppStore: ObservableObject {
 
     func promoteStoryKnowledgeNodeToCompendium(_ nodeID: UUID) {
         _ = promoteStoryKnowledgeNodeToCompendium(nodeID, shouldSave: true)
+    }
+
+    func resolveStoryKnowledgeNodeToCompendium(_ nodeID: UUID, compendiumID: UUID) {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }),
+              let entryIndex = compendiumIndex(for: compendiumID),
+              !project.storyKnowledgeNodes.contains(where: { $0.id != nodeID && $0.resolvedCompendiumID == compendiumID }) else {
+            return
+        }
+
+        project.storyKnowledgeNodes[nodeIndex].resolvedCompendiumID = compendiumID
+        project.storyKnowledgeNodes[nodeIndex].kind = storyKnowledgeNodeKind(for: project.compendium[entryIndex].category)
+        project.storyKnowledgeNodes[nodeIndex].status = .canonical
+        project.storyKnowledgeNodes[nodeIndex].updatedAt = .now
+        selectedCompendiumID = compendiumID
+        saveProject()
     }
 
     func promoteStoryKnowledgeNodesToCompendium(_ nodeIDs: [UUID]) {
@@ -10911,19 +11034,39 @@ final class AppStore: ObservableObject {
         confidence: Double,
         sceneID: UUID
     ) {
-        guard sourceNodeID != targetNodeID else { return }
-        let normalizedRelation = normalizedStoryKnowledgeRelation(relation)
-        guard !normalizedRelation.isEmpty else { return }
+        guard let canonicalEdge = canonicalizedStoryKnowledgeEdge(
+            sourceNodeID: sourceNodeID,
+            targetNodeID: targetNodeID,
+            relation: relation
+        ) else { return }
+        let observedRelationAliases = observedStoryKnowledgeRelationAliases(
+            rawRelation: relation,
+            canonicalRelation: canonicalEdge.relation
+        )
 
         if let index = project.storyKnowledgeEdges.firstIndex(where: { edge in
-            edge.sourceNodeID == sourceNodeID
-                && edge.targetNodeID == targetNodeID
-                && normalizedStoryKnowledgeRelation(edge.relation) == normalizedRelation
+            guard let existingCanonicalEdge = canonicalizedStoryKnowledgeEdge(
+                sourceNodeID: edge.sourceNodeID,
+                targetNodeID: edge.targetNodeID,
+                relation: edge.relation
+            ) else {
+                return false
+            }
+            return existingCanonicalEdge.sourceNodeID == canonicalEdge.sourceNodeID
+                && existingCanonicalEdge.targetNodeID == canonicalEdge.targetNodeID
+                && existingCanonicalEdge.relation == canonicalEdge.relation
         }) {
             var existing = project.storyKnowledgeEdges[index]
             if existing.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 existing.note = normalizedRollingMemorySummary(note, maxChars: 140)
             }
+            existing.sourceNodeID = canonicalEdge.sourceNodeID
+            existing.targetNodeID = canonicalEdge.targetNodeID
+            existing.relation = canonicalEdge.relation
+            existing.observedRelationAliases = mergedStoryKnowledgeRelationAliases(
+                existing: existing.observedRelationAliases,
+                additional: observedRelationAliases
+            )
             existing.confidence = max(existing.confidence, min(max(confidence, 0), 1))
             existing.evidenceSceneIDs = deduplicatedUUIDs(existing.evidenceSceneIDs + [sceneID])
             existing.updatedAt = .now
@@ -10933,9 +11076,10 @@ final class AppStore: ObservableObject {
 
         project.storyKnowledgeEdges.append(
             StoryKnowledgeEdge(
-                sourceNodeID: sourceNodeID,
-                targetNodeID: targetNodeID,
-                relation: normalizedRelation,
+                sourceNodeID: canonicalEdge.sourceNodeID,
+                targetNodeID: canonicalEdge.targetNodeID,
+                relation: canonicalEdge.relation,
+                observedRelationAliases: observedRelationAliases,
                 note: normalizedRollingMemorySummary(note, maxChars: 140),
                 status: .inferred,
                 confidence: confidence,
@@ -13174,6 +13318,7 @@ final class AppStore: ObservableObject {
         let validNodeIDs = Set(sanitizedNodes.map(\.id))
         var sanitizedEdges: [StoryKnowledgeEdge] = []
         var seenEdgeIDs = Set<UUID>()
+        var sanitizedEdgeIndexByKey: [String: Int] = [:]
         for edge in project.storyKnowledgeEdges {
             guard seenEdgeIDs.insert(edge.id).inserted else { continue }
             guard validNodeIDs.contains(edge.sourceNodeID),
@@ -13182,22 +13327,41 @@ final class AppStore: ObservableObject {
                 continue
             }
 
-            let relation = normalizedStoryKnowledgeRelation(edge.relation)
-            guard !relation.isEmpty else { continue }
-
-            sanitizedEdges.append(
-                StoryKnowledgeEdge(
-                    id: edge.id,
-                    sourceNodeID: edge.sourceNodeID,
-                    targetNodeID: edge.targetNodeID,
-                    relation: relation,
-                    note: normalizedRollingMemorySummary(edge.note, maxChars: 140),
-                    status: edge.status == .rejected ? .rejected : (edge.status == .canonical ? .canonical : .inferred),
-                    confidence: min(max(edge.confidence, 0), 1),
-                    evidenceSceneIDs: deduplicatedUUIDs(edge.evidenceSceneIDs.filter { validSceneIDs.contains($0) }),
-                    updatedAt: edge.updatedAt
+            guard let canonicalEdge = canonicalizedStoryKnowledgeEdge(
+                sourceNodeID: edge.sourceNodeID,
+                targetNodeID: edge.targetNodeID,
+                relation: edge.relation
+            ) else { continue }
+            let observedRelationAliases = mergedStoryKnowledgeRelationAliases(
+                existing: edge.observedRelationAliases,
+                additional: observedStoryKnowledgeRelationAliases(
+                    rawRelation: edge.relation,
+                    canonicalRelation: canonicalEdge.relation
                 )
             )
+
+            let sanitizedEdge = StoryKnowledgeEdge(
+                id: edge.id,
+                sourceNodeID: canonicalEdge.sourceNodeID,
+                targetNodeID: canonicalEdge.targetNodeID,
+                relation: canonicalEdge.relation,
+                observedRelationAliases: observedRelationAliases,
+                note: normalizedRollingMemorySummary(edge.note, maxChars: 140),
+                status: edge.status == .rejected ? .rejected : (edge.status == .canonical ? .canonical : .inferred),
+                confidence: min(max(edge.confidence, 0), 1),
+                evidenceSceneIDs: deduplicatedUUIDs(edge.evidenceSceneIDs.filter { validSceneIDs.contains($0) }),
+                updatedAt: edge.updatedAt
+            )
+            let mergeKey = storyKnowledgeEdgeMergeKey(sanitizedEdge)
+            if let existingIndex = sanitizedEdgeIndexByKey[mergeKey] {
+                sanitizedEdges[existingIndex] = mergedStoryKnowledgeEdge(
+                    existing: sanitizedEdges[existingIndex],
+                    incoming: sanitizedEdge
+                )
+            } else {
+                sanitizedEdgeIndexByKey[mergeKey] = sanitizedEdges.count
+                sanitizedEdges.append(sanitizedEdge)
+            }
         }
         project.storyKnowledgeEdges = sanitizedEdges
     }
@@ -13401,6 +13565,304 @@ final class AppStore: ObservableObject {
 
     private func storyKnowledgePairKey(sourceNodeID: UUID, targetNodeID: UUID) -> String {
         "\(sourceNodeID.uuidString)|\(targetNodeID.uuidString)"
+    }
+
+    private func storyKnowledgeEdgeMergeKey(_ edge: StoryKnowledgeEdge) -> String {
+        "\(storyKnowledgePairKey(sourceNodeID: edge.sourceNodeID, targetNodeID: edge.targetNodeID))|\(edge.relation)"
+    }
+
+    private func observedStoryKnowledgeRelationAliases(
+        rawRelation: String,
+        canonicalRelation: String
+    ) -> [String] {
+        let normalizedRawRelation = normalizedStoryKnowledgeRelation(rawRelation)
+        guard !normalizedRawRelation.isEmpty,
+              normalizedRawRelation != canonicalRelation else {
+            return []
+        }
+        return [normalizedRawRelation]
+    }
+
+    private func mergedStoryKnowledgeRelationAliases(
+        existing: [String],
+        additional: [String]
+    ) -> [String] {
+        normalizedStoryMemoryLines(
+            existing + additional,
+            maxCount: 8,
+            maxCharsPerLine: 48
+        )
+    }
+
+    private func canonicalizedStoryKnowledgeEdge(
+        sourceNodeID: UUID,
+        targetNodeID: UUID,
+        relation: String
+    ) -> CanonicalStoryKnowledgeEdgeDescriptor? {
+        guard sourceNodeID != targetNodeID else { return nil }
+
+        let normalizedRelation = normalizedStoryKnowledgeRelation(relation)
+        guard !normalizedRelation.isEmpty else { return nil }
+
+        var canonicalSourceNodeID = sourceNodeID
+        var canonicalTargetNodeID = targetNodeID
+        let canonicalRelation: String
+
+        switch normalizedRelation {
+        case "ally_of", "allies_with", "aligned_with":
+            canonicalRelation = "allied_with"
+        case "belongs_to", "owned_by":
+            canonicalRelation = "owns"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "child_of":
+            canonicalRelation = "parent_of"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "commanded_by":
+            canonicalRelation = "commands"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "connected", "connected_with":
+            canonicalRelation = "connected_to"
+        case "employed_by":
+            canonicalRelation = "works_for"
+        case "employs":
+            canonicalRelation = "works_for"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "friend_of", "friends", "friends_with_each_other":
+            canonicalRelation = "friends_with"
+        case "has_member":
+            canonicalRelation = "member_of"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "led_by":
+            canonicalRelation = "leads"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "learns_from", "taught_by":
+            canonicalRelation = "teaches"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "lives_at":
+            canonicalRelation = "lives_in"
+        case "married", "married_with":
+            canonicalRelation = "married_to"
+        case "near_to", "nearby_to":
+            canonicalRelation = "near"
+        case "related", "related_with":
+            canonicalRelation = "related_to"
+        case "ruled_by":
+            canonicalRelation = "rules"
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        case "same":
+            canonicalRelation = "same_as"
+        case "siblings", "sibling":
+            canonicalRelation = "sibling_of"
+        default:
+            canonicalRelation = normalizedRelation
+        }
+
+        if storyKnowledgeRelationLikelySymmetric(canonicalRelation),
+           canonicalSourceNodeID.uuidString > canonicalTargetNodeID.uuidString {
+            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
+        }
+
+        return CanonicalStoryKnowledgeEdgeDescriptor(
+            sourceNodeID: canonicalSourceNodeID,
+            targetNodeID: canonicalTargetNodeID,
+            relation: canonicalRelation
+        )
+    }
+
+    private func mergedStoryKnowledgeEdge(
+        existing: StoryKnowledgeEdge,
+        incoming: StoryKnowledgeEdge
+    ) -> StoryKnowledgeEdge {
+        let mergedNote = mergedStoryKnowledgeEdgeNote(existing: existing.note, incoming: incoming.note)
+        let mergedStatus = storyKnowledgeMergedEdgeStatus(existing.status, incoming.status)
+        let mergedConfidence = max(existing.confidence, incoming.confidence)
+        let mergedEvidenceSceneIDs = deduplicatedUUIDs(existing.evidenceSceneIDs + incoming.evidenceSceneIDs)
+        let mergedUpdatedAt = max(existing.updatedAt, incoming.updatedAt)
+
+        return StoryKnowledgeEdge(
+            id: existing.id,
+            sourceNodeID: existing.sourceNodeID,
+            targetNodeID: existing.targetNodeID,
+            relation: existing.relation,
+            observedRelationAliases: mergedStoryKnowledgeRelationAliases(
+                existing: existing.observedRelationAliases,
+                additional: incoming.observedRelationAliases
+            ),
+            note: mergedNote,
+            status: mergedStatus,
+            confidence: mergedConfidence,
+            evidenceSceneIDs: mergedEvidenceSceneIDs,
+            updatedAt: mergedUpdatedAt
+        )
+    }
+
+    private func mergedStoryKnowledgeEdgeNote(existing: String, incoming: String) -> String {
+        let existingNote = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingNote = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if existingNote.isEmpty {
+            return incomingNote
+        }
+        if incomingNote.isEmpty {
+            return existingNote
+        }
+
+        let normalizedExistingNote = compactSingleLine(existingNote).lowercased()
+        let normalizedIncomingNote = compactSingleLine(incomingNote).lowercased()
+        if normalizedExistingNote == normalizedIncomingNote {
+            return existingNote.count >= incomingNote.count ? existingNote : incomingNote
+        }
+        if normalizedExistingNote.contains(normalizedIncomingNote) {
+            return existingNote
+        }
+        if normalizedIncomingNote.contains(normalizedExistingNote) {
+            return incomingNote
+        }
+        return existingNote
+    }
+
+    private func storyKnowledgeMergedEdgeStatus(
+        _ lhs: StoryKnowledgeRecordStatus,
+        _ rhs: StoryKnowledgeRecordStatus
+    ) -> StoryKnowledgeRecordStatus {
+        func priority(for status: StoryKnowledgeRecordStatus) -> Int {
+            switch status {
+            case .canonical:
+                return 2
+            case .rejected:
+                return 1
+            case .inferred:
+                return 0
+            }
+        }
+
+        return priority(for: lhs) >= priority(for: rhs) ? lhs : rhs
+    }
+
+    private func storyKnowledgeRelationConflictKind(
+        pendingRelation: String,
+        acceptedRelation: String,
+        reversed: Bool
+    ) -> StoryKnowledgeRelationConflictKind? {
+        let normalizedPendingRelation = normalizedStoryKnowledgeRelation(pendingRelation)
+        let normalizedAcceptedRelation = normalizedStoryKnowledgeRelation(acceptedRelation)
+        guard !normalizedPendingRelation.isEmpty, !normalizedAcceptedRelation.isEmpty else { return nil }
+
+        if storyKnowledgeRelationsAreSemanticOpposites(
+            normalizedPendingRelation,
+            normalizedAcceptedRelation
+        ) {
+            return .semanticOpposition
+        }
+
+        guard reversed else { return nil }
+        if storyKnowledgeRelationsAreReverseCompatible(
+            normalizedPendingRelation,
+            normalizedAcceptedRelation
+        ) {
+            return nil
+        }
+        if normalizedPendingRelation == normalizedAcceptedRelation {
+            return storyKnowledgeRelationLikelySymmetric(normalizedPendingRelation) ? nil : .reverseDirection
+        }
+        return .incompatibleReverseDirection
+    }
+
+    private func storyKnowledgeRelationLikelySymmetric(_ normalizedRelation: String) -> Bool {
+        let symmetricRelations: Set<String> = [
+            "allied_with",
+            "connected_to",
+            "friends_with",
+            "knows",
+            "near",
+            "related_to",
+            "same_as",
+            "sibling_of",
+        ]
+        return symmetricRelations.contains(normalizedRelation)
+    }
+
+    private func storyKnowledgeRelationsAreSemanticOpposites(
+        _ lhs: String,
+        _ rhs: String
+    ) -> Bool {
+        guard lhs != rhs else { return false }
+        let pair = Set([lhs, rhs])
+        let oppositePairs: [Set<String>] = [
+            ["alive", "dead"],
+            ["alive", "deceased"],
+            ["alive", "dies"],
+            ["allied_with", "opposed_to"],
+            ["allied_with", "at_war_with"],
+            ["enemy_of", "friends_with"],
+            ["friends_with", "rivals_with"],
+            ["has_not_met", "knows"],
+            ["has_not_met", "met"],
+            ["left", "located_in"],
+            ["left", "lives_in"],
+            ["located_in", "missing_from"],
+            ["married_to", "divorced_from"],
+            ["same_as", "different_from"],
+        ]
+        return oppositePairs.contains(pair)
+    }
+
+    private func storyKnowledgeRelationsAreReverseCompatible(
+        _ lhs: String,
+        _ rhs: String
+    ) -> Bool {
+        if lhs == rhs {
+            return storyKnowledgeRelationLikelySymmetric(lhs)
+        }
+
+        let reverseCompatibleRelations: [String: Set<String>] = [
+            "belongs_to": ["owns"],
+            "captured_by": ["captured"],
+            "captured": ["captured_by"],
+            "child_of": ["parent_of"],
+            "commanded_by": ["commands", "serves_under"],
+            "commands": ["commanded_by", "serves_under"],
+            "contains": ["located_in", "lives_in"],
+            "employed_by": ["employs", "works_for"],
+            "employs": ["employed_by", "works_for"],
+            "has_member": ["member_of"],
+            "learns_from": ["teaches", "taught_by"],
+            "led_by": ["leads"],
+            "leads": ["led_by"],
+            "lives_in": ["contains"],
+            "located_in": ["contains"],
+            "member_of": ["has_member"],
+            "mentored_by": ["mentors"],
+            "mentors": ["mentored_by"],
+            "owned_by": ["owns"],
+            "owns": ["belongs_to", "owned_by"],
+            "parent_of": ["child_of"],
+            "rules": ["ruled_by"],
+            "ruled_by": ["rules"],
+            "serves_under": ["commanded_by", "commands"],
+            "taught_by": ["learns_from", "teaches"],
+            "teaches": ["learns_from", "taught_by"],
+            "works_for": ["employed_by", "employs"],
+        ]
+        return reverseCompatibleRelations[lhs]?.contains(rhs) == true
+    }
+
+    private func storyKnowledgeConflictDetail(
+        for kinds: Set<StoryKnowledgeRelationConflictKind>
+    ) -> String {
+        if kinds.contains(.semanticOpposition) && kinds.count == 1 {
+            return "Accepted knowledge already asserts a contradictory relation between these nodes."
+        }
+        if kinds.contains(.semanticOpposition) {
+            return "Accepted knowledge already asserts a contradictory or incompatible relation between these nodes."
+        }
+        if kinds == [.reverseDirection] {
+            return "Accepted knowledge already connects these nodes in the reverse direction."
+        }
+        if kinds == [.incompatibleReverseDirection] {
+            return "Accepted knowledge already connects these nodes with an incompatible reverse relation."
+        }
+        return "Accepted knowledge already asserts an incompatible relation involving these nodes."
     }
 
     private struct StoryKnowledgeCompendiumMergePlan {

@@ -576,6 +576,7 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
     var sourceNodeID: UUID
     var targetNodeID: UUID
     var relation: String
+    var observedRelationAliases: [String]
     var note: String
     var status: StoryKnowledgeRecordStatus
     var confidence: Double
@@ -587,6 +588,7 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         sourceNodeID: UUID,
         targetNodeID: UUID,
         relation: String,
+        observedRelationAliases: [String] = [],
         note: String = "",
         status: StoryKnowledgeRecordStatus = .inferred,
         confidence: Double = 0.5,
@@ -597,11 +599,39 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         self.sourceNodeID = sourceNodeID
         self.targetNodeID = targetNodeID
         self.relation = relation
+        self.observedRelationAliases = observedRelationAliases
         self.note = note
         self.status = status
         self.confidence = min(max(confidence, 0), 1)
         self.evidenceSceneIDs = evidenceSceneIDs
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case sourceNodeID
+        case targetNodeID
+        case relation
+        case observedRelationAliases
+        case note
+        case status
+        case confidence
+        case evidenceSceneIDs
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        sourceNodeID = try container.decode(UUID.self, forKey: .sourceNodeID)
+        targetNodeID = try container.decode(UUID.self, forKey: .targetNodeID)
+        relation = try container.decode(String.self, forKey: .relation)
+        observedRelationAliases = try container.decodeIfPresent([String].self, forKey: .observedRelationAliases) ?? []
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        status = try container.decodeIfPresent(StoryKnowledgeRecordStatus.self, forKey: .status) ?? .inferred
+        confidence = min(max(try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 0.5, 0), 1)
+        evidenceSceneIDs = try container.decodeIfPresent([UUID].self, forKey: .evidenceSceneIDs) ?? []
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }
 }
 

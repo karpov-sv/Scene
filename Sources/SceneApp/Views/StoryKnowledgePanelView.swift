@@ -1,16 +1,39 @@
 import SwiftUI
 
 struct StoryKnowledgePanelView: View {
+    private struct ConflictFocus: Equatable {
+        let label: String
+        let nodeIDs: Set<UUID>
+        let compendiumID: UUID?
+    }
+
+    private struct CollapsedRelationSummary: Identifiable {
+        let relation: String
+        let aliases: [String]
+        let edgeCount: Int
+        let pendingEdgeCount: Int
+
+        var id: String { relation }
+    }
+
     @EnvironmentObject private var store: AppStore
     @State private var refreshTask: Task<Void, Never>?
     @State private var refreshError: String = ""
     @State private var compendiumMergePreview: AppStore.StoryKnowledgeCompendiumMergePreview?
     @State private var selectedPendingNodeIDs: Set<UUID> = []
     @State private var selectedPendingEdgeIDs: Set<UUID> = []
+    @State private var conflictFocus: ConflictFocus?
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
         refreshTask != nil
+    }
+
+    private var storyKnowledgeNodesByID: [UUID: StoryKnowledgeNode] {
+        Dictionary(
+            uniqueKeysWithValues: (store.storyKnowledgeActiveNodes + store.storyKnowledgePendingReviewNodes)
+                .map { ($0.id, $0) }
+        )
     }
 
     private var acceptedNodes: [StoryKnowledgeNode] {
@@ -22,42 +45,46 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var filteredAcceptedNodes: [StoryKnowledgeNode] {
-        sort(nodes: acceptedNodes.filter { matchesNodeKind(node: $0) && matchesSearch(node: $0) })
+        sort(nodes: acceptedNodes.filter {
+            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
+        })
     }
 
     private var filteredConflictItems: [AppStore.StoryKnowledgeConflictItem] {
-        store.storyKnowledgeConflictItems.filter(matchesConflict(_:))
+        store.storyKnowledgeConflictItems.filter { matchesFocus(conflict: $0) && matchesConflict($0) }
     }
 
     private var filteredAcceptedEdges: [StoryKnowledgeEdge] {
         sort(edges: acceptedEdges.filter {
-            matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
         })
     }
 
     private var filteredPendingNodes: [StoryKnowledgeNode] {
         sort(nodes: store.storyKnowledgePendingReviewNodes.filter {
-            matchesNodeKind(node: $0) && matchesSearch(node: $0)
+            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
         })
     }
 
     private var filteredPendingEdges: [StoryKnowledgeEdge] {
         sort(edges: store.storyKnowledgePendingReviewEdges.filter {
-            matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
         })
     }
 
     private var hasAnyVisibleResults: Bool {
-        !filteredAcceptedNodes.isEmpty
+        !filteredConflictItems.isEmpty
+            || !filteredAcceptedNodes.isEmpty
             || !filteredAcceptedEdges.isEmpty
             || !filteredPendingNodes.isEmpty
             || !filteredPendingEdges.isEmpty
     }
 
     private var visibleResultCount: Int {
+        let conflictCount = filteredConflictItems.count
         let acceptedCount = visibilityFilter == .pending ? 0 : filteredAcceptedNodes.count + filteredAcceptedEdges.count
         let pendingCount = visibilityFilter == .accepted ? 0 : filteredPendingNodes.count + filteredPendingEdges.count
-        return acceptedCount + pendingCount
+        return conflictCount + acceptedCount + pendingCount
     }
 
     private var visiblePendingNodeIDSet: Set<UUID> {
@@ -74,6 +101,48 @@ struct StoryKnowledgePanelView: View {
 
     private var visibleSelectedPendingEdgeIDs: [UUID] {
         filteredPendingEdges.map(\.id).filter { selectedPendingEdgeIDs.contains($0) }
+    }
+
+    private var visibleDiagnosticEdges: [StoryKnowledgeEdge] {
+        let accepted = visibilityFilter == .pending ? [] : filteredAcceptedEdges
+        let pending = visibilityFilter == .accepted ? [] : filteredPendingEdges
+        return accepted + pending
+    }
+
+    private var collapsedRelationSummaries: [CollapsedRelationSummary] {
+        let groupedEdges = Dictionary(grouping: visibleDiagnosticEdges.filter { !$0.observedRelationAliases.isEmpty }) {
+            $0.relation
+        }
+
+        return groupedEdges.compactMap { relation, edges in
+            let aliases = normalizedCollapsedRelationAliases(
+                edges.flatMap(\.observedRelationAliases)
+            )
+            guard !aliases.isEmpty else { return nil }
+            return CollapsedRelationSummary(
+                relation: relation,
+                aliases: aliases,
+                edgeCount: edges.count,
+                pendingEdgeCount: edges.filter { $0.status == .inferred }.count
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            if lhs.aliases.count != rhs.aliases.count {
+                return lhs.aliases.count > rhs.aliases.count
+            }
+            return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+        }
+    }
+
+    private var collapsedRelationEdgeCount: Int {
+        collapsedRelationSummaries.reduce(0) { $0 + $1.edgeCount }
+    }
+
+    private var collapsedRelationAliasCount: Int {
+        Set(collapsedRelationSummaries.flatMap(\.aliases)).count
     }
 
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
@@ -156,6 +225,10 @@ struct StoryKnowledgePanelView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     summarySection
+
+                    if !collapsedRelationSummaries.isEmpty {
+                        collapsedRelationSection
+                    }
 
                     if !store.selectedSceneRelevantStoryKnowledge.isEmpty {
                         textSection(
@@ -270,6 +343,12 @@ struct StoryKnowledgePanelView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if !collapsedRelationSummaries.isEmpty {
+                Text("\(collapsedRelationEdgeCount) edges collapsed from \(collapsedRelationAliasCount) alternate relation labels")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Picker("Visibility", selection: visibilityFilterBinding) {
                 ForEach(StoryKnowledgePanelVisibilityFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
@@ -315,6 +394,23 @@ struct StoryKnowledgePanelView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+
+            if let conflictFocus {
+                HStack(spacing: 8) {
+                    Label(conflictFocus.label, systemImage: "scope")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 0)
+
+                    Button("Clear Focus") {
+                        self.conflictFocus = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -338,6 +434,44 @@ struct StoryKnowledgePanelView: View {
         .cardStyle()
     }
 
+    private var collapsedRelationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Collapsed Relations")
+                .font(.headline)
+
+            Text("Canonical relations that absorbed alternate extracted labels in the current view.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(collapsedRelationSummaries.prefix(6))) { summary in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(summary.relation.replacingOccurrences(of: "_", with: " ").capitalized)
+                            .font(.subheadline.weight(.semibold))
+                        statusBadge("\(summary.edgeCount) edge" + (summary.edgeCount == 1 ? "" : "s"))
+                        if summary.pendingEdgeCount > 0 {
+                            statusBadge("\(summary.pendingEdgeCount) pending")
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    Text(summary.aliases.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(.vertical, 2)
+            }
+
+            if collapsedRelationSummaries.count > 6 {
+                Text("+\(collapsedRelationSummaries.count - 6) more canonical relation families")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .cardStyle()
+    }
+
     private var conflictSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Potential Conflicts")
@@ -349,8 +483,17 @@ struct StoryKnowledgePanelView: View {
                     isUpdating: isRefreshing,
                     onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
                     onOpenCompendiumEntry: onOpenCompendiumEntry,
+                    onResolveNodeToCompendium: { nodeID, compendiumID in
+                        selectedPendingNodeIDs.remove(nodeID)
+                        store.resolveStoryKnowledgeNodeToCompendium(nodeID, compendiumID: compendiumID)
+                    },
                     onReviewCompendiumMerge: { nodeID in
                         compendiumMergePreview = store.storyKnowledgeCompendiumMergePreview(for: nodeID)
+                    },
+                    onFocus: { focus(on: item) },
+                    onRejectNode: { nodeID in
+                        selectedPendingNodeIDs.remove(nodeID)
+                        store.rejectStoryKnowledgeNode(nodeID)
                     },
                     onAcceptEdge: { edgeID in
                         selectedPendingEdgeIDs.remove(edgeID)
@@ -640,13 +783,41 @@ struct StoryKnowledgePanelView: View {
         return node.kind == selectedKind
     }
 
+    private func matchesFocus(node: StoryKnowledgeNode) -> Bool {
+        guard let conflictFocus else { return true }
+        if conflictFocus.nodeIDs.contains(node.id) {
+            return true
+        }
+        if let compendiumID = conflictFocus.compendiumID,
+           node.resolvedCompendiumID == compendiumID {
+            return true
+        }
+        return false
+    }
+
     private func matchesNodeKind(edge: StoryKnowledgeEdge) -> Bool {
         guard let selectedKind = nodeKindFilter.nodeKind else { return true }
-        let sourceKind = store.storyKnowledgeActiveNodes.first(where: { $0.id == edge.sourceNodeID })?.kind
-            ?? store.storyKnowledgePendingReviewNodes.first(where: { $0.id == edge.sourceNodeID })?.kind
-        let targetKind = store.storyKnowledgeActiveNodes.first(where: { $0.id == edge.targetNodeID })?.kind
-            ?? store.storyKnowledgePendingReviewNodes.first(where: { $0.id == edge.targetNodeID })?.kind
+        let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind
+        let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind
         return sourceKind == selectedKind || targetKind == selectedKind
+    }
+
+    private func matchesFocus(edge: StoryKnowledgeEdge) -> Bool {
+        guard let conflictFocus else { return true }
+
+        let edgeNodeIDs = Set([edge.sourceNodeID, edge.targetNodeID])
+        if conflictFocus.nodeIDs.count > 1, conflictFocus.compendiumID == nil {
+            return edgeNodeIDs == conflictFocus.nodeIDs
+        }
+        if !edgeNodeIDs.isDisjoint(with: conflictFocus.nodeIDs) {
+            return true
+        }
+        guard let compendiumID = conflictFocus.compendiumID else {
+            return false
+        }
+        let sourceCompendiumID = storyKnowledgeNodesByID[edge.sourceNodeID]?.resolvedCompendiumID
+        let targetCompendiumID = storyKnowledgeNodesByID[edge.targetNodeID]?.resolvedCompendiumID
+        return sourceCompendiumID == compendiumID || targetCompendiumID == compendiumID
     }
 
     private func matchesRelation(edge: StoryKnowledgeEdge) -> Bool {
@@ -659,7 +830,8 @@ struct StoryKnowledgePanelView: View {
         let haystack = [
             store.storyKnowledgeEdgeDisplayLabel(edge),
             edge.status.rawValue,
-            edge.note
+            edge.note,
+            edge.observedRelationAliases.joined(separator: " ")
         ]
             .joined(separator: "\n")
             .lowercased()
@@ -680,12 +852,66 @@ struct StoryKnowledgePanelView: View {
         guard !query.isEmpty else { return true }
         let haystack = (
             [item.title, item.detail]
-            + item.acceptedReferences
+            + item.acceptedAssertions.map(\.label)
             + item.evidenceItems.map { "\($0.chapterTitle) \($0.sceneTitle)" }
+            + item.acceptedAssertions.flatMap { assertion in
+                assertion.evidenceItems.map { "\($0.chapterTitle) \($0.sceneTitle)" }
+            }
         )
         .joined(separator: "\n")
         .lowercased()
         return haystack.contains(query)
+    }
+
+    private func matchesFocus(conflict item: AppStore.StoryKnowledgeConflictItem) -> Bool {
+        guard let conflictFocus else { return true }
+
+        if conflictFocus.nodeIDs.count > 1,
+           conflictFocus.compendiumID == nil,
+           let sourceNodeID = item.sourceNodeID,
+           let targetNodeID = item.targetNodeID {
+            return Set([sourceNodeID, targetNodeID]) == conflictFocus.nodeIDs
+        }
+        if let sourceNodeID = item.sourceNodeID,
+           conflictFocus.nodeIDs.contains(sourceNodeID) {
+            return true
+        }
+        if let targetNodeID = item.targetNodeID,
+           conflictFocus.nodeIDs.contains(targetNodeID) {
+            return true
+        }
+        if let nodeID = item.nodeID,
+           conflictFocus.nodeIDs.contains(nodeID) {
+            return true
+        }
+        if let compendiumID = item.compendiumID,
+           conflictFocus.compendiumID == compendiumID {
+            return true
+        }
+        return false
+    }
+
+    private func focus(on item: AppStore.StoryKnowledgeConflictItem) {
+        switch item.kind {
+        case .edgeRelationConflict:
+            let nodeIDs = Set([item.sourceNodeID, item.targetNodeID].compactMap { $0 })
+            guard nodeIDs.count == 2 else { return }
+            conflictFocus = ConflictFocus(label: "Focused Pair: \(item.title)", nodeIDs: nodeIDs, compendiumID: nil)
+        case .compendiumDrift:
+            guard let nodeID = item.nodeID else { return }
+            conflictFocus = ConflictFocus(
+                label: "Focused Node: \(item.title)",
+                nodeIDs: [nodeID],
+                compendiumID: item.compendiumID
+            )
+        case .compendiumMatchConflict:
+            guard let nodeID = item.nodeID else { return }
+            conflictFocus = ConflictFocus(
+                label: "Focused Match: \(item.title)",
+                nodeIDs: [nodeID],
+                compendiumID: item.compendiumID
+            )
+        }
     }
 
     private func normalizedSearchQuery() -> String {
@@ -701,6 +927,23 @@ struct StoryKnowledgePanelView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "_", with: " ")
             .lowercased()
+    }
+
+    private func normalizedCollapsedRelationAliases(_ aliases: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+
+        for alias in aliases {
+            let normalizedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedAlias.isEmpty else { continue }
+            let key = normalizedTextKey(normalizedAlias)
+            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            ordered.append(normalizedAlias)
+        }
+
+        return ordered.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
     }
 
     private func sort(nodes: [StoryKnowledgeNode]) -> [StoryKnowledgeNode] {
@@ -903,6 +1146,13 @@ private struct StoryKnowledgeEdgeCard: View {
                     .textSelection(.enabled)
             }
 
+            if !edge.observedRelationAliases.isEmpty {
+                Text("Observed as: \(edge.observedRelationAliases.joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
             if !evidenceItems.isEmpty {
                 evidenceSection(items: evidenceItems, onRevealScene: onRevealScene)
             }
@@ -931,7 +1181,10 @@ private struct StoryKnowledgeConflictCard: View {
     let isUpdating: Bool
     let onRevealScene: @MainActor (UUID) -> Void
     let onOpenCompendiumEntry: (UUID) -> Void
+    let onResolveNodeToCompendium: (UUID, UUID) -> Void
     let onReviewCompendiumMerge: (UUID) -> Void
+    let onFocus: () -> Void
+    let onRejectNode: (UUID) -> Void
     let onAcceptEdge: (UUID) -> Void
     let onRejectEdge: (UUID) -> Void
 
@@ -950,17 +1203,23 @@ private struct StoryKnowledgeConflictCard: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
-            if !item.acceptedReferences.isEmpty {
+            if !item.acceptedAssertions.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Accepted References")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
 
-                    ForEach(item.acceptedReferences, id: \.self) { reference in
-                        Text(reference)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+                    ForEach(item.acceptedAssertions) { assertion in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(assertion.label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+
+                            if !assertion.evidenceItems.isEmpty {
+                                evidenceSection(items: assertion.evidenceItems, onRevealScene: onRevealScene)
+                            }
+                        }
                     }
                 }
             }
@@ -973,6 +1232,11 @@ private struct StoryKnowledgeConflictCard: View {
                 switch item.kind {
                 case .edgeRelationConflict:
                     if let pendingEdgeID = item.pendingEdgeID {
+                        Button("Focus Pair") {
+                            onFocus()
+                        }
+                        .disabled(isUpdating)
+
                         Button("Accept Pending") {
                             onAcceptEdge(pendingEdgeID)
                         }
@@ -984,6 +1248,11 @@ private struct StoryKnowledgeConflictCard: View {
                         .disabled(isUpdating)
                     }
                 case .compendiumDrift:
+                    Button("Focus Node") {
+                        onFocus()
+                    }
+                    .disabled(isUpdating)
+
                     if let compendiumID = item.compendiumID {
                         Button("Open Compendium") {
                             onOpenCompendiumEntry(compendiumID)
@@ -994,6 +1263,31 @@ private struct StoryKnowledgeConflictCard: View {
                     if let nodeID = item.nodeID {
                         Button("Review Merge") {
                             onReviewCompendiumMerge(nodeID)
+                        }
+                        .disabled(isUpdating)
+                    }
+                case .compendiumMatchConflict:
+                    Button("Focus Match") {
+                        onFocus()
+                    }
+                    .disabled(isUpdating)
+
+                    if let compendiumID = item.compendiumID {
+                        Button("Open Compendium") {
+                            onOpenCompendiumEntry(compendiumID)
+                        }
+                        .disabled(isUpdating)
+                    }
+
+                    if let nodeID = item.nodeID,
+                       let compendiumID = item.compendiumID {
+                        Button("Resolve to Compendium") {
+                            onResolveNodeToCompendium(nodeID, compendiumID)
+                        }
+                        .disabled(isUpdating)
+
+                        Button("Reject Pending", role: .destructive) {
+                            onRejectNode(nodeID)
                         }
                         .disabled(isUpdating)
                     }
