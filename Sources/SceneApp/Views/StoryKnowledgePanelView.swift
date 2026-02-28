@@ -439,6 +439,7 @@ struct StoryKnowledgePanelView: View {
                 title: node.name,
                 subtitle: node.kind.rawValue.capitalized,
                 summary: node.summary,
+                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: node)),
                 kind: node.kind,
                 status: node.status,
                 confidence: node.confidence,
@@ -456,6 +457,7 @@ struct StoryKnowledgePanelView: View {
                 relation: edge.relation,
                 label: store.storyKnowledgeEdgeDisplayLabel(edge),
                 note: edge.note,
+                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: edge)),
                 status: edge.status
             )
         }
@@ -2276,6 +2278,22 @@ struct StoryKnowledgePanelView: View {
         }
 
         return orderedSceneIDs.compactMap { mergedBySceneID[$0] }
+    }
+
+    private func graphEvidencePreviewText(
+        _ items: [AppStore.StoryKnowledgeEvidenceItem],
+        maxItems: Int = 2
+    ) -> String {
+        guard !items.isEmpty else { return "" }
+
+        let visibleItems = Array(items.prefix(maxItems))
+        let labels = visibleItems.map { "\($0.chapterTitle) / \($0.sceneTitle)" }
+        let remainingCount = items.count - visibleItems.count
+
+        if remainingCount > 0 {
+            return "Evidence: \(labels.joined(separator: " • ")) • +\(remainingCount) more"
+        }
+        return "Evidence: \(labels.joined(separator: " • "))"
     }
 
     private func isCollapsedRelationSelected(_ relation: String) -> Bool {

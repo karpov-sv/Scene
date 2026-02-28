@@ -40,6 +40,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let title: String
         let subtitle: String
         let summary: String
+        let evidenceSummary: String
         let kind: StoryKnowledgeNodeKind
         let status: StoryKnowledgeRecordStatus
         let confidence: Double
@@ -53,6 +54,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let relation: String
         let label: String
         let note: String
+        let evidenceSummary: String
         let status: StoryKnowledgeRecordStatus
     }
 
@@ -272,7 +274,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                     title: edge.label,
                                     detail: edge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                         ? "Relation: \(edge.relation.replacingOccurrences(of: "_", with: " "))"
-                                        : edge.note
+                                        : edge.note,
+                                    footnote: edge.evidenceSummary.isEmpty ? nil : edge.evidenceSummary
                                 )
                                 .position(x: position.x, y: position.y - 42)
                             } else if !isInteractingWithViewport,
@@ -283,7 +286,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                     title: node.title,
                                     detail: node.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                         ? node.subtitle
-                                        : node.summary
+                                        : node.summary,
+                                    footnote: node.evidenceSummary.isEmpty ? nil : node.evidenceSummary
                                 )
                                 .position(x: position.x, y: position.y - 74)
                             }
@@ -1132,7 +1136,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         }
     }
 
-    private func hoverCard(title: String, detail: String) -> some View {
+    private func hoverCard(title: String, detail: String, footnote: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption.weight(.semibold))
@@ -1144,9 +1148,19 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let footnote, !footnote.isEmpty {
+                Divider()
+
+                Text(footnote)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(8)
-        .frame(width: 170, alignment: .leading)
+        .frame(width: 190, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.97))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
