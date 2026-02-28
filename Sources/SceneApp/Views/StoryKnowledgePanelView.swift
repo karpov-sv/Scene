@@ -90,6 +90,7 @@ struct StoryKnowledgePanelView: View {
     @State private var graphSelectedEdgeID: UUID?
     @State private var showingExpandedGraph = false
     @State private var expandedGraphDensity: GraphDensityMode = .balanced
+    @State private var expandedGraphLayoutMode: StoryKnowledgeNeighborhoodGraphView.LayoutMode = .neighborhood
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -682,6 +683,7 @@ struct StoryKnowledgePanelView: View {
                 nodes: graphNodeModels,
                 edges: graphEdgeModels,
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
+                layoutMode: .neighborhood,
                 selectedNodeID: $graphSelectedNodeID,
                 selectedEdgeID: $graphSelectedEdgeID
             )
@@ -716,6 +718,14 @@ struct StoryKnowledgePanelView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 280)
 
+                Picker("Layout", selection: $expandedGraphLayoutMode) {
+                    ForEach(StoryKnowledgeNeighborhoodGraphView.LayoutMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 250)
+
                 if hasGraphSelection {
                     Button("Clear Selection") {
                         clearGraphSelection()
@@ -732,6 +742,7 @@ struct StoryKnowledgePanelView: View {
                     nodes: graphNodeModels,
                     edges: graphEdgeModels,
                     preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
+                    layoutMode: expandedGraphLayoutMode,
                     selectedNodeID: $graphSelectedNodeID,
                     selectedEdgeID: $graphSelectedEdgeID
                 )

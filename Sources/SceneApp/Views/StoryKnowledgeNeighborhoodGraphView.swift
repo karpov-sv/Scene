@@ -1,6 +1,40 @@
 import SwiftUI
 
 struct StoryKnowledgeNeighborhoodGraphView: View {
+    enum LayoutMode: String, CaseIterable, Identifiable {
+        case neighborhood
+        case kindClusters
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .neighborhood:
+                return "Neighborhood"
+            case .kindClusters:
+                return "Kind Clusters"
+            }
+        }
+
+        var graphTitle: String {
+            switch self {
+            case .neighborhood:
+                return "Neighborhood Graph"
+            case .kindClusters:
+                return "Clustered Graph"
+            }
+        }
+
+        var graphDescription: String {
+            switch self {
+            case .neighborhood:
+                return "Visualizes the current filtered knowledge neighborhood. Select a node to anchor and inspect its local graph. Drag to pan, pinch to zoom, or use Command--, Command-Plus, Shift-Command-F, and Command-0."
+            case .kindClusters:
+                return "Groups visible knowledge by node kind to keep broader project views readable. Drag to pan, pinch to zoom, or use Command--, Command-Plus, Shift-Command-F, and Command-0."
+            }
+        }
+    }
+
     struct NodeModel: Identifiable, Equatable {
         let id: UUID
         let title: String
@@ -22,9 +56,17 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let status: StoryKnowledgeRecordStatus
     }
 
+    private struct ClusterLabel: Identifiable {
+        let id: String
+        let title: String
+        let center: CGPoint
+        let color: Color
+    }
+
     private struct LayoutResult {
         let positions: [UUID: CGPoint]
         let labelPositions: [UUID: CGPoint]
+        let clusterLabels: [ClusterLabel]
     }
 
     @GestureState private var dragTranslation: CGSize = .zero
@@ -39,13 +81,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let nodes: [NodeModel]
     let edges: [EdgeModel]
     let preferredAnchorNodeIDs: [UUID]
+    let layoutMode: LayoutMode
     @Binding var selectedNodeID: UUID?
     @Binding var selectedEdgeID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Neighborhood Graph")
+                Text(layoutMode.graphTitle)
                     .font(.headline)
                 Spacer(minLength: 0)
 
@@ -104,7 +147,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("Visualizes the current filtered knowledge neighborhood. Select a node to anchor and inspect its local graph. Drag to pan, pinch to zoom, or use Command--, Command-Plus, Shift-Command-F, and Command-0.")
+            Text(layoutMode.graphDescription)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -145,6 +188,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                         )
                                     )
                                 }
+                            }
+
+                            ForEach(layout.clusterLabels) { clusterLabel in
+                                clusterLabelBadge(clusterLabel)
+                                    .position(x: clusterLabel.center.x, y: clusterLabel.center.y - 54)
                             }
 
                             ForEach(nodes) { node in
@@ -459,18 +507,28 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func layout(in size: CGSize) -> LayoutResult {
+        switch layoutMode {
+        case .neighborhood:
+            return neighborhoodLayout(in: size)
+        case .kindClusters:
+            return clusteredLayout(in: size)
+        }
+    }
+
+    private func neighborhoodLayout(in size: CGSize) -> LayoutResult {
         let sortedNodes = nodes.sorted { lhs, rhs in
             lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
         guard !sortedNodes.isEmpty else {
-            return LayoutResult(positions: [:], labelPositions: [:])
+            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [])
         }
 
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         if sortedNodes.count == 1, let node = sortedNodes.first {
             return LayoutResult(
                 positions: [node.id: center],
-                labelPositions: [:]
+                labelPositions: [:],
+                clusterLabels: []
             )
         }
 
@@ -531,7 +589,83 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             )
         })
 
-        return LayoutResult(positions: positions, labelPositions: labelPositions)
+        return LayoutResult(positions: positions, labelPositions: labelPositions, clusterLabels: [])
+    }
+
+    private func clusteredLayout(in size: CGSize) -> LayoutResult {
+        let groupedNodes = Dictionary(grouping: nodes) { $0.kind }
+        let orderedKinds = StoryKnowledgeNodeKind.allCases.filter { !(groupedNodes[$0] ?? []).isEmpty }
+
+        guard !orderedKinds.isEmpty else {
+            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [])
+        }
+
+        let columnCount = min(3, max(1, orderedKinds.count))
+        let rowCount = Int(ceil(Double(orderedKinds.count) / Double(columnCount)))
+        let horizontalSpacing = size.width / CGFloat(columnCount + 1)
+        let verticalSpacing = size.height / CGFloat(rowCount + 1)
+
+        var positions: [UUID: CGPoint] = [:]
+        var clusterLabels: [ClusterLabel] = []
+
+        for (index, kind) in orderedKinds.enumerated() {
+            let column = index % columnCount
+            let row = index / columnCount
+            let center = CGPoint(
+                x: horizontalSpacing * CGFloat(column + 1),
+                y: verticalSpacing * CGFloat(row + 1)
+            )
+
+            clusterLabels.append(
+                ClusterLabel(
+                    id: kind.rawValue,
+                    title: kind.rawValue.capitalized,
+                    center: center,
+                    color: nodeFillColor(kind: kind)
+                )
+            )
+
+            let clusterNodes = (groupedNodes[kind] ?? []).sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+
+            if clusterNodes.count == 1, let node = clusterNodes.first {
+                positions[node.id] = center
+                continue
+            }
+
+            let ringRadiusX = min(max(size.width * 0.08, 54), 110)
+            let ringRadiusY = min(max(size.height * 0.07, 40), 84)
+
+            for (nodeIndex, node) in clusterNodes.enumerated() {
+                let angle = (-CGFloat.pi / 2)
+                    + (2 * CGFloat.pi * CGFloat(nodeIndex) / CGFloat(max(clusterNodes.count, 1)))
+                positions[node.id] = CGPoint(
+                    x: center.x + cos(angle) * ringRadiusX,
+                    y: center.y + sin(angle) * ringRadiusY
+                )
+            }
+        }
+
+        let labelPositions = Dictionary(uniqueKeysWithValues: edges.compactMap { edge -> (UUID, CGPoint)? in
+            guard let source = positions[edge.sourceNodeID],
+                  let target = positions[edge.targetNodeID] else {
+                return nil
+            }
+            return (
+                edge.id,
+                CGPoint(
+                    x: (source.x + target.x) / 2,
+                    y: (source.y + target.y) / 2
+                )
+            )
+        })
+
+        return LayoutResult(
+            positions: positions,
+            labelPositions: labelPositions,
+            clusterLabels: clusterLabels
+        )
     }
 
     private func placeNodesOnRing(
@@ -808,6 +942,21 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(color: Color.black.opacity(0.08), radius: 6, y: 2)
         .allowsHitTesting(false)
+    }
+
+    private func clusterLabelBadge(_ clusterLabel: ClusterLabel) -> some View {
+        Text(clusterLabel.title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(clusterLabel.color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.94))
+            .overlay(
+                Capsule()
+                    .stroke(clusterLabel.color.opacity(0.45), lineWidth: 1)
+            )
+            .clipShape(Capsule())
+            .allowsHitTesting(false)
     }
 
     private func legendNodeStatusSample(
