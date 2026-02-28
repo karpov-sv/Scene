@@ -99,6 +99,7 @@ struct StoryKnowledgePanelView: View {
         let edgeCount: Int
         let pendingEdgeCount: Int
         let topRelations: [GraphClusterRelationSummary]
+        let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
 
         var id: String {
             "\(sourceKind.rawValue)->\(targetKind.rawValue)"
@@ -475,7 +476,10 @@ struct StoryKnowledgePanelView: View {
                 targetKind: targetKind,
                 edgeCount: edges.count,
                 pendingEdgeCount: edges.filter { $0.status == .inferred }.count,
-                topRelations: Array(topRelations.prefix(3))
+                topRelations: Array(topRelations.prefix(3)),
+                evidenceItems: mergedEvidenceItems(
+                    edges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
+                )
             )
         }
         .sorted { lhs, rhs in
@@ -1162,6 +1166,22 @@ struct StoryKnowledgePanelView: View {
                         Spacer(minLength: 0)
                     }
 
+                    HStack(spacing: 8) {
+                        Button(isKindFiltered(to: summary.sourceKind) ? "Clear \(summary.sourceKind.rawValue.capitalized) Filter" : "Filter \(summary.sourceKind.rawValue.capitalized)") {
+                            toggleKindFilter(for: summary.sourceKind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Button(isKindFiltered(to: summary.targetKind) ? "Clear \(summary.targetKind.rawValue.capitalized) Filter" : "Filter \(summary.targetKind.rawValue.capitalized)") {
+                            toggleKindFilter(for: summary.targetKind)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+
+                        Spacer(minLength: 0)
+                    }
+
                     if !summary.topRelations.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Dominant relations")
@@ -1185,6 +1205,13 @@ struct StoryKnowledgePanelView: View {
                                 }
                             }
                         }
+                    }
+
+                    if !summary.evidenceItems.isEmpty {
+                        evidenceSection(
+                            items: summary.evidenceItems,
+                            onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) }
+                        )
                     }
                 }
                 .padding(12)
@@ -1882,6 +1909,22 @@ struct StoryKnowledgePanelView: View {
         return mergedByRelation.values.sorted {
             $0.rawRelation.localizedCaseInsensitiveCompare($1.rawRelation) == .orderedAscending
         }
+    }
+
+    private func mergedEvidenceItems(
+        _ items: [AppStore.StoryKnowledgeEvidenceItem]
+    ) -> [AppStore.StoryKnowledgeEvidenceItem] {
+        var mergedBySceneID: [UUID: AppStore.StoryKnowledgeEvidenceItem] = [:]
+        var orderedSceneIDs: [UUID] = []
+
+        for item in items {
+            if mergedBySceneID[item.sceneID] == nil {
+                orderedSceneIDs.append(item.sceneID)
+            }
+            mergedBySceneID[item.sceneID] = item
+        }
+
+        return orderedSceneIDs.compactMap { mergedBySceneID[$0] }
     }
 
     private func isCollapsedRelationSelected(_ relation: String) -> Bool {
