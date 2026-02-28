@@ -320,6 +320,12 @@ struct StoryKnowledgePanelView: View {
         applyExpandedConnectionFocus(to: filteredPendingEdges)
     }
 
+    private var graphConnectionVisibleEdges: [StoryKnowledgeEdge] {
+        let accepted = visibilityFilter == .pending ? [] : graphConnectionFocusedAcceptedEdges
+        let pending = visibilityFilter == .accepted ? [] : graphConnectionFocusedPendingEdges
+        return accepted + pending
+    }
+
     private var graphBaseAcceptedEdges: [StoryKnowledgeEdge] {
         applyExpandedRelationFocus(to: graphConnectionFocusedAcceptedEdges)
     }
@@ -654,6 +660,16 @@ struct StoryKnowledgePanelView: View {
                     action: { store.setStoryKnowledgePanelVisibilityFilter(.all) }
                 )
             default:
+                if !graphConnectionVisibleEdges.isEmpty {
+                    return StoryKnowledgeNeighborhoodGraphView.EmptyState(
+                        title: "Focused Relation Not Visible in Current Link",
+                        systemImage: "arrow.uturn.backward.circle",
+                        description: "\(relationFocus.label) has no visible edges right now, but the parent grouped link still has \(graphConnectionVisibleEdges.count) visible edge" + (graphConnectionVisibleEdges.count == 1 ? "" : "s") + ". Return to the parent link scope to keep exploring that connection.",
+                        actionTitle: "Back to Link",
+                        action: { expandedGraphRelationFocus = nil }
+                    )
+                }
+
                 return StoryKnowledgeNeighborhoodGraphView.EmptyState(
                     title: "No Visible Edges in Focused Relation",
                     systemImage: "line.3.horizontal.decrease.circle",
