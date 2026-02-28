@@ -23,6 +23,14 @@ final class AppStore: ObservableObject {
         var id: UUID { sceneID }
     }
 
+    struct StoryKnowledgeObservedRelationDiagnostic: Identifiable, Equatable {
+        let rawRelation: String
+        let message: String
+        let evidenceItems: [StoryKnowledgeEvidenceItem]
+
+        var id: String { rawRelation }
+    }
+
     struct StoryKnowledgeCompendiumMergePreview: Identifiable, Equatable {
         let nodeID: UUID
         let nodeName: String
@@ -98,6 +106,11 @@ final class AppStore: ObservableObject {
         let sourceNodeID: UUID
         let targetNodeID: UUID
         let relation: String
+    }
+
+    private struct CanonicalStoryKnowledgeRelationDescriptor {
+        let relation: String
+        let reversesDirection: Bool
     }
 
     private enum DataExchangeError: LocalizedError {
@@ -4690,8 +4703,49 @@ final class AppStore: ObservableObject {
     func storyKnowledgeEdgeDisplayLabel(_ edge: StoryKnowledgeEdge) -> String {
         let sourceName = storyKnowledgeNode(for: edge.sourceNodeID)?.name ?? "Unknown"
         let targetName = storyKnowledgeNode(for: edge.targetNodeID)?.name ?? "Unknown"
-        let relation = edge.relation.replacingOccurrences(of: "_", with: " ")
+        let relation = storyKnowledgeRelationDisplayLabel(edge.relation)
         return "\(sourceName) -> \(relation) -> \(targetName)"
+    }
+
+    func storyKnowledgeObservedRelationDiagnostics(for edge: StoryKnowledgeEdge) -> [StoryKnowledgeObservedRelationDiagnostic] {
+        storyKnowledgeObservedRelationDiagnostics(
+            canonicalRelation: edge.relation,
+            observedRelations: edge.observedRelations
+        )
+    }
+
+    func storyKnowledgeObservedRelationDiagnostics(
+        canonicalRelation: String,
+        observedRelations: [StoryKnowledgeObservedRelation]
+    ) -> [StoryKnowledgeObservedRelationDiagnostic] {
+        let canonicalLabel = storyKnowledgeRelationDisplayLabel(canonicalRelation)
+        var seen = Set<String>()
+        var diagnostics: [StoryKnowledgeObservedRelationDiagnostic] = []
+
+        for observedRelation in observedRelations {
+            let normalizedAlias = normalizedStoryKnowledgeRelation(observedRelation.rawRelation)
+            guard !normalizedAlias.isEmpty else { continue }
+            guard let descriptor = canonicalizedStoryKnowledgeRelationDescriptor(normalizedAlias) else { continue }
+
+            let message: String
+            if descriptor.reversesDirection {
+                message = "stored as \(canonicalLabel) from raw \(storyKnowledgeRelationDisplayLabel(normalizedAlias)) (reversed direction)"
+            } else {
+                message = "stored as \(canonicalLabel) from raw \(storyKnowledgeRelationDisplayLabel(normalizedAlias))"
+            }
+            guard seen.insert(message).inserted else { continue }
+            diagnostics.append(
+                StoryKnowledgeObservedRelationDiagnostic(
+                    rawRelation: normalizedAlias,
+                    message: message,
+                    evidenceItems: storyKnowledgeEvidenceItems(forSceneIDs: observedRelation.sceneIDs)
+                )
+            )
+        }
+
+        return diagnostics.sorted {
+            $0.message.localizedCaseInsensitiveCompare($1.message) == .orderedAscending
+        }
     }
 
     func storyKnowledgeEvidenceItems(for node: StoryKnowledgeNode) -> [StoryKnowledgeEvidenceItem] {
@@ -11039,9 +11093,10 @@ final class AppStore: ObservableObject {
             targetNodeID: targetNodeID,
             relation: relation
         ) else { return }
-        let observedRelationAliases = observedStoryKnowledgeRelationAliases(
+        let observedRelations = observedStoryKnowledgeRelations(
             rawRelation: relation,
-            canonicalRelation: canonicalEdge.relation
+            canonicalRelation: canonicalEdge.relation,
+            sceneIDs: [sceneID]
         )
 
         if let index = project.storyKnowledgeEdges.firstIndex(where: { edge in
@@ -11063,9 +11118,9 @@ final class AppStore: ObservableObject {
             existing.sourceNodeID = canonicalEdge.sourceNodeID
             existing.targetNodeID = canonicalEdge.targetNodeID
             existing.relation = canonicalEdge.relation
-            existing.observedRelationAliases = mergedStoryKnowledgeRelationAliases(
-                existing: existing.observedRelationAliases,
-                additional: observedRelationAliases
+            existing.observedRelations = mergedStoryKnowledgeObservedRelations(
+                existing: existing.observedRelations,
+                additional: observedRelations
             )
             existing.confidence = max(existing.confidence, min(max(confidence, 0), 1))
             existing.evidenceSceneIDs = deduplicatedUUIDs(existing.evidenceSceneIDs + [sceneID])
@@ -11079,7 +11134,7 @@ final class AppStore: ObservableObject {
                 sourceNodeID: canonicalEdge.sourceNodeID,
                 targetNodeID: canonicalEdge.targetNodeID,
                 relation: canonicalEdge.relation,
-                observedRelationAliases: observedRelationAliases,
+                observedRelations: observedRelations,
                 note: normalizedRollingMemorySummary(note, maxChars: 140),
                 status: .inferred,
                 confidence: confidence,
@@ -13332,11 +13387,12 @@ final class AppStore: ObservableObject {
                 targetNodeID: edge.targetNodeID,
                 relation: edge.relation
             ) else { continue }
-            let observedRelationAliases = mergedStoryKnowledgeRelationAliases(
-                existing: edge.observedRelationAliases,
-                additional: observedStoryKnowledgeRelationAliases(
+            let observedRelations = mergedStoryKnowledgeObservedRelations(
+                existing: edge.observedRelations,
+                additional: observedStoryKnowledgeRelations(
                     rawRelation: edge.relation,
-                    canonicalRelation: canonicalEdge.relation
+                    canonicalRelation: canonicalEdge.relation,
+                    sceneIDs: edge.evidenceSceneIDs
                 )
             )
 
@@ -13345,7 +13401,7 @@ final class AppStore: ObservableObject {
                 sourceNodeID: canonicalEdge.sourceNodeID,
                 targetNodeID: canonicalEdge.targetNodeID,
                 relation: canonicalEdge.relation,
-                observedRelationAliases: observedRelationAliases,
+                observedRelations: observedRelations,
                 note: normalizedRollingMemorySummary(edge.note, maxChars: 140),
                 status: edge.status == .rejected ? .rejected : (edge.status == .canonical ? .canonical : .inferred),
                 confidence: min(max(edge.confidence, 0), 1),
@@ -13571,27 +13627,103 @@ final class AppStore: ObservableObject {
         "\(storyKnowledgePairKey(sourceNodeID: edge.sourceNodeID, targetNodeID: edge.targetNodeID))|\(edge.relation)"
     }
 
-    private func observedStoryKnowledgeRelationAliases(
+    private func observedStoryKnowledgeRelations(
         rawRelation: String,
-        canonicalRelation: String
-    ) -> [String] {
+        canonicalRelation: String,
+        sceneIDs: [UUID]
+    ) -> [StoryKnowledgeObservedRelation] {
         let normalizedRawRelation = normalizedStoryKnowledgeRelation(rawRelation)
         guard !normalizedRawRelation.isEmpty,
               normalizedRawRelation != canonicalRelation else {
             return []
         }
-        return [normalizedRawRelation]
+        return [
+            StoryKnowledgeObservedRelation(
+                rawRelation: normalizedRawRelation,
+                sceneIDs: deduplicatedUUIDs(sceneIDs)
+            )
+        ]
     }
 
-    private func mergedStoryKnowledgeRelationAliases(
-        existing: [String],
-        additional: [String]
-    ) -> [String] {
-        normalizedStoryMemoryLines(
-            existing + additional,
-            maxCount: 8,
-            maxCharsPerLine: 48
-        )
+    private func mergedStoryKnowledgeObservedRelations(
+        existing: [StoryKnowledgeObservedRelation],
+        additional: [StoryKnowledgeObservedRelation]
+    ) -> [StoryKnowledgeObservedRelation] {
+        var mergedByRelation: [String: StoryKnowledgeObservedRelation] = [:]
+
+        for observedRelation in existing + additional {
+            let normalizedRawRelation = normalizedStoryKnowledgeRelation(observedRelation.rawRelation)
+            guard !normalizedRawRelation.isEmpty else { continue }
+
+            if var existingRelation = mergedByRelation[normalizedRawRelation] {
+                existingRelation.sceneIDs = deduplicatedUUIDs(existingRelation.sceneIDs + observedRelation.sceneIDs)
+                mergedByRelation[normalizedRawRelation] = existingRelation
+            } else {
+                mergedByRelation[normalizedRawRelation] = StoryKnowledgeObservedRelation(
+                    rawRelation: normalizedRawRelation,
+                    sceneIDs: deduplicatedUUIDs(observedRelation.sceneIDs)
+                )
+            }
+        }
+
+        return mergedByRelation.values
+            .sorted { lhs, rhs in
+                lhs.rawRelation.localizedCaseInsensitiveCompare(rhs.rawRelation) == .orderedAscending
+            }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private func storyKnowledgeRelationDisplayLabel(_ relation: String) -> String {
+        relation.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private func canonicalizedStoryKnowledgeRelationDescriptor(
+        _ relation: String
+    ) -> CanonicalStoryKnowledgeRelationDescriptor? {
+        let normalizedRelation = normalizedStoryKnowledgeRelation(relation)
+        guard !normalizedRelation.isEmpty else { return nil }
+
+        switch normalizedRelation {
+        case "ally_of", "allies_with", "aligned_with":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "allied_with", reversesDirection: false)
+        case "belongs_to", "owned_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "owns", reversesDirection: true)
+        case "child_of":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "parent_of", reversesDirection: true)
+        case "commanded_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "commands", reversesDirection: true)
+        case "connected", "connected_with":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "connected_to", reversesDirection: false)
+        case "employed_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "works_for", reversesDirection: false)
+        case "employs":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "works_for", reversesDirection: true)
+        case "friend_of", "friends", "friends_with_each_other":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "friends_with", reversesDirection: false)
+        case "has_member":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "member_of", reversesDirection: true)
+        case "led_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "leads", reversesDirection: true)
+        case "learns_from", "taught_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "teaches", reversesDirection: true)
+        case "lives_at":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "lives_in", reversesDirection: false)
+        case "married", "married_with":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "married_to", reversesDirection: false)
+        case "near_to", "nearby_to":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "near", reversesDirection: false)
+        case "related", "related_with":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "related_to", reversesDirection: false)
+        case "ruled_by":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "rules", reversesDirection: true)
+        case "same":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "same_as", reversesDirection: false)
+        case "siblings", "sibling":
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: "sibling_of", reversesDirection: false)
+        default:
+            return CanonicalStoryKnowledgeRelationDescriptor(relation: normalizedRelation, reversesDirection: false)
+        }
     }
 
     private func canonicalizedStoryKnowledgeEdge(
@@ -13601,63 +13733,17 @@ final class AppStore: ObservableObject {
     ) -> CanonicalStoryKnowledgeEdgeDescriptor? {
         guard sourceNodeID != targetNodeID else { return nil }
 
-        let normalizedRelation = normalizedStoryKnowledgeRelation(relation)
-        guard !normalizedRelation.isEmpty else { return nil }
+        guard let relationDescriptor = canonicalizedStoryKnowledgeRelationDescriptor(relation) else {
+            return nil
+        }
 
         var canonicalSourceNodeID = sourceNodeID
         var canonicalTargetNodeID = targetNodeID
-        let canonicalRelation: String
-
-        switch normalizedRelation {
-        case "ally_of", "allies_with", "aligned_with":
-            canonicalRelation = "allied_with"
-        case "belongs_to", "owned_by":
-            canonicalRelation = "owns"
+        if relationDescriptor.reversesDirection {
             swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "child_of":
-            canonicalRelation = "parent_of"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "commanded_by":
-            canonicalRelation = "commands"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "connected", "connected_with":
-            canonicalRelation = "connected_to"
-        case "employed_by":
-            canonicalRelation = "works_for"
-        case "employs":
-            canonicalRelation = "works_for"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "friend_of", "friends", "friends_with_each_other":
-            canonicalRelation = "friends_with"
-        case "has_member":
-            canonicalRelation = "member_of"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "led_by":
-            canonicalRelation = "leads"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "learns_from", "taught_by":
-            canonicalRelation = "teaches"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "lives_at":
-            canonicalRelation = "lives_in"
-        case "married", "married_with":
-            canonicalRelation = "married_to"
-        case "near_to", "nearby_to":
-            canonicalRelation = "near"
-        case "related", "related_with":
-            canonicalRelation = "related_to"
-        case "ruled_by":
-            canonicalRelation = "rules"
-            swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
-        case "same":
-            canonicalRelation = "same_as"
-        case "siblings", "sibling":
-            canonicalRelation = "sibling_of"
-        default:
-            canonicalRelation = normalizedRelation
         }
 
-        if storyKnowledgeRelationLikelySymmetric(canonicalRelation),
+        if storyKnowledgeRelationLikelySymmetric(relationDescriptor.relation),
            canonicalSourceNodeID.uuidString > canonicalTargetNodeID.uuidString {
             swap(&canonicalSourceNodeID, &canonicalTargetNodeID)
         }
@@ -13665,7 +13751,7 @@ final class AppStore: ObservableObject {
         return CanonicalStoryKnowledgeEdgeDescriptor(
             sourceNodeID: canonicalSourceNodeID,
             targetNodeID: canonicalTargetNodeID,
-            relation: canonicalRelation
+            relation: relationDescriptor.relation
         )
     }
 
@@ -13684,9 +13770,9 @@ final class AppStore: ObservableObject {
             sourceNodeID: existing.sourceNodeID,
             targetNodeID: existing.targetNodeID,
             relation: existing.relation,
-            observedRelationAliases: mergedStoryKnowledgeRelationAliases(
-                existing: existing.observedRelationAliases,
-                additional: incoming.observedRelationAliases
+            observedRelations: mergedStoryKnowledgeObservedRelations(
+                existing: existing.observedRelations,
+                additional: incoming.observedRelations
             ),
             note: mergedNote,
             status: mergedStatus,

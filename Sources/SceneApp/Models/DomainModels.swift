@@ -576,7 +576,7 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
     var sourceNodeID: UUID
     var targetNodeID: UUID
     var relation: String
-    var observedRelationAliases: [String]
+    var observedRelations: [StoryKnowledgeObservedRelation]
     var note: String
     var status: StoryKnowledgeRecordStatus
     var confidence: Double
@@ -588,7 +588,7 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         sourceNodeID: UUID,
         targetNodeID: UUID,
         relation: String,
-        observedRelationAliases: [String] = [],
+        observedRelations: [StoryKnowledgeObservedRelation] = [],
         note: String = "",
         status: StoryKnowledgeRecordStatus = .inferred,
         confidence: Double = 0.5,
@@ -599,7 +599,7 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         self.sourceNodeID = sourceNodeID
         self.targetNodeID = targetNodeID
         self.relation = relation
-        self.observedRelationAliases = observedRelationAliases
+        self.observedRelations = observedRelations
         self.note = note
         self.status = status
         self.confidence = min(max(confidence, 0), 1)
@@ -607,11 +607,16 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         self.updatedAt = updatedAt
     }
 
+    var observedRelationAliases: [String] {
+        observedRelations.map(\.rawRelation)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case sourceNodeID
         case targetNodeID
         case relation
+        case observedRelations
         case observedRelationAliases
         case note
         case status
@@ -626,12 +631,46 @@ struct StoryKnowledgeEdge: Codable, Identifiable, Equatable {
         sourceNodeID = try container.decode(UUID.self, forKey: .sourceNodeID)
         targetNodeID = try container.decode(UUID.self, forKey: .targetNodeID)
         relation = try container.decode(String.self, forKey: .relation)
-        observedRelationAliases = try container.decodeIfPresent([String].self, forKey: .observedRelationAliases) ?? []
+        let decodedEvidenceSceneIDs = try container.decodeIfPresent([UUID].self, forKey: .evidenceSceneIDs) ?? []
+        evidenceSceneIDs = decodedEvidenceSceneIDs
+        if let observedRelationsValue = try container.decodeIfPresent([StoryKnowledgeObservedRelation].self, forKey: .observedRelations) {
+            observedRelations = observedRelationsValue
+        } else {
+            let observedRelationAliases = try container.decodeIfPresent([String].self, forKey: .observedRelationAliases) ?? []
+            observedRelations = observedRelationAliases.map {
+                StoryKnowledgeObservedRelation(rawRelation: $0, sceneIDs: decodedEvidenceSceneIDs)
+            }
+        }
         note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
         status = try container.decodeIfPresent(StoryKnowledgeRecordStatus.self, forKey: .status) ?? .inferred
         confidence = min(max(try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 0.5, 0), 1)
-        evidenceSceneIDs = try container.decodeIfPresent([UUID].self, forKey: .evidenceSceneIDs) ?? []
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(sourceNodeID, forKey: .sourceNodeID)
+        try container.encode(targetNodeID, forKey: .targetNodeID)
+        try container.encode(relation, forKey: .relation)
+        try container.encode(observedRelations, forKey: .observedRelations)
+        try container.encode(note, forKey: .note)
+        try container.encode(status, forKey: .status)
+        try container.encode(confidence, forKey: .confidence)
+        try container.encode(evidenceSceneIDs, forKey: .evidenceSceneIDs)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
+}
+
+struct StoryKnowledgeObservedRelation: Codable, Equatable, Identifiable {
+    var rawRelation: String
+    var sceneIDs: [UUID]
+
+    var id: String { rawRelation }
+
+    init(rawRelation: String, sceneIDs: [UUID] = []) {
+        self.rawRelation = rawRelation
+        self.sceneIDs = sceneIDs
     }
 }
 

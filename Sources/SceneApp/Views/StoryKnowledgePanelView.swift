@@ -9,7 +9,7 @@ struct StoryKnowledgePanelView: View {
 
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
-        let aliases: [String]
+        let observedRelations: [StoryKnowledgeObservedRelation]
         let edgeCount: Int
         let pendingEdgeCount: Int
 
@@ -110,18 +110,18 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var collapsedRelationSummaries: [CollapsedRelationSummary] {
-        let groupedEdges = Dictionary(grouping: visibleDiagnosticEdges.filter { !$0.observedRelationAliases.isEmpty }) {
+        let groupedEdges = Dictionary(grouping: visibleDiagnosticEdges.filter { !$0.observedRelations.isEmpty }) {
             $0.relation
         }
 
         return groupedEdges.compactMap { relation, edges in
-            let aliases = normalizedCollapsedRelationAliases(
-                edges.flatMap(\.observedRelationAliases)
+            let observedRelations = mergedObservedRelations(
+                edges.flatMap(\.observedRelations)
             )
-            guard !aliases.isEmpty else { return nil }
+            guard !observedRelations.isEmpty else { return nil }
             return CollapsedRelationSummary(
                 relation: relation,
-                aliases: aliases,
+                observedRelations: observedRelations,
                 edgeCount: edges.count,
                 pendingEdgeCount: edges.filter { $0.status == .inferred }.count
             )
@@ -130,8 +130,8 @@ struct StoryKnowledgePanelView: View {
             if lhs.edgeCount != rhs.edgeCount {
                 return lhs.edgeCount > rhs.edgeCount
             }
-            if lhs.aliases.count != rhs.aliases.count {
-                return lhs.aliases.count > rhs.aliases.count
+            if lhs.observedRelations.count != rhs.observedRelations.count {
+                return lhs.observedRelations.count > rhs.observedRelations.count
             }
             return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
         }
@@ -142,7 +142,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var collapsedRelationAliasCount: Int {
-        Set(collapsedRelationSummaries.flatMap(\.aliases)).count
+        Set(collapsedRelationSummaries.flatMap { $0.observedRelations.map(\.rawRelation) }).count
     }
 
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
@@ -444,6 +444,10 @@ struct StoryKnowledgePanelView: View {
                 .foregroundStyle(.secondary)
 
             ForEach(Array(collapsedRelationSummaries.prefix(6))) { summary in
+                let diagnostics = store.storyKnowledgeObservedRelationDiagnostics(
+                    canonicalRelation: summary.relation,
+                    observedRelations: summary.observedRelations
+                )
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(summary.relation.replacingOccurrences(of: "_", with: " ").capitalized)
@@ -453,12 +457,29 @@ struct StoryKnowledgePanelView: View {
                             statusBadge("\(summary.pendingEdgeCount) pending")
                         }
                         Spacer(minLength: 0)
+
+                        Button(isCollapsedRelationSelected(summary.relation) ? "Clear Filter" : "Filter") {
+                            toggleCollapsedRelationFilter(summary.relation)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
                     }
 
-                    Text(summary.aliases.joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    ForEach(diagnostics) { diagnostic in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(diagnostic.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+
+                            if !diagnostic.evidenceItems.isEmpty {
+                                evidenceSection(
+                                    items: diagnostic.evidenceItems,
+                                    onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) }
+                                )
+                            }
+                        }
+                    }
                 }
                 .padding(.vertical, 2)
             }
@@ -568,6 +589,7 @@ struct StoryKnowledgePanelView: View {
                     StoryKnowledgeEdgeCard(
                         label: store.storyKnowledgeEdgeDisplayLabel(edge),
                         edge: edge,
+                        observedRelationDiagnostics: store.storyKnowledgeObservedRelationDiagnostics(for: edge),
                         evidenceItems: store.storyKnowledgeEvidenceItems(for: edge),
                         isUpdating: isRefreshing,
                         isSelected: false,
@@ -687,6 +709,7 @@ struct StoryKnowledgePanelView: View {
                     StoryKnowledgeEdgeCard(
                         label: store.storyKnowledgeEdgeDisplayLabel(edge),
                         edge: edge,
+                        observedRelationDiagnostics: store.storyKnowledgeObservedRelationDiagnostics(for: edge),
                         evidenceItems: store.storyKnowledgeEvidenceItems(for: edge),
                         isUpdating: isRefreshing,
                         isSelected: selectedPendingEdgeIDs.contains(edge.id),
@@ -827,11 +850,16 @@ struct StoryKnowledgePanelView: View {
     private func matchesSearch(edge: StoryKnowledgeEdge) -> Bool {
         let query = normalizedSearchQuery()
         guard !query.isEmpty else { return true }
+        let observedRelationDiagnostics = store.storyKnowledgeObservedRelationDiagnostics(for: edge)
         let haystack = [
             store.storyKnowledgeEdgeDisplayLabel(edge),
             edge.status.rawValue,
             edge.note,
-            edge.observedRelationAliases.joined(separator: " ")
+            observedRelationDiagnostics.map(\.message).joined(separator: " "),
+            observedRelationDiagnostics.flatMap { diagnostic in
+                diagnostic.evidenceItems.map { "\($0.chapterTitle) \($0.sceneTitle)" }
+            }
+            .joined(separator: " ")
         ]
             .joined(separator: "\n")
             .lowercased()
@@ -929,20 +957,42 @@ struct StoryKnowledgePanelView: View {
             .lowercased()
     }
 
-    private func normalizedCollapsedRelationAliases(_ aliases: [String]) -> [String] {
-        var seen = Set<String>()
-        var ordered: [String] = []
+    private func mergedObservedRelations(
+        _ observedRelations: [StoryKnowledgeObservedRelation]
+    ) -> [StoryKnowledgeObservedRelation] {
+        var mergedByRelation: [String: StoryKnowledgeObservedRelation] = [:]
 
-        for alias in aliases {
-            let normalizedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedAlias.isEmpty else { continue }
-            let key = normalizedTextKey(normalizedAlias)
-            guard !key.isEmpty, seen.insert(key).inserted else { continue }
-            ordered.append(normalizedAlias)
+        for observedRelation in observedRelations {
+            let normalizedRawRelation = observedRelation.rawRelation.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizedTextKey(normalizedRawRelation)
+            guard !normalizedRawRelation.isEmpty, !key.isEmpty else { continue }
+
+            if var existing = mergedByRelation[key] {
+                existing.sceneIDs = Array(Set(existing.sceneIDs + observedRelation.sceneIDs))
+                    .sorted { $0.uuidString < $1.uuidString }
+                mergedByRelation[key] = existing
+            } else {
+                mergedByRelation[key] = StoryKnowledgeObservedRelation(
+                    rawRelation: normalizedRawRelation,
+                    sceneIDs: Array(Set(observedRelation.sceneIDs)).sorted { $0.uuidString < $1.uuidString }
+                )
+            }
         }
 
-        return ordered.sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        return mergedByRelation.values.sorted {
+            $0.rawRelation.localizedCaseInsensitiveCompare($1.rawRelation) == .orderedAscending
+        }
+    }
+
+    private func isCollapsedRelationSelected(_ relation: String) -> Bool {
+        normalizedRelationKey(relationFilter) == normalizedRelationKey(relation)
+    }
+
+    private func toggleCollapsedRelationFilter(_ relation: String) {
+        if isCollapsedRelationSelected(relation) {
+            store.setStoryKnowledgePanelRelationFilter("")
+        } else {
+            store.setStoryKnowledgePanelRelationFilter(relation)
         }
     }
 
@@ -1114,6 +1164,7 @@ private struct StoryKnowledgeNodeCard: View {
 private struct StoryKnowledgeEdgeCard: View {
     let label: String
     let edge: StoryKnowledgeEdge
+    let observedRelationDiagnostics: [AppStore.StoryKnowledgeObservedRelationDiagnostic]
     let evidenceItems: [AppStore.StoryKnowledgeEvidenceItem]
     let isUpdating: Bool
     let isSelected: Bool
@@ -1146,11 +1197,25 @@ private struct StoryKnowledgeEdgeCard: View {
                     .textSelection(.enabled)
             }
 
-            if !edge.observedRelationAliases.isEmpty {
-                Text("Observed as: \(edge.observedRelationAliases.joined(separator: ", "))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+            if !observedRelationDiagnostics.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Observed normalization")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(observedRelationDiagnostics) { diagnostic in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(diagnostic.message)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+
+                            if !diagnostic.evidenceItems.isEmpty {
+                                evidenceSection(items: diagnostic.evidenceItems, onRevealScene: onRevealScene)
+                            }
+                        }
+                    }
+                }
             }
 
             if !evidenceItems.isEmpty {
