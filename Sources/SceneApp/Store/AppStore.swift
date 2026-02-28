@@ -49,6 +49,34 @@ final class AppStore: ObservableObject {
         }
     }
 
+    struct StoryKnowledgeConflictItem: Identifiable, Equatable {
+        enum Kind: String, Equatable {
+            case edgeRelationConflict
+            case compendiumDrift
+
+            var title: String {
+                switch self {
+                case .edgeRelationConflict:
+                    return "Relation Conflict"
+                case .compendiumDrift:
+                    return "Compendium Drift"
+                }
+            }
+        }
+
+        let id: String
+        let kind: Kind
+        let title: String
+        let detail: String
+        let acceptedReferences: [String]
+        let nodeKinds: [StoryKnowledgeNodeKind]
+        let relation: String?
+        let pendingEdgeID: UUID?
+        let nodeID: UUID?
+        let compendiumID: UUID?
+        let evidenceItems: [StoryKnowledgeEvidenceItem]
+    }
+
     private enum DataExchangeError: LocalizedError {
         case projectNotOpen
         case invalidPayloadType(expected: String, actual: String)
@@ -1194,6 +1222,10 @@ final class AppStore: ObservableObject {
         project.storyKnowledgeEdges.filter { $0.status == .inferred && isActiveStoryKnowledgeEdge($0) }.count
     }
 
+    var storyKnowledgeConflictCount: Int {
+        storyKnowledgeConflictItems.count
+    }
+
     var storyKnowledgePendingReviewNodes: [StoryKnowledgeNode] {
         sortedStoryKnowledgeNodes(
             project.storyKnowledgeNodes.filter { $0.status == .inferred }
@@ -1216,6 +1248,89 @@ final class AppStore: ObservableObject {
         sortedStoryKnowledgeEdges(
             project.storyKnowledgeEdges.filter { isActiveStoryKnowledgeEdge($0) }
         )
+    }
+
+    var storyKnowledgeConflictItems: [StoryKnowledgeConflictItem] {
+        var items: [StoryKnowledgeConflictItem] = []
+
+        let acceptedEdges = project.storyKnowledgeEdges.filter {
+            $0.status == .canonical && isActiveStoryKnowledgeEdge($0)
+        }
+        let acceptedEdgesByPair = Dictionary(grouping: acceptedEdges) {
+            storyKnowledgePairKey(sourceNodeID: $0.sourceNodeID, targetNodeID: $0.targetNodeID)
+        }
+
+        for edge in storyKnowledgePendingReviewEdges {
+            let pairKey = storyKnowledgePairKey(sourceNodeID: edge.sourceNodeID, targetNodeID: edge.targetNodeID)
+            let normalizedPendingRelation = normalizedStoryKnowledgeKey(edge.relation)
+            let conflictingAcceptedEdges = (acceptedEdgesByPair[pairKey] ?? []).filter {
+                normalizedStoryKnowledgeKey($0.relation) != normalizedPendingRelation
+            }
+            guard !conflictingAcceptedEdges.isEmpty else { continue }
+
+            let sourceKind = storyKnowledgeNode(for: edge.sourceNodeID)?.kind
+            let targetKind = storyKnowledgeNode(for: edge.targetNodeID)?.kind
+            let acceptedLabels = conflictingAcceptedEdges.map(storyKnowledgeEdgeDisplayLabel(_:))
+            let detail = "Accepted knowledge already connects these nodes with a different relation."
+
+            items.append(
+                StoryKnowledgeConflictItem(
+                    id: "edge:\(edge.id.uuidString)",
+                    kind: .edgeRelationConflict,
+                    title: storyKnowledgeEdgeDisplayLabel(edge),
+                    detail: detail,
+                    acceptedReferences: acceptedLabels,
+                    nodeKinds: [sourceKind, targetKind].compactMap { $0 },
+                    relation: edge.relation,
+                    pendingEdgeID: edge.id,
+                    nodeID: nil,
+                    compendiumID: nil,
+                    evidenceItems: storyKnowledgeEvidenceItems(for: edge)
+                )
+            )
+        }
+
+        for node in storyKnowledgeActiveNodes {
+            guard let compendiumID = node.resolvedCompendiumID,
+                  let preview = storyKnowledgeCompendiumMergePreview(for: node.id),
+                  preview.hasChanges else {
+                continue
+            }
+
+            var driftParts: [String] = []
+            if preview.hasTagChanges {
+                driftParts.append("tags differ")
+            }
+            if preview.bodyWillChange {
+                driftParts.append("summary differs")
+            }
+            let detail = driftParts.isEmpty
+                ? "Linked knowledge differs from the compendium entry."
+                : "Linked knowledge and compendium entry need reconciliation: \(driftParts.joined(separator: ", "))."
+
+            items.append(
+                StoryKnowledgeConflictItem(
+                    id: "node:\(node.id.uuidString)",
+                    kind: .compendiumDrift,
+                    title: "\(node.name) -> \(preview.compendiumTitle)",
+                    detail: detail,
+                    acceptedReferences: [],
+                    nodeKinds: [node.kind],
+                    relation: nil,
+                    pendingEdgeID: nil,
+                    nodeID: node.id,
+                    compendiumID: compendiumID,
+                    evidenceItems: storyKnowledgeEvidenceItems(for: node)
+                )
+            )
+        }
+
+        return items.sorted { lhs, rhs in
+            if lhs.kind != rhs.kind {
+                return lhs.kind == .edgeRelationConflict
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
     }
 
     var storyKnowledgePanelState: StoryKnowledgePanelState {
@@ -13282,6 +13397,10 @@ final class AppStore: ObservableObject {
                 sceneTitle: displaySceneTitle(scene)
             )
         }
+    }
+
+    private func storyKnowledgePairKey(sourceNodeID: UUID, targetNodeID: UUID) -> String {
+        "\(sourceNodeID.uuidString)|\(targetNodeID.uuidString)"
     }
 
     private struct StoryKnowledgeCompendiumMergePlan {

@@ -25,6 +25,10 @@ struct StoryKnowledgePanelView: View {
         sort(nodes: acceptedNodes.filter { matchesNodeKind(node: $0) && matchesSearch(node: $0) })
     }
 
+    private var filteredConflictItems: [AppStore.StoryKnowledgeConflictItem] {
+        store.storyKnowledgeConflictItems.filter(matchesConflict(_:))
+    }
+
     private var filteredAcceptedEdges: [StoryKnowledgeEdge] {
         sort(edges: acceptedEdges.filter {
             matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
@@ -161,6 +165,10 @@ struct StoryKnowledgePanelView: View {
                         )
                     }
 
+                    if !filteredConflictItems.isEmpty {
+                        conflictSection
+                    }
+
                     if visibilityFilter != .pending {
                         nodeSection(
                             title: "Accepted Nodes",
@@ -256,6 +264,12 @@ struct StoryKnowledgePanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if store.storyKnowledgeConflictCount > 0 {
+                Text("\(store.storyKnowledgeConflictCount) potential conflicts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Picker("Visibility", selection: visibilityFilterBinding) {
                 ForEach(StoryKnowledgePanelVisibilityFilter.allCases) { filter in
                     Text(filter.title).tag(filter)
@@ -322,6 +336,33 @@ struct StoryKnowledgePanelView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var conflictSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Potential Conflicts")
+                .font(.headline)
+
+            ForEach(filteredConflictItems) { item in
+                StoryKnowledgeConflictCard(
+                    item: item,
+                    isUpdating: isRefreshing,
+                    onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
+                    onOpenCompendiumEntry: onOpenCompendiumEntry,
+                    onReviewCompendiumMerge: { nodeID in
+                        compendiumMergePreview = store.storyKnowledgeCompendiumMergePreview(for: nodeID)
+                    },
+                    onAcceptEdge: { edgeID in
+                        selectedPendingEdgeIDs.remove(edgeID)
+                        store.acceptStoryKnowledgeEdge(edgeID)
+                    },
+                    onRejectEdge: { edgeID in
+                        selectedPendingEdgeIDs.remove(edgeID)
+                        store.rejectStoryKnowledgeEdge(edgeID)
+                    }
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -625,8 +666,41 @@ struct StoryKnowledgePanelView: View {
         return haystack.contains(query)
     }
 
+    private func matchesConflict(_ item: AppStore.StoryKnowledgeConflictItem) -> Bool {
+        if let selectedKind = nodeKindFilter.nodeKind,
+           !item.nodeKinds.contains(selectedKind) {
+            return false
+        }
+        if !relationFilter.isEmpty,
+           normalizedRelationKey(item.relation) != normalizedRelationKey(relationFilter) {
+            return false
+        }
+
+        let query = normalizedSearchQuery()
+        guard !query.isEmpty else { return true }
+        let haystack = (
+            [item.title, item.detail]
+            + item.acceptedReferences
+            + item.evidenceItems.map { "\($0.chapterTitle) \($0.sceneTitle)" }
+        )
+        .joined(separator: "\n")
+        .lowercased()
+        return haystack.contains(query)
+    }
+
     private func normalizedSearchQuery() -> String {
         store.storyKnowledgePanelState.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func normalizedRelationKey(_ relation: String?) -> String {
+        normalizedTextKey(relation ?? "")
+    }
+
+    private func normalizedTextKey(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: " ")
+            .lowercased()
     }
 
     private func sort(nodes: [StoryKnowledgeNode]) -> [StoryKnowledgeNode] {
@@ -849,6 +923,85 @@ private struct StoryKnowledgeEdgeCard: View {
             }
         }
         .cardStyle(isSelected: isSelected)
+    }
+}
+
+private struct StoryKnowledgeConflictCard: View {
+    let item: AppStore.StoryKnowledgeConflictItem
+    let isUpdating: Bool
+    let onRevealScene: @MainActor (UUID) -> Void
+    let onOpenCompendiumEntry: (UUID) -> Void
+    let onReviewCompendiumMerge: (UUID) -> Void
+    let onAcceptEdge: (UUID) -> Void
+    let onRejectEdge: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .textSelection(.enabled)
+                statusBadge(item.kind.title)
+                Spacer(minLength: 0)
+            }
+
+            Text(item.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            if !item.acceptedReferences.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Accepted References")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(item.acceptedReferences, id: \.self) { reference in
+                        Text(reference)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            if !item.evidenceItems.isEmpty {
+                evidenceSection(items: item.evidenceItems, onRevealScene: onRevealScene)
+            }
+
+            HStack(spacing: 8) {
+                switch item.kind {
+                case .edgeRelationConflict:
+                    if let pendingEdgeID = item.pendingEdgeID {
+                        Button("Accept Pending") {
+                            onAcceptEdge(pendingEdgeID)
+                        }
+                        .disabled(isUpdating)
+
+                        Button("Reject Pending", role: .destructive) {
+                            onRejectEdge(pendingEdgeID)
+                        }
+                        .disabled(isUpdating)
+                    }
+                case .compendiumDrift:
+                    if let compendiumID = item.compendiumID {
+                        Button("Open Compendium") {
+                            onOpenCompendiumEntry(compendiumID)
+                        }
+                        .disabled(isUpdating)
+                    }
+
+                    if let nodeID = item.nodeID {
+                        Button("Review Merge") {
+                            onReviewCompendiumMerge(nodeID)
+                        }
+                        .disabled(isUpdating)
+                    }
+                }
+            }
+            .buttonStyle(.borderless)
+        }
+        .cardStyle()
     }
 }
 
