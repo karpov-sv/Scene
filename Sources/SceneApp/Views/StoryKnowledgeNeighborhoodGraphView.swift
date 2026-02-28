@@ -95,6 +95,18 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         var id: String { title }
     }
 
+    struct SelectionNavigation {
+        enum Kind {
+            case node
+            case edge
+        }
+
+        let kind: Kind
+        let title: String
+        let onPrevious: () -> Void
+        let onNext: () -> Void
+    }
+
     struct SelectionOverlay {
         let title: String
         let subtitle: String?
@@ -139,6 +151,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let layoutMode: LayoutMode
     let focusHighlights: [FocusHighlight]
     let emptyState: EmptyState?
+    let selectionNavigation: SelectionNavigation?
     let selectionOverlay: SelectionOverlay?
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
@@ -203,6 +216,49 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("0", modifiers: [.command])
                 .help("Reset View (Command-0)")
+
+                if let selectionNavigation {
+                    Divider()
+                        .frame(height: 16)
+
+                    Text(selectionNavigation.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        selectionNavigation.onPrevious()
+                    } label: {
+                        Image(systemName: "chevron.left.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .keyboardShortcut(
+                        selectionNavigation.kind == .node ? .leftArrow : .upArrow,
+                        modifiers: [.command, .option]
+                    )
+                    .help(
+                        selectionNavigation.kind == .node
+                            ? "Previous Node (Option-Command-Left Arrow)"
+                            : "Previous Edge (Option-Command-Up Arrow)"
+                    )
+
+                    Button {
+                        selectionNavigation.onNext()
+                    } label: {
+                        Image(systemName: "chevron.right.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .keyboardShortcut(
+                        selectionNavigation.kind == .node ? .rightArrow : .downArrow,
+                        modifiers: [.command, .option]
+                    )
+                    .help(
+                        selectionNavigation.kind == .node
+                            ? "Next Node (Option-Command-Right Arrow)"
+                            : "Next Edge (Option-Command-Down Arrow)"
+                    )
+                }
 
                 Text("\(nodes.count) nodes • \(edges.count) edges")
                     .font(.caption)

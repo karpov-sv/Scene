@@ -474,6 +474,44 @@ struct StoryKnowledgePanelView: View {
         selectedGraphEdge != nil || selectedGraphNode != nil
     }
 
+    private var graphNavigableNodes: [StoryKnowledgeNode] {
+        graphVisibleNodes.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private var graphNavigableEdges: [StoryKnowledgeEdge] {
+        sort(edges: graphVisibleEdges)
+    }
+
+    private var expandedGraphSelectionNavigation: StoryKnowledgeNeighborhoodGraphView.SelectionNavigation? {
+        guard showingExpandedGraph else { return nil }
+
+        if let selectedGraphNode,
+           graphNavigableNodes.count > 1,
+           let currentIndex = graphNavigableNodes.firstIndex(where: { $0.id == selectedGraphNode.id }) {
+            return StoryKnowledgeNeighborhoodGraphView.SelectionNavigation(
+                kind: .node,
+                title: "Node \(currentIndex + 1) of \(graphNavigableNodes.count)",
+                onPrevious: { cycleVisibleNodeSelection(step: -1) },
+                onNext: { cycleVisibleNodeSelection(step: 1) }
+            )
+        }
+
+        if let selectedGraphEdge,
+           graphNavigableEdges.count > 1,
+           let currentIndex = graphNavigableEdges.firstIndex(where: { $0.id == selectedGraphEdge.id }) {
+            return StoryKnowledgeNeighborhoodGraphView.SelectionNavigation(
+                kind: .edge,
+                title: "Edge \(currentIndex + 1) of \(graphNavigableEdges.count)",
+                onPrevious: { cycleVisibleEdgeSelection(step: -1) },
+                onNext: { cycleVisibleEdgeSelection(step: 1) }
+            )
+        }
+
+        return nil
+    }
+
     private var selectedGraphEdgeConnectionSummary: GraphClusterConnectionSummary? {
         guard let selectedGraphEdge,
               let sourceKind = storyKnowledgeNodesByID[selectedGraphEdge.sourceNodeID]?.kind,
@@ -1335,6 +1373,7 @@ struct StoryKnowledgePanelView: View {
                 layoutMode: .neighborhood,
                 focusHighlights: [],
                 emptyState: nil,
+                selectionNavigation: nil,
                 selectionOverlay: nil,
                 selectedClusterKind: nil,
                 focusedClusterLink: nil,
@@ -1441,6 +1480,7 @@ struct StoryKnowledgePanelView: View {
                     layoutMode: expandedGraphLayoutMode,
                     focusHighlights: expandedGraphFocusHighlights,
                     emptyState: expandedGraphEmptyState,
+                    selectionNavigation: expandedGraphSelectionNavigation,
                     selectionOverlay: expandedGraphSelectionOverlay,
                     selectedClusterKind: expandedGraphLayoutMode == .kindClusters ? nodeKindFilter.nodeKind : nil,
                     focusedClusterLink: activeExpandedGraphConnectionFocus.map {
@@ -2295,6 +2335,29 @@ struct StoryKnowledgePanelView: View {
     private func clearGraphSelection() {
         graphSelectedNodeID = nil
         graphSelectedEdgeID = nil
+    }
+
+    private func cycleVisibleNodeSelection(step: Int) {
+        guard !graphNavigableNodes.isEmpty else { return }
+
+        let currentIndex = graphNavigableNodes.firstIndex { $0.id == graphSelectedNodeID } ?? (step > 0 ? -1 : 0)
+        let nextIndex = wrappedIndex(from: currentIndex, step: step, count: graphNavigableNodes.count)
+        graphSelectedEdgeID = nil
+        graphSelectedNodeID = graphNavigableNodes[nextIndex].id
+    }
+
+    private func cycleVisibleEdgeSelection(step: Int) {
+        guard !graphNavigableEdges.isEmpty else { return }
+
+        let currentIndex = graphNavigableEdges.firstIndex { $0.id == graphSelectedEdgeID } ?? (step > 0 ? -1 : 0)
+        let nextIndex = wrappedIndex(from: currentIndex, step: step, count: graphNavigableEdges.count)
+        graphSelectedNodeID = nil
+        graphSelectedEdgeID = graphNavigableEdges[nextIndex].id
+    }
+
+    private func wrappedIndex(from currentIndex: Int, step: Int, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return (currentIndex + step + count) % count
     }
 
     private func applyExpandedConnectionFocus(
