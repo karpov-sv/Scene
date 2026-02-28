@@ -25,6 +25,7 @@ struct StoryKnowledgePanelView: View {
     @State private var conflictFocus: ConflictFocus?
     @State private var graphSelectedNodeID: UUID?
     @State private var graphSelectedEdgeID: UUID?
+    @State private var showingExpandedGraph = false
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -226,6 +227,39 @@ struct StoryKnowledgePanelView: View {
         return graphVisibleEdges.first { $0.id == graphSelectedEdgeID }
     }
 
+    private var hasGraphSelection: Bool {
+        selectedGraphEdge != nil || selectedGraphNode != nil
+    }
+
+    private var graphNodeModels: [StoryKnowledgeNeighborhoodGraphView.NodeModel] {
+        graphVisibleNodes.map { node in
+            StoryKnowledgeNeighborhoodGraphView.NodeModel(
+                id: node.id,
+                title: node.name,
+                subtitle: node.kind.rawValue.capitalized,
+                summary: node.summary,
+                kind: node.kind,
+                status: node.status,
+                confidence: node.confidence,
+                isLinkedToCompendium: node.resolvedCompendiumID != nil
+            )
+        }
+    }
+
+    private var graphEdgeModels: [StoryKnowledgeNeighborhoodGraphView.EdgeModel] {
+        graphVisibleEdges.map { edge in
+            StoryKnowledgeNeighborhoodGraphView.EdgeModel(
+                id: edge.id,
+                sourceNodeID: edge.sourceNodeID,
+                targetNodeID: edge.targetNodeID,
+                relation: edge.relation,
+                label: store.storyKnowledgeEdgeDisplayLabel(edge),
+                note: edge.note,
+                status: edge.status
+            )
+        }
+    }
+
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
         store.storyKnowledgePanelState.visibilityFilter
     }
@@ -407,6 +441,9 @@ struct StoryKnowledgePanelView: View {
                 onOpenCompendiumEntry: onOpenCompendiumEntry
             )
         }
+        .sheet(isPresented: $showingExpandedGraph) {
+            expandedGraphSheet
+        }
         .onChange(of: graphVisibleNodes.map(\.id), initial: false) { _, visibleNodeIDs in
             guard let graphSelectedNodeID else { return }
             if !visibleNodeIDs.contains(graphSelectedNodeID) {
@@ -533,164 +570,247 @@ struct StoryKnowledgePanelView: View {
 
     private var neighborhoodGraphSection: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Spacer(minLength: 0)
+
+                Button("Open Large Canvas") {
+                    showingExpandedGraph = true
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+
             StoryKnowledgeNeighborhoodGraphView(
-                nodes: graphVisibleNodes.map { node in
-                    StoryKnowledgeNeighborhoodGraphView.NodeModel(
-                        id: node.id,
-                        title: node.name,
-                        subtitle: node.kind.rawValue.capitalized,
-                        summary: node.summary,
-                        kind: node.kind,
-                        status: node.status,
-                        confidence: node.confidence,
-                        isLinkedToCompendium: node.resolvedCompendiumID != nil
-                    )
-                },
-                edges: graphVisibleEdges.map { edge in
-                    StoryKnowledgeNeighborhoodGraphView.EdgeModel(
-                        id: edge.id,
-                        sourceNodeID: edge.sourceNodeID,
-                        targetNodeID: edge.targetNodeID,
-                        relation: edge.relation,
-                        label: store.storyKnowledgeEdgeDisplayLabel(edge),
-                        note: edge.note,
-                        status: edge.status
-                    )
-                },
+                nodes: graphNodeModels,
+                edges: graphEdgeModels,
                 preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
                 selectedNodeID: $graphSelectedNodeID,
                 selectedEdgeID: $graphSelectedEdgeID
             )
 
-            if let selectedGraphEdge {
+            if hasGraphSelection {
+                Divider()
+                graphSelectionInspector
+            }
+        }
+        .cardStyle()
+    }
+
+    private var expandedGraphSheet: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Knowledge Graph Canvas")
+                        .font(.title3.weight(.semibold))
+
+                    Text("\(graphVisibleNodes.count) visible nodes • \(graphVisibleEdges.count) visible edges")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if hasGraphSelection {
+                    Button("Clear Selection") {
+                        clearGraphSelection()
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(16)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                StoryKnowledgeNeighborhoodGraphView(
+                    nodes: graphNodeModels,
+                    edges: graphEdgeModels,
+                    preferredAnchorNodeIDs: graphPreferredAnchorNodeIDs,
+                    selectedNodeID: $graphSelectedNodeID,
+                    selectedEdgeID: $graphSelectedEdgeID
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(16)
+
                 Divider()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge))
-                            .font(.subheadline.weight(.semibold))
-                            .textSelection(.enabled)
-                        statusBadge(selectedGraphEdge.status.rawValue.capitalized)
-                        Spacer(minLength: 0)
-                        Text(confidenceLabel(selectedGraphEdge.confidence))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Inspector")
+                            .font(.headline)
 
-                    HStack(spacing: 8) {
-                        Button(isSidebarFocused(on: selectedGraphEdge) ? "Clear Pair Focus" : "Focus Pair") {
-                            toggleSidebarFocus(for: selectedGraphEdge)
-                        }
-                        .buttonStyle(.borderless)
-
-                        Button(isRelationFiltered(to: selectedGraphEdge.relation) ? "Clear Relation Filter" : "Filter Relation") {
-                            toggleRelationFilter(selectedGraphEdge.relation)
-                        }
-                        .buttonStyle(.borderless)
-
-                        Spacer(minLength: 0)
-                    }
-
-                    if !selectedGraphEdge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(selectedGraphEdge.note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    let diagnostics = store.storyKnowledgeObservedRelationDiagnostics(for: selectedGraphEdge)
-                    if !diagnostics.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Observed normalization")
-                                .font(.caption2.weight(.semibold))
+                        if hasGraphSelection {
+                            graphSelectionInspector
+                        } else {
+                            Text("Select a node or edge to inspect it here. The expanded canvas shares the same filters, focus, and selection model as the sidebar graph.")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            ForEach(diagnostics) { diagnostic in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(diagnostic.message)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Current Graph Scope")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
 
-                                    if !diagnostic.evidenceItems.isEmpty {
-                                        evidenceSection(items: diagnostic.evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
-                                    }
+                                Text(matchCountLabel())
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                if let conflictFocus {
+                                    Label(conflictFocus.label, systemImage: "scope")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+                    .padding(16)
+                }
+                .frame(width: 320)
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .frame(minWidth: 1100, minHeight: 760)
+    }
+
+    @ViewBuilder
+    private var graphSelectionInspector: some View {
+        if let selectedGraphEdge {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge))
+                        .font(.subheadline.weight(.semibold))
+                        .textSelection(.enabled)
+                    statusBadge(selectedGraphEdge.status.rawValue.capitalized)
+                    Spacer(minLength: 0)
+                    Text(confidenceLabel(selectedGraphEdge.confidence))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button(isSidebarFocused(on: selectedGraphEdge) ? "Clear Pair Focus" : "Focus Pair") {
+                        toggleSidebarFocus(for: selectedGraphEdge)
+                    }
+                    .buttonStyle(.borderless)
+
+                    Button(isRelationFiltered(to: selectedGraphEdge.relation) ? "Clear Relation Filter" : "Filter Relation") {
+                        toggleRelationFilter(selectedGraphEdge.relation)
+                    }
+                    .buttonStyle(.borderless)
+
+                    Button("Clear Selection") {
+                        clearGraphSelection()
+                    }
+                    .buttonStyle(.borderless)
+
+                    Spacer(minLength: 0)
+                }
+
+                if !selectedGraphEdge.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(selectedGraphEdge.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                let diagnostics = store.storyKnowledgeObservedRelationDiagnostics(for: selectedGraphEdge)
+                if !diagnostics.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Observed normalization")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(diagnostics) { diagnostic in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(diagnostic.message)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+
+                                if !diagnostic.evidenceItems.isEmpty {
+                                    evidenceSection(items: diagnostic.evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
                                 }
                             }
                         }
                     }
+                }
 
-                    let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphEdge)
-                    if !evidenceItems.isEmpty {
-                        evidenceSection(items: evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
+                let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphEdge)
+                if !evidenceItems.isEmpty {
+                    evidenceSection(items: evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
+                }
+            }
+        } else if let selectedGraphNode {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(selectedGraphNode.name)
+                        .font(.subheadline.weight(.semibold))
+                    statusBadge(selectedGraphNode.kind.rawValue.capitalized)
+                    statusBadge(selectedGraphNode.status.rawValue.capitalized)
+                    Spacer(minLength: 0)
+                    Text(confidenceLabel(selectedGraphNode.confidence))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button(isSidebarFocused(on: selectedGraphNode) ? "Clear Sidebar Focus" : "Focus in Sidebar") {
+                        toggleSidebarFocus(for: selectedGraphNode)
+                    }
+                    .buttonStyle(.borderless)
+
+                    Button(isKindFiltered(to: selectedGraphNode.kind) ? "Clear Kind Filter" : "Filter Kind") {
+                        toggleKindFilter(for: selectedGraphNode.kind)
+                    }
+                    .buttonStyle(.borderless)
+
+                    if let compendiumID = selectedGraphNode.resolvedCompendiumID {
+                        Button("Open Linked Compendium") {
+                            onOpenCompendiumEntry(compendiumID)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+
+                    Button("Clear Selection") {
+                        clearGraphSelection()
+                    }
+                    .buttonStyle(.borderless)
+
+                    Spacer(minLength: 0)
+                }
+
+                if !selectedGraphNode.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(selectedGraphNode.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                if !selectedGraphNodeIncidentEdges.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Visible Relations")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(selectedGraphNodeIncidentEdges.prefix(6)) { edge in
+                            Text(store.storyKnowledgeEdgeDisplayLabel(edge))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
-            } else if let selectedGraphNode {
-                Divider()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(selectedGraphNode.name)
-                            .font(.subheadline.weight(.semibold))
-                        statusBadge(selectedGraphNode.kind.rawValue.capitalized)
-                        statusBadge(selectedGraphNode.status.rawValue.capitalized)
-                        Spacer(minLength: 0)
-                        Text(confidenceLabel(selectedGraphNode.confidence))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Button(isSidebarFocused(on: selectedGraphNode) ? "Clear Sidebar Focus" : "Focus in Sidebar") {
-                            toggleSidebarFocus(for: selectedGraphNode)
-                        }
-                        .buttonStyle(.borderless)
-
-                        Button(isKindFiltered(to: selectedGraphNode.kind) ? "Clear Kind Filter" : "Filter Kind") {
-                            toggleKindFilter(for: selectedGraphNode.kind)
-                        }
-                        .buttonStyle(.borderless)
-
-                        if let compendiumID = selectedGraphNode.resolvedCompendiumID {
-                            Button("Open Linked Compendium") {
-                                onOpenCompendiumEntry(compendiumID)
-                            }
-                            .buttonStyle(.borderless)
-                        }
-
-                        Spacer(minLength: 0)
-                    }
-
-                    if !selectedGraphNode.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(selectedGraphNode.summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    if !selectedGraphNodeIncidentEdges.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Visible Relations")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(selectedGraphNodeIncidentEdges.prefix(6)) { edge in
-                                Text(store.storyKnowledgeEdgeDisplayLabel(edge))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-
-                    let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphNode)
-                    if !evidenceItems.isEmpty {
-                        evidenceSection(items: evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
-                    }
+                let evidenceItems = store.storyKnowledgeEvidenceItems(for: selectedGraphNode)
+                if !evidenceItems.isEmpty {
+                    evidenceSection(items: evidenceItems, onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) })
                 }
             }
         }
-        .cardStyle()
     }
 
     private var collapsedRelationSection: some View {
@@ -1027,6 +1147,11 @@ struct StoryKnowledgePanelView: View {
     private func cancelRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+    }
+
+    private func clearGraphSelection() {
+        graphSelectedNodeID = nil
+        graphSelectedEdgeID = nil
     }
 
     private func togglePendingNodeSelection(_ nodeID: UUID) {
