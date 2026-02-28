@@ -7,6 +7,69 @@ struct StoryKnowledgePanelView: View {
         let compendiumID: UUID?
     }
 
+    private enum GraphDensityMode: String, CaseIterable, Identifiable {
+        case balanced
+        case wide
+        case project
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .balanced:
+                return "Balanced"
+            case .wide:
+                return "Wide"
+            case .project:
+                return "Project"
+            }
+        }
+
+        var acceptedEdgeBudget: Int {
+            switch self {
+            case .balanced:
+                return 36
+            case .wide:
+                return 56
+            case .project:
+                return 84
+            }
+        }
+
+        var pendingEdgeBudget: Int {
+            switch self {
+            case .balanced:
+                return 18
+            case .wide:
+                return 28
+            case .project:
+                return 40
+            }
+        }
+
+        var totalEdgeCap: Int {
+            switch self {
+            case .balanced:
+                return 54
+            case .wide:
+                return 80
+            case .project:
+                return 120
+            }
+        }
+
+        var nodeCap: Int {
+            switch self {
+            case .balanced:
+                return 34
+            case .wide:
+                return 48
+            case .project:
+                return 68
+            }
+        }
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -26,6 +89,7 @@ struct StoryKnowledgePanelView: View {
     @State private var graphSelectedNodeID: UUID?
     @State private var graphSelectedEdgeID: UUID?
     @State private var showingExpandedGraph = false
+    @State private var expandedGraphDensity: GraphDensityMode = .balanced
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -148,7 +212,27 @@ struct StoryKnowledgePanelView: View {
         Set(collapsedRelationSummaries.flatMap { $0.observedRelations.map(\.rawRelation) }).count
     }
 
+    private var graphCandidateEdges: [StoryKnowledgeEdge] {
+        let accepted = visibilityFilter == .pending ? [] : filteredAcceptedEdges
+        let pending = visibilityFilter == .accepted ? [] : filteredPendingEdges
+        return accepted + pending
+    }
+
+    private var graphCandidateNodes: [StoryKnowledgeNode] {
+        visibilityFilter == .pending
+            ? filteredPendingNodes
+            : (visibilityFilter == .accepted ? filteredAcceptedNodes : filteredAcceptedNodes + filteredPendingNodes)
+    }
+
+    private var activeGraphDensityMode: GraphDensityMode? {
+        showingExpandedGraph ? expandedGraphDensity : nil
+    }
+
     private var graphVisibleEdges: [StoryKnowledgeEdge] {
+        if let mode = activeGraphDensityMode {
+            return graphVisibleEdges(for: mode)
+        }
+
         let acceptedBudget = conflictFocus == nil ? 16 : 24
         let pendingBudget = conflictFocus == nil ? 8 : 12
         var edges: [StoryKnowledgeEdge] = []
@@ -164,12 +248,13 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphVisibleNodes: [StoryKnowledgeNode] {
+        if let mode = activeGraphDensityMode {
+            return graphVisibleNodes(for: mode, edges: graphVisibleEdges)
+        }
+
         let edgeNodeIDs = Set(
             graphVisibleEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] }
         )
-        let visibleNodes = visibilityFilter == .pending
-            ? filteredPendingNodes
-            : (visibilityFilter == .accepted ? filteredAcceptedNodes : filteredAcceptedNodes + filteredPendingNodes)
 
         var nodes: [StoryKnowledgeNode] = []
         var seen = Set<UUID>()
@@ -183,7 +268,7 @@ struct StoryKnowledgePanelView: View {
             nodes.append(node)
         }
 
-        for node in visibleNodes where seen.insert(node.id).inserted {
+        for node in graphCandidateNodes where seen.insert(node.id).inserted {
             nodes.append(node)
             if nodes.count >= 18 {
                 break
@@ -258,6 +343,19 @@ struct StoryKnowledgePanelView: View {
                 status: edge.status
             )
         }
+    }
+
+    private var graphCoverageLabel: String {
+        let visibleNodeCount = graphVisibleNodes.count
+        let visibleEdgeCount = graphVisibleEdges.count
+        let totalNodeCount = graphCandidateNodes.count
+        let totalEdgeCount = graphCandidateEdges.count
+
+        if visibleNodeCount == totalNodeCount && visibleEdgeCount == totalEdgeCount {
+            return "\(visibleNodeCount) filtered nodes • \(visibleEdgeCount) filtered edges"
+        }
+
+        return "Showing \(visibleNodeCount) of \(totalNodeCount) filtered nodes • \(visibleEdgeCount) of \(totalEdgeCount) filtered edges"
     }
 
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
@@ -603,12 +701,20 @@ struct StoryKnowledgePanelView: View {
                     Text("Knowledge Graph Canvas")
                         .font(.title3.weight(.semibold))
 
-                    Text("\(graphVisibleNodes.count) visible nodes • \(graphVisibleEdges.count) visible edges")
+                    Text(graphCoverageLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 0)
+
+                Picker("Canvas Density", selection: $expandedGraphDensity) {
+                    ForEach(GraphDensityMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 280)
 
                 if hasGraphSelection {
                     Button("Clear Selection") {
@@ -651,8 +757,12 @@ struct StoryKnowledgePanelView: View {
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
 
-                                Text(matchCountLabel())
+                                Text(graphCoverageLabel)
                                     .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Text(matchCountLabel())
+                                    .font(.caption2)
                                     .foregroundStyle(.secondary)
 
                                 if let conflictFocus {
@@ -1147,6 +1257,53 @@ struct StoryKnowledgePanelView: View {
     private func cancelRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+    }
+
+    private func graphVisibleEdges(for mode: GraphDensityMode) -> [StoryKnowledgeEdge] {
+        let focusMultiplier = conflictFocus == nil ? 1 : 2
+        let acceptedBudget = min(mode.acceptedEdgeBudget * focusMultiplier, graphCandidateEdges.count)
+        let pendingBudget = min(mode.pendingEdgeBudget * focusMultiplier, graphCandidateEdges.count)
+
+        var edges: [StoryKnowledgeEdge] = []
+
+        if visibilityFilter != .pending {
+            edges.append(contentsOf: filteredAcceptedEdges.prefix(acceptedBudget))
+        }
+        if visibilityFilter != .accepted {
+            edges.append(contentsOf: filteredPendingEdges.prefix(pendingBudget))
+        }
+
+        return Array(edges.prefix(mode.totalEdgeCap))
+    }
+
+    private func graphVisibleNodes(
+        for mode: GraphDensityMode,
+        edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeNode] {
+        let edgeNodeIDs = Set(
+            edges.flatMap { [$0.sourceNodeID, $0.targetNodeID] }
+        )
+
+        var nodes: [StoryKnowledgeNode] = []
+        var seen = Set<UUID>()
+
+        for nodeID in edgeNodeIDs.sorted(by: { lhs, rhs in
+            let lhsName = storyKnowledgeNodesByID[lhs]?.name ?? ""
+            let rhsName = storyKnowledgeNodesByID[rhs]?.name ?? ""
+            return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+        }) {
+            guard let node = storyKnowledgeNodesByID[nodeID], seen.insert(node.id).inserted else { continue }
+            nodes.append(node)
+        }
+
+        for node in graphCandidateNodes where seen.insert(node.id).inserted {
+            nodes.append(node)
+            if nodes.count >= mode.nodeCap {
+                break
+            }
+        }
+
+        return nodes
     }
 
     private func clearGraphSelection() {
