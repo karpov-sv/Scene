@@ -75,6 +75,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let positions: [UUID: CGPoint]
         let labelPositions: [UUID: CGPoint]
         let clusterLabels: [ClusterLabel]
+        let clusterCenters: [StoryKnowledgeNodeKind: CGPoint]
     }
 
     @GestureState private var dragTranslation: CGSize = .zero
@@ -196,7 +197,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                         continue
                                     }
 
-                                    let path = edgePath(for: edge, source: source, target: target)
+                                    let path = edgePath(for: edge, source: source, target: target, layout: layout)
 
                                     if isFocusedClusterLinkEdge(edge) {
                                         context.stroke(
@@ -585,7 +586,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
         guard !sortedNodes.isEmpty else {
-            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [])
+            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [], clusterCenters: [:])
         }
 
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -593,7 +594,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             return LayoutResult(
                 positions: [node.id: center],
                 labelPositions: [:],
-                clusterLabels: []
+                clusterLabels: [],
+                clusterCenters: [:]
             )
         }
 
@@ -640,21 +642,30 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             }
         }
 
+        let layoutResult = LayoutResult(
+            positions: positions,
+            labelPositions: [:],
+            clusterLabels: [],
+            clusterCenters: [:]
+        )
+
         let labelPositions = Dictionary(uniqueKeysWithValues: edges.compactMap { edge -> (UUID, CGPoint)? in
-            guard let source = positions[edge.sourceNodeID],
-                  let target = positions[edge.targetNodeID] else {
+            guard let source = layoutResult.positions[edge.sourceNodeID],
+                  let target = layoutResult.positions[edge.targetNodeID] else {
                 return nil
             }
             return (
                 edge.id,
-                CGPoint(
-                    x: (source.x + target.x) / 2,
-                    y: (source.y + target.y) / 2
-                )
+                edgeLabelPosition(for: edge, source: source, target: target, layout: layoutResult)
             )
         })
 
-        return LayoutResult(positions: positions, labelPositions: labelPositions, clusterLabels: [])
+        return LayoutResult(
+            positions: positions,
+            labelPositions: labelPositions,
+            clusterLabels: [],
+            clusterCenters: [:]
+        )
     }
 
     private func clusteredLayout(in size: CGSize) -> LayoutResult {
@@ -662,7 +673,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let orderedKinds = StoryKnowledgeNodeKind.allCases.filter { !(groupedNodes[$0] ?? []).isEmpty }
 
         guard !orderedKinds.isEmpty else {
-            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [])
+            return LayoutResult(positions: [:], labelPositions: [:], clusterLabels: [], clusterCenters: [:])
         }
 
         let columnCount = min(3, max(1, orderedKinds.count))
@@ -672,6 +683,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
         var positions: [UUID: CGPoint] = [:]
         var clusterLabels: [ClusterLabel] = []
+        var clusterCenters: [StoryKnowledgeNodeKind: CGPoint] = [:]
 
         for (index, kind) in orderedKinds.enumerated() {
             let column = index % columnCount
@@ -680,6 +692,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 x: horizontalSpacing * CGFloat(column + 1),
                 y: verticalSpacing * CGFloat(row + 1)
             )
+            clusterCenters[kind] = center
 
             clusterLabels.append(
                 ClusterLabel(
@@ -713,24 +726,29 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             }
         }
 
+        let layoutResult = LayoutResult(
+            positions: positions,
+            labelPositions: [:],
+            clusterLabels: clusterLabels,
+            clusterCenters: clusterCenters
+        )
+
         let labelPositions = Dictionary(uniqueKeysWithValues: edges.compactMap { edge -> (UUID, CGPoint)? in
-            guard let source = positions[edge.sourceNodeID],
-                  let target = positions[edge.targetNodeID] else {
+            guard let source = layoutResult.positions[edge.sourceNodeID],
+                  let target = layoutResult.positions[edge.targetNodeID] else {
                 return nil
             }
             return (
                 edge.id,
-                CGPoint(
-                    x: (source.x + target.x) / 2,
-                    y: (source.y + target.y) / 2
-                )
+                edgeLabelPosition(for: edge, source: source, target: target, layout: layoutResult)
             )
         })
 
         return LayoutResult(
             positions: positions,
             labelPositions: labelPositions,
-            clusterLabels: clusterLabels
+            clusterLabels: clusterLabels,
+            clusterCenters: clusterCenters
         )
     }
 
@@ -1031,7 +1049,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         return selectedNodeID == nil ? 2 : 2.5
     }
 
-    private func edgePath(for edge: EdgeModel, source: CGPoint, target: CGPoint) -> Path {
+    private func edgePath(
+        for edge: EdgeModel,
+        source: CGPoint,
+        target: CGPoint,
+        layout: LayoutResult
+    ) -> Path {
         guard layoutMode == .kindClusters, isCrossClusterEdge(edge) else {
             var path = Path()
             path.move(to: source)
@@ -1039,18 +1062,31 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             return path
         }
 
-        let controlPoint = crossClusterControlPoint(for: edge, source: source, target: target)
+        let controlPoint = crossClusterControlPoint(for: edge, source: source, target: target, layout: layout)
+        let sourceControl = CGPoint(
+            x: source.x + (controlPoint.x - source.x) * 0.72,
+            y: source.y + (controlPoint.y - source.y) * 0.72
+        )
+        let targetControl = CGPoint(
+            x: target.x + (controlPoint.x - target.x) * 0.72,
+            y: target.y + (controlPoint.y - target.y) * 0.72
+        )
         var path = Path()
         path.move(to: source)
-        path.addQuadCurve(to: target, control: controlPoint)
+        path.addCurve(to: target, control1: sourceControl, control2: targetControl)
         return path
     }
 
     private func crossClusterControlPoint(
         for edge: EdgeModel,
         source: CGPoint,
-        target: CGPoint
+        target: CGPoint,
+        layout: LayoutResult
     ) -> CGPoint {
+        if let bundleAnchor = bundledClusterAnchor(for: edge, layout: layout) {
+            return bundleAnchor
+        }
+
         let midpoint = CGPoint(
             x: (source.x + target.x) / 2,
             y: (source.y + target.y) / 2
@@ -1066,6 +1102,62 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             x: midpoint.x + normal.x * offsetMagnitude * direction,
             y: midpoint.y + normal.y * offsetMagnitude * direction
         )
+    }
+
+    private func bundledClusterAnchor(
+        for edge: EdgeModel,
+        layout: LayoutResult
+    ) -> CGPoint? {
+        guard let kinds = edgeKinds(edge),
+              let sourceCenter = layout.clusterCenters[kinds.source],
+              let targetCenter = layout.clusterCenters[kinds.target] else {
+            return nil
+        }
+
+        let midpoint = CGPoint(
+            x: (sourceCenter.x + targetCenter.x) / 2,
+            y: (sourceCenter.y + targetCenter.y) / 2
+        )
+        let dx = targetCenter.x - sourceCenter.x
+        let dy = targetCenter.y - sourceCenter.y
+        let distance = max(sqrt(dx * dx + dy * dy), 1)
+        let normal = CGPoint(x: -dy / distance, y: dx / distance)
+        let baseOffset = min(max(distance * 0.1, 20), 52)
+        let laneOffset = relationLaneOffset(for: edge)
+        let direction = edgeCurveDirection(for: edge)
+
+        return CGPoint(
+            x: midpoint.x + normal.x * (baseOffset * direction + laneOffset),
+            y: midpoint.y + normal.y * (baseOffset * direction + laneOffset)
+        )
+    }
+
+    private func edgeLabelPosition(
+        for edge: EdgeModel,
+        source: CGPoint,
+        target: CGPoint,
+        layout: LayoutResult
+    ) -> CGPoint {
+        guard layoutMode == .kindClusters, isCrossClusterEdge(edge),
+              let bundleAnchor = bundledClusterAnchor(for: edge, layout: layout) else {
+            return CGPoint(
+                x: (source.x + target.x) / 2,
+                y: (source.y + target.y) / 2
+            )
+        }
+
+        return CGPoint(
+            x: ((source.x + target.x) / 2 + bundleAnchor.x) / 2,
+            y: ((source.y + target.y) / 2 + bundleAnchor.y) / 2
+        )
+    }
+
+    private func relationLaneOffset(for edge: EdgeModel) -> CGFloat {
+        let relationValue = normalizedRelationKey(edge.relation).unicodeScalars.reduce(0) { partial, scalar in
+            partial + Int(scalar.value)
+        }
+        let bucket = relationValue % 5
+        return CGFloat(bucket - 2) * 10
     }
 
     private func edgeCurveDirection(for edge: EdgeModel) -> CGFloat {
