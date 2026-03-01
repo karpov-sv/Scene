@@ -165,6 +165,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var hoveredEdgeID: UUID?
     @State private var previewedNavigationTarget: SelectionNavigation.Target?
     @State private var previewGhostPhase = false
+    @FocusState private var isCanvasFocused: Bool
 
     let nodes: [NodeModel]
     let edges: [EdgeModel]
@@ -179,8 +180,45 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let focusedClusterLink: FocusedClusterLink?
     let focusedRelation: String?
     let onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?
+    let fillsAvailableHeight: Bool
     @Binding var selectedNodeID: UUID?
     @Binding var selectedEdgeID: UUID?
+
+    init(
+        nodes: [NodeModel],
+        edges: [EdgeModel],
+        preferredAnchorNodeIDs: [UUID],
+        layoutMode: LayoutMode,
+        labelDensity: LabelDensity,
+        focusHighlights: [FocusHighlight],
+        emptyState: EmptyState?,
+        selectionNavigation: SelectionNavigation?,
+        selectionOverlay: SelectionOverlay?,
+        selectedClusterKind: StoryKnowledgeNodeKind?,
+        focusedClusterLink: FocusedClusterLink?,
+        focusedRelation: String?,
+        onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?,
+        fillsAvailableHeight: Bool = false,
+        selectedNodeID: Binding<UUID?>,
+        selectedEdgeID: Binding<UUID?>
+    ) {
+        self.nodes = nodes
+        self.edges = edges
+        self.preferredAnchorNodeIDs = preferredAnchorNodeIDs
+        self.layoutMode = layoutMode
+        self.labelDensity = labelDensity
+        self.focusHighlights = focusHighlights
+        self.emptyState = emptyState
+        self.selectionNavigation = selectionNavigation
+        self.selectionOverlay = selectionOverlay
+        self.selectedClusterKind = selectedClusterKind
+        self.focusedClusterLink = focusedClusterLink
+        self.focusedRelation = focusedRelation
+        self.onSelectClusterKind = onSelectClusterKind
+        self.fillsAvailableHeight = fillsAvailableHeight
+        _selectedNodeID = selectedNodeID
+        _selectedEdgeID = selectedEdgeID
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -200,6 +238,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("-", modifiers: [.command])
                 .help("Zoom Out (Command--)")
+                .focusable()
 
                 Text("\(zoomPercentage)%")
                     .font(.caption)
@@ -217,6 +256,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("=", modifiers: [.command])
                 .help("Zoom In (Command-Plus)")
+                .focusable()
 
                 Button(fitButtonTitle) {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -228,6 +268,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .disabled(nodes.isEmpty)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .help("\(fitButtonTitle) (Shift-Command-F)")
+                .focusable()
 
                 Button("Reset View") {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -238,6 +279,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("0", modifiers: [.command])
                 .help("Reset View (Command-0)")
+                .focusable()
 
                 if let selectionNavigation {
                     Divider()
@@ -267,6 +309,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     .onHover { isHovering in
                         updateNavigationPreview(isHovering ? selectionNavigation.previousTarget : nil)
                     }
+                    .focusable()
 
                     Button {
                         clearNavigationPreview()
@@ -288,6 +331,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     .onHover { isHovering in
                         updateNavigationPreview(isHovering ? selectionNavigation.nextTarget : nil)
                     }
+                    .focusable()
 
                     if let previewedNavigationTarget {
                         Text("Preview: \(previewedNavigationTarget.title)")
@@ -376,26 +420,15 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             }
 
                             ForEach(layout.clusterLabels) { clusterLabel in
-                                clusterLabelButton(clusterLabel)
+                                clusterLabelBadge(clusterLabel)
                                     .position(x: clusterLabel.center.x, y: clusterLabel.center.y - 54)
                             }
 
                             ForEach(nodes) { node in
                                 if let position = layout.positions[node.id] {
-                                    Button {
-                                        withAnimation(.easeInOut(duration: 0.18)) {
-                                            selectedEdgeID = nil
-                                            selectedNodeID = selectedNodeID == node.id ? nil : node.id
-                                        }
-                                    } label: {
-                                        nodeBubble(node)
-                                    }
-                                    .buttonStyle(.plain)
+                                    nodeBubble(node)
                                     .position(position)
                                     .opacity(nodeOpacity(node.id))
-                                    .onHover { isHovering in
-                                        hoveredNodeID = isHovering ? node.id : (hoveredNodeID == node.id ? nil : hoveredNodeID)
-                                    }
                                     .shadow(
                                         color: selectionRingColor(node).opacity(selectedNodeID == node.id ? 0.22 : 0.08),
                                         radius: selectedNodeID == node.id ? 8 : 3,
@@ -406,26 +439,15 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
                             ForEach(edges) { edge in
                                 if let labelPosition = layout.labelPositions[edge.id] {
-                                    Button {
-                                        withAnimation(.easeInOut(duration: 0.18)) {
-                                            selectedNodeID = nil
-                                            selectedEdgeID = selectedEdgeID == edge.id ? nil : edge.id
-                                        }
-                                    } label: {
-                                        edgeSelectionBadge(edge)
-                                    }
-                                    .buttonStyle(.plain)
+                                    edgeSelectionBadge(edge)
                                     .position(labelPosition)
                                     .opacity(edgeSelectionOpacity(edge))
-                                    .onHover { isHovering in
-                                        hoveredEdgeID = isHovering ? edge.id : (hoveredEdgeID == edge.id ? nil : hoveredEdgeID)
-                                    }
                                 }
                             }
 
                             if !isInteractingWithViewport,
                                let hoveredEdgeID,
-                               let edge = edges.first(where: { $0.id == hoveredEdgeID }),
+                               let edge = edgesByID[hoveredEdgeID],
                                let position = layout.labelPositions[hoveredEdgeID] {
                                 hoverCard(
                                     title: edge.label,
@@ -437,7 +459,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                                 .position(x: position.x, y: position.y - 42)
                             } else if !isInteractingWithViewport,
                                       let hoveredNodeID,
-                                      let node = nodes.first(where: { $0.id == hoveredNodeID }),
+                                      let node = nodesByID[hoveredNodeID],
                                       let position = layout.positions[hoveredNodeID] {
                                 hoverCard(
                                     title: node.title,
@@ -474,8 +496,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     )
                     .contentShape(Rectangle())
                     .clipped()
-                    .simultaneousGesture(dragGesture)
-                    .simultaneousGesture(magnificationGesture)
+                    .focusable()
+                    .focused($isCanvasFocused)
                     .overlay(alignment: .bottomLeading) {
                         if let selectionOverlay {
                             selectionOverlayCard(selectionOverlay)
@@ -495,10 +517,32 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     .onChange(of: geometry.size, initial: true) { _, newSize in
                         canvasSize = newSize
                     }
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            updateCanvasHover(at: location, layout: layout)
+                        case .ended:
+                            hoveredNodeID = nil
+                            hoveredEdgeID = nil
+                        }
+                    }
+                    .simultaneousGesture(
+                        SpatialTapGesture()
+                            .onEnded { value in
+                                handleCanvasTap(at: value.location, layout: layout)
+                            }
+                    )
+                    .simultaneousGesture(dragGesture)
+                    .simultaneousGesture(magnificationGesture)
                 }
-                .frame(height: 320)
+                .frame(maxWidth: .infinity)
+                .frame(
+                    minHeight: fillsAvailableHeight ? 420 : 320,
+                    maxHeight: fillsAvailableHeight ? .infinity : 320
+                )
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil, alignment: .topLeading)
         .onChange(of: nodes.map(\.id), initial: false) { _, _ in
             resetViewport()
         }
@@ -632,6 +676,14 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     private var focusedRelationDisplayLabel: String? {
         guard let focusedRelationKey else { return nil }
         return focusedRelationKey.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var nodesByID: [UUID: NodeModel] {
+        Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+    }
+
+    private var edgesByID: [UUID: EdgeModel] {
+        Dictionary(uniqueKeysWithValues: edges.map { ($0.id, $0) })
     }
 
     private var previewedNodeID: UUID? {
@@ -768,7 +820,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func focusBounds(in layout: LayoutResult) -> CGRect? {
         if let selectedEdgeID,
-           let edge = edges.first(where: { $0.id == selectedEdgeID }),
+           let edge = edgesByID[selectedEdgeID],
            let source = layout.positions[edge.sourceNodeID],
            let target = layout.positions[edge.targetNodeID] {
             return expandedBounds(for: [source, target], nodePadding: CGSize(width: 96, height: 72))
@@ -1053,6 +1105,169 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         centerViewport(on: contentPoint, canvasSize: canvasSize, scale: effectiveScale)
     }
 
+    private func updateCanvasHover(at location: CGPoint, layout: LayoutResult) {
+        let contentLocation = contentPoint(forCanvasLocation: location)
+        if let nodeID = hitTestNode(at: contentLocation, layout: layout) {
+            hoveredNodeID = nodeID
+            hoveredEdgeID = nil
+            return
+        }
+        if let edgeID = hitTestEdge(at: contentLocation, layout: layout) {
+            hoveredEdgeID = edgeID
+            hoveredNodeID = nil
+            return
+        }
+        hoveredNodeID = nil
+        hoveredEdgeID = nil
+    }
+
+    private func handleCanvasTap(at location: CGPoint, layout: LayoutResult) {
+        isCanvasFocused = true
+        let contentLocation = contentPoint(forCanvasLocation: location)
+
+        if let clusterKind = hitTestClusterLabel(at: contentLocation, layout: layout) {
+            onSelectClusterKind?(clusterKind)
+            return
+        }
+
+        if let nodeID = hitTestNode(at: contentLocation, layout: layout) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selectedEdgeID = nil
+                selectedNodeID = selectedNodeID == nodeID ? nil : nodeID
+            }
+            return
+        }
+
+        if let edgeID = hitTestEdge(at: contentLocation, layout: layout) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selectedNodeID = nil
+                selectedEdgeID = selectedEdgeID == edgeID ? nil : edgeID
+            }
+        }
+    }
+
+    private func contentPoint(forCanvasLocation location: CGPoint) -> CGPoint {
+        CGPoint(
+            x: (location.x - effectiveOffset.width) / max(effectiveScale, 0.001),
+            y: (location.y - effectiveOffset.height) / max(effectiveScale, 0.001)
+        )
+    }
+
+    private func hitTestNode(at location: CGPoint, layout: LayoutResult) -> UUID? {
+        for node in nodes.sorted(by: nodeHitTestPriority) {
+            guard let center = layout.positions[node.id] else { continue }
+            let size = nodeHitAreaSize(node)
+            let frame = CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            if frame.insetBy(dx: -6, dy: -6).contains(location) {
+                return node.id
+            }
+        }
+        return nil
+    }
+
+    private func hitTestEdge(at location: CGPoint, layout: LayoutResult) -> UUID? {
+        for edge in edges.sorted(by: edgeHitTestPriority) {
+            guard let center = layout.labelPositions[edge.id] else { continue }
+            let size = edgeHitAreaSize(edge)
+            let frame = CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            if frame.insetBy(dx: -6, dy: -6).contains(location) {
+                return edge.id
+            }
+        }
+        return nil
+    }
+
+    private func hitTestClusterLabel(at location: CGPoint, layout: LayoutResult) -> StoryKnowledgeNodeKind? {
+        guard onSelectClusterKind != nil else { return nil }
+        for clusterLabel in layout.clusterLabels {
+            let center = CGPoint(x: clusterLabel.center.x, y: clusterLabel.center.y - 54)
+            let size = clusterLabelHitAreaSize(clusterLabel)
+            let frame = CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            if frame.insetBy(dx: -4, dy: -4).contains(location) {
+                return clusterLabel.kind
+            }
+        }
+        return nil
+    }
+
+    private func nodeHitAreaSize(_ node: NodeModel) -> CGSize {
+        let isSelected = selectedNodeID == node.id
+        let width: CGFloat = switch labelDensity {
+        case .standard:
+            122
+        case .compact:
+            94
+        case .sparse:
+            isSelected ? 122 : 48
+        }
+        let height: CGFloat = switch labelDensity {
+        case .standard:
+            isSelected ? 72 : 64
+        case .compact:
+            isSelected ? 66 : 52
+        case .sparse:
+            isSelected ? 72 : 32
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    private func edgeHitAreaSize(_ edge: EdgeModel) -> CGSize {
+        guard shouldShowEdgeLabel(for: edge) else {
+            return CGSize(width: 18, height: 18)
+        }
+        let label = edge.relation.replacingOccurrences(of: "_", with: " ")
+        let width = min(max(CGFloat(label.count) * 6.4 + 18, 32), 160)
+        return CGSize(width: width, height: 22)
+    }
+
+    private func clusterLabelHitAreaSize(_ clusterLabel: ClusterLabel) -> CGSize {
+        let width = min(max(CGFloat(clusterLabel.title.count) * 7.2 + 22, 74), 180)
+        return CGSize(width: width, height: 24)
+    }
+
+    private func nodeHitTestPriority(_ lhs: NodeModel, _ rhs: NodeModel) -> Bool {
+        let lhsSelected = selectedNodeID == lhs.id
+        let rhsSelected = selectedNodeID == rhs.id
+        if lhsSelected != rhsSelected {
+            return lhsSelected
+        }
+        let lhsPreviewed = previewedNodeID == lhs.id
+        let rhsPreviewed = previewedNodeID == rhs.id
+        if lhsPreviewed != rhsPreviewed {
+            return lhsPreviewed
+        }
+        return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+    }
+
+    private func edgeHitTestPriority(_ lhs: EdgeModel, _ rhs: EdgeModel) -> Bool {
+        let lhsSelected = selectedEdgeID == lhs.id
+        let rhsSelected = selectedEdgeID == rhs.id
+        if lhsSelected != rhsSelected {
+            return lhsSelected
+        }
+        let lhsPreviewed = previewedEdgeID == lhs.id
+        let rhsPreviewed = previewedEdgeID == rhs.id
+        if lhsPreviewed != rhsPreviewed {
+            return lhsPreviewed
+        }
+        return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
+    }
+
     private func visibleContentRect(in size: CGSize) -> CGRect {
         CGRect(
             x: (0 - effectiveOffset.width) / effectiveScale,
@@ -1252,8 +1467,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         let radiusX = min(size.width * (0.2 + CGFloat(level) * 0.12), size.width / 2 - 70)
         let radiusY = min(size.height * (0.18 + CGFloat(level) * 0.11), size.height / 2 - 48)
         let orderedNodeIDs = nodeIDs.sorted { lhs, rhs in
-            let lhsNode = nodes.first(where: { $0.id == lhs })?.title ?? ""
-            let rhsNode = nodes.first(where: { $0.id == rhs })?.title ?? ""
+            let lhsNode = nodesByID[lhs]?.title ?? ""
+            let rhsNode = nodesByID[rhs]?.title ?? ""
             return lhsNode.localizedCaseInsensitiveCompare(rhsNode) == .orderedAscending
         }
 
@@ -1302,8 +1517,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             if lhsDegree != rhsDegree {
                 return lhsDegree > rhsDegree
             }
-            let lhsTitle = nodes.first(where: { $0.id == lhs })?.title ?? ""
-            let rhsTitle = nodes.first(where: { $0.id == rhs })?.title ?? ""
+            let lhsTitle = nodesByID[lhs]?.title ?? ""
+            let rhsTitle = nodesByID[rhs]?.title ?? ""
             return lhsTitle.localizedCaseInsensitiveCompare(rhsTitle) == .orderedAscending
         }
         return Array(degreeSorted.prefix(1))
@@ -1535,11 +1750,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func nodeOpacity(_ nodeID: UUID) -> Double {
         if let selectedEdgeID,
-           let edge = edges.first(where: { $0.id == selectedEdgeID }) {
+           let edge = edgesByID[selectedEdgeID] {
             return edge.sourceNodeID == nodeID || edge.targetNodeID == nodeID ? 1 : 0.3
         }
         if let previewedEdgeID,
-           let edge = edges.first(where: { $0.id == previewedEdgeID }) {
+           let edge = edgesByID[previewedEdgeID] {
             return edge.sourceNodeID == nodeID || edge.targetNodeID == nodeID ? 1 : 0.36
         }
         guard let selectedNodeID else { return 1 }
@@ -1724,7 +1939,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func nodeKind(for nodeID: UUID) -> StoryKnowledgeNodeKind? {
-        nodes.first(where: { $0.id == nodeID })?.kind
+        nodesByID[nodeID]?.kind
     }
 
     private func edgeKinds(_ edge: EdgeModel) -> (source: StoryKnowledgeNodeKind, target: StoryKnowledgeNodeKind)? {
@@ -1892,11 +2107,13 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func clusterLabelButton(_ clusterLabel: ClusterLabel) -> some View {
         Button {
+            isCanvasFocused = true
             onSelectClusterKind?(clusterLabel.kind)
         } label: {
             clusterLabelBadge(clusterLabel)
         }
         .buttonStyle(.plain)
+        .focusable()
         .disabled(onSelectClusterKind == nil)
         .help(onSelectClusterKind == nil ? "" : clusterHelpText(for: clusterLabel))
     }

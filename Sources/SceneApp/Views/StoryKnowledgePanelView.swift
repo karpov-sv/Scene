@@ -143,6 +143,60 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private struct DerivedStateKey: Equatable {
+        let projectUpdatedAt: Date
+        let visibilityFilter: StoryKnowledgePanelVisibilityFilter
+        let sortMode: StoryKnowledgePanelSortMode
+        let nodeKindFilter: StoryKnowledgePanelNodeKindFilter
+        let relationFilter: String
+        let searchText: String
+        let focusLabel: String?
+        let focusNodeIDs: [UUID]
+        let focusCompendiumID: UUID?
+        let showingExpandedGraph: Bool
+        let expandedGraphDensity: GraphDensityMode
+        let expandedGraphLayoutMode: StoryKnowledgeNeighborhoodGraphView.LayoutMode
+        let expandedGraphConnectionFocus: GraphClusterConnectionFocus?
+        let expandedGraphRelationFocus: GraphRelationFocus?
+        let expandedGraphCollapsedKinds: [String]
+        let expandedGraphIsolatedKinds: [String]
+    }
+
+    private struct PanelDerivedState {
+        var storyKnowledgeNodesByID: [UUID: StoryKnowledgeNode] = [:]
+        var filteredAcceptedNodes: [StoryKnowledgeNode] = []
+        var filteredConflictItems: [AppStore.StoryKnowledgeConflictItem] = []
+        var filteredAcceptedEdges: [StoryKnowledgeEdge] = []
+        var filteredPendingNodes: [StoryKnowledgeNode] = []
+        var filteredPendingEdges: [StoryKnowledgeEdge] = []
+        var filteredAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] = []
+        var filteredPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] = []
+        var collapsedRelationSummaries: [CollapsedRelationSummary] = []
+        var graphConnectionFocusedAcceptedEdges: [StoryKnowledgeEdge] = []
+        var graphConnectionFocusedPendingEdges: [StoryKnowledgeEdge] = []
+        var graphConnectionVisibleEdges: [StoryKnowledgeEdge] = []
+        var graphBaseAcceptedEdges: [StoryKnowledgeEdge] = []
+        var graphBasePendingEdges: [StoryKnowledgeEdge] = []
+        var graphBaseAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] = []
+        var graphBasePendingEdgesIgnoringSearch: [StoryKnowledgeEdge] = []
+        var graphBaseEdgesIgnoringSearch: [StoryKnowledgeEdge] = []
+        var graphVisibleEdges: [StoryKnowledgeEdge] = []
+        var graphVisibleNodes: [StoryKnowledgeNode] = []
+        var graphVisibleNodesByID: [UUID: StoryKnowledgeNode] = [:]
+        var graphVisibleEdgesByID: [UUID: StoryKnowledgeEdge] = [:]
+        var graphIncidentEdgesByNodeID: [UUID: [StoryKnowledgeEdge]] = [:]
+        var graphNavigableNodes: [StoryKnowledgeNode] = []
+        var graphNavigableEdges: [StoryKnowledgeEdge] = []
+        var graphNodeModels: [StoryKnowledgeNeighborhoodGraphView.NodeModel] = []
+        var graphEdgeModels: [StoryKnowledgeNeighborhoodGraphView.EdgeModel] = []
+        var graphCoverageLabel: String = "0 filtered nodes • 0 filtered edges"
+        var graphClusterSummaries: [GraphClusterSummary] = []
+        var graphClusterConnectionSummaries: [GraphClusterConnectionSummary] = []
+        var graphClusterConnectionSummaryLookup: [String: GraphClusterConnectionSummary] = [:]
+        var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] = []
+        var graphFocusedLinkRelationSummaryLookup: [String: GraphFocusedLinkRelationSummary] = [:]
+    }
+
     private struct CollapsedRelationSummary: Identifiable {
         let relation: String
         let observedRelations: [StoryKnowledgeObservedRelation]
@@ -168,6 +222,7 @@ struct StoryKnowledgePanelView: View {
     @State private var expandedGraphRelationFocus: GraphRelationFocus?
     @State private var expandedGraphCollapsedKinds: Set<StoryKnowledgeNodeKind> = []
     @State private var expandedGraphIsolatedKinds: Set<StoryKnowledgeNodeKind> = []
+    @State private var derivedState = PanelDerivedState()
     let onOpenCompendiumEntry: (UUID) -> Void
 
     private var isRefreshing: Bool {
@@ -201,7 +256,10 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var storyKnowledgeNodesByID: [UUID: StoryKnowledgeNode] {
-        Dictionary(uniqueKeysWithValues: mergedStoryKnowledgeNodes.map { ($0.id, $0) })
+        if !derivedState.storyKnowledgeNodesByID.isEmpty {
+            return derivedState.storyKnowledgeNodesByID
+        }
+        return Dictionary(uniqueKeysWithValues: mergedStoryKnowledgeNodes.map { ($0.id, $0) })
     }
 
     private var acceptedNodes: [StoryKnowledgeNode] {
@@ -212,44 +270,53 @@ struct StoryKnowledgePanelView: View {
         deduplicatedAcceptedEdges
     }
 
+    private var derivedStateKey: DerivedStateKey {
+        DerivedStateKey(
+            projectUpdatedAt: store.project.updatedAt,
+            visibilityFilter: visibilityFilter,
+            sortMode: sortMode,
+            nodeKindFilter: nodeKindFilter,
+            relationFilter: relationFilter,
+            searchText: store.storyKnowledgePanelState.searchText,
+            focusLabel: conflictFocus?.label,
+            focusNodeIDs: Array(conflictFocus?.nodeIDs ?? []).sorted { $0.uuidString < $1.uuidString },
+            focusCompendiumID: conflictFocus?.compendiumID,
+            showingExpandedGraph: showingExpandedGraph,
+            expandedGraphDensity: expandedGraphDensity,
+            expandedGraphLayoutMode: expandedGraphLayoutMode,
+            expandedGraphConnectionFocus: expandedGraphConnectionFocus,
+            expandedGraphRelationFocus: expandedGraphRelationFocus,
+            expandedGraphCollapsedKinds: expandedGraphCollapsedKinds.map(\.rawValue).sorted(),
+            expandedGraphIsolatedKinds: expandedGraphIsolatedKinds.map(\.rawValue).sorted()
+        )
+    }
+
     private var filteredAcceptedNodes: [StoryKnowledgeNode] {
-        sort(nodes: acceptedNodes.filter {
-            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
-        })
+        derivedState.filteredAcceptedNodes
     }
 
     private var filteredConflictItems: [AppStore.StoryKnowledgeConflictItem] {
-        store.storyKnowledgeConflictItems.filter { matchesFocus(conflict: $0) && matchesConflict($0) }
+        derivedState.filteredConflictItems
     }
 
     private var filteredAcceptedEdges: [StoryKnowledgeEdge] {
-        sort(edges: acceptedEdges.filter {
-            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
-        })
+        derivedState.filteredAcceptedEdges
     }
 
     private var filteredPendingNodes: [StoryKnowledgeNode] {
-        sort(nodes: deduplicatedPendingNodes.filter {
-            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
-        })
+        derivedState.filteredPendingNodes
     }
 
     private var filteredPendingEdges: [StoryKnowledgeEdge] {
-        sort(edges: deduplicatedPendingEdges.filter {
-            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
-        })
+        derivedState.filteredPendingEdges
     }
 
     private var filteredAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        sort(edges: acceptedEdges.filter {
-            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
-        })
+        derivedState.filteredAcceptedEdgesIgnoringSearch
     }
 
     private var filteredPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        sort(edges: deduplicatedPendingEdges.filter {
-            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
-        })
+        derivedState.filteredPendingEdgesIgnoringSearch
     }
 
     private var hasAnyVisibleResults: Bool {
@@ -290,31 +357,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var collapsedRelationSummaries: [CollapsedRelationSummary] {
-        let groupedEdges = Dictionary(grouping: visibleDiagnosticEdges.filter { !$0.observedRelations.isEmpty }) {
-            $0.relation
-        }
-
-        return groupedEdges.compactMap { relation, edges in
-            let observedRelations = mergedObservedRelations(
-                edges.flatMap(\.observedRelations)
-            )
-            guard !observedRelations.isEmpty else { return nil }
-            return CollapsedRelationSummary(
-                relation: relation,
-                observedRelations: observedRelations,
-                edgeCount: edges.count,
-                pendingEdgeCount: edges.filter { $0.status == .inferred }.count
-            )
-        }
-        .sorted { lhs, rhs in
-            if lhs.edgeCount != rhs.edgeCount {
-                return lhs.edgeCount > rhs.edgeCount
-            }
-            if lhs.observedRelations.count != rhs.observedRelations.count {
-                return lhs.observedRelations.count > rhs.observedRelations.count
-            }
-            return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
-        }
+        derivedState.collapsedRelationSummaries
     }
 
     private var collapsedRelationEdgeCount: Int {
@@ -378,58 +421,32 @@ struct StoryKnowledgePanelView: View {
         return expandedGraphRelationFocus
     }
 
-    private var graphClusterScopedAcceptedEdges: [StoryKnowledgeEdge] {
-        applyExpandedClusterCanvasScope(to: filteredAcceptedEdges)
-    }
-
-    private var graphClusterScopedPendingEdges: [StoryKnowledgeEdge] {
-        applyExpandedClusterCanvasScope(to: filteredPendingEdges)
-    }
-
-    private var graphClusterScopedAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedClusterCanvasScope(to: filteredAcceptedEdgesIgnoringSearch)
-    }
-
-    private var graphClusterScopedPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedClusterCanvasScope(to: filteredPendingEdgesIgnoringSearch)
-    }
-
     private var graphConnectionFocusedAcceptedEdges: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: graphClusterScopedAcceptedEdges)
+        derivedState.graphConnectionFocusedAcceptedEdges
     }
 
     private var graphConnectionFocusedPendingEdges: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: graphClusterScopedPendingEdges)
-    }
-
-    private var graphConnectionFocusedAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: graphClusterScopedAcceptedEdgesIgnoringSearch)
-    }
-
-    private var graphConnectionFocusedPendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedConnectionFocus(to: graphClusterScopedPendingEdgesIgnoringSearch)
+        derivedState.graphConnectionFocusedPendingEdges
     }
 
     private var graphConnectionVisibleEdges: [StoryKnowledgeEdge] {
-        let accepted = visibilityFilter == .pending ? [] : graphConnectionFocusedAcceptedEdges
-        let pending = visibilityFilter == .accepted ? [] : graphConnectionFocusedPendingEdges
-        return accepted + pending
+        derivedState.graphConnectionVisibleEdges
     }
 
     private var graphBaseAcceptedEdges: [StoryKnowledgeEdge] {
-        applyExpandedRelationFocus(to: graphConnectionFocusedAcceptedEdges)
+        derivedState.graphBaseAcceptedEdges
     }
 
     private var graphBasePendingEdges: [StoryKnowledgeEdge] {
-        applyExpandedRelationFocus(to: graphConnectionFocusedPendingEdges)
+        derivedState.graphBasePendingEdges
     }
 
     private var graphBaseAcceptedEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedRelationFocus(to: graphConnectionFocusedAcceptedEdgesIgnoringSearch)
+        derivedState.graphBaseAcceptedEdgesIgnoringSearch
     }
 
     private var graphBasePendingEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        applyExpandedRelationFocus(to: graphConnectionFocusedPendingEdgesIgnoringSearch)
+        derivedState.graphBasePendingEdgesIgnoringSearch
     }
 
     private var graphBaseEdges: [StoryKnowledgeEdge] {
@@ -439,17 +456,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphBaseEdgesIgnoringSearch: [StoryKnowledgeEdge] {
-        let accepted = visibilityFilter == .pending ? [] : graphBaseAcceptedEdgesIgnoringSearch
-        let pending = visibilityFilter == .accepted ? [] : graphBasePendingEdgesIgnoringSearch
-        return accepted + pending
-    }
-
-    private var graphBaseNodes: [StoryKnowledgeNode] {
-        if activeExpandedGraphConnectionFocus != nil || activeExpandedGraphRelationFocus != nil || hasExpandedGraphClusterCanvasScope {
-            let nodeIDs = Set(graphBaseEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
-            return graphCandidateNodes.filter { nodeIDs.contains($0.id) }
-        }
-        return graphCandidateNodes
+        derivedState.graphBaseEdgesIgnoringSearch
     }
 
     private var activeGraphDensityMode: GraphDensityMode? {
@@ -468,53 +475,11 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphVisibleEdges: [StoryKnowledgeEdge] {
-        if let mode = activeGraphDensityMode {
-            return graphVisibleEdges(for: mode)
-        }
-
-        let acceptedBudget = conflictFocus == nil ? 16 : 24
-        let pendingBudget = conflictFocus == nil ? 8 : 12
-        var edges: [StoryKnowledgeEdge] = []
-
-        if visibilityFilter != .pending {
-            edges.append(contentsOf: graphBaseAcceptedEdges.prefix(acceptedBudget))
-        }
-        if visibilityFilter != .accepted {
-            edges.append(contentsOf: graphBasePendingEdges.prefix(pendingBudget))
-        }
-
-        return Array(edges.prefix(28))
+        derivedState.graphVisibleEdges
     }
 
     private var graphVisibleNodes: [StoryKnowledgeNode] {
-        if let mode = activeGraphDensityMode {
-            return graphVisibleNodes(for: mode, edges: graphVisibleEdges)
-        }
-
-        let edgeNodeIDs = Set(
-            graphVisibleEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] }
-        )
-
-        var nodes: [StoryKnowledgeNode] = []
-        var seen = Set<UUID>()
-
-        for nodeID in edgeNodeIDs.sorted(by: { lhs, rhs in
-            let lhsName = storyKnowledgeNodesByID[lhs]?.name ?? ""
-            let rhsName = storyKnowledgeNodesByID[rhs]?.name ?? ""
-            return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
-        }) {
-            guard let node = storyKnowledgeNodesByID[nodeID], seen.insert(node.id).inserted else { continue }
-            nodes.append(node)
-        }
-
-        for node in graphBaseNodes where seen.insert(node.id).inserted {
-            nodes.append(node)
-            if nodes.count >= 18 {
-                break
-            }
-        }
-
-        return nodes
+        derivedState.graphVisibleNodes
     }
 
     private var graphPreferredAnchorNodeIDs: [UUID] {
@@ -526,29 +491,17 @@ struct StoryKnowledgePanelView: View {
 
     private var selectedGraphNode: StoryKnowledgeNode? {
         guard let graphSelectedNodeID else { return nil }
-        return graphVisibleNodes.first { $0.id == graphSelectedNodeID }
+        return derivedState.graphVisibleNodesByID[graphSelectedNodeID]
     }
 
     private var selectedGraphNodeIncidentEdges: [StoryKnowledgeEdge] {
         guard let graphSelectedNodeID else { return [] }
-        return graphVisibleEdges
-            .filter { $0.sourceNodeID == graphSelectedNodeID || $0.targetNodeID == graphSelectedNodeID }
-            .sorted { lhs, rhs in
-                if lhs.status != rhs.status {
-                    return lhs.status == .canonical
-                }
-                if lhs.confidence != rhs.confidence {
-                    return lhs.confidence > rhs.confidence
-                }
-                return store.storyKnowledgeEdgeDisplayLabel(lhs).localizedCaseInsensitiveCompare(
-                    store.storyKnowledgeEdgeDisplayLabel(rhs)
-                ) == .orderedAscending
-            }
+        return derivedState.graphIncidentEdgesByNodeID[graphSelectedNodeID] ?? []
     }
 
     private var selectedGraphEdge: StoryKnowledgeEdge? {
         guard let graphSelectedEdgeID else { return nil }
-        return graphVisibleEdges.first { $0.id == graphSelectedEdgeID }
+        return derivedState.graphVisibleEdgesByID[graphSelectedEdgeID]
     }
 
     private var hasGraphSelection: Bool {
@@ -556,13 +509,11 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphNavigableNodes: [StoryKnowledgeNode] {
-        graphVisibleNodes.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
+        derivedState.graphNavigableNodes
     }
 
     private var graphNavigableEdges: [StoryKnowledgeEdge] {
-        sort(edges: graphVisibleEdges)
+        derivedState.graphNavigableEdges
     }
 
     private var expandedGraphSelectionNavigation: StoryKnowledgeNeighborhoodGraphView.SelectionNavigation? {
@@ -607,9 +558,9 @@ struct StoryKnowledgePanelView: View {
               let targetKind = storyKnowledgeNodesByID[selectedGraphEdge.targetNodeID]?.kind else {
             return nil
         }
-        return graphClusterConnectionSummaries.first {
-            $0.sourceKind == sourceKind && $0.targetKind == targetKind
-        }
+        return derivedState.graphClusterConnectionSummaryLookup[
+            graphClusterConnectionSummaryKey(sourceKind: sourceKind, targetKind: targetKind)
+        ]
     }
 
     private var selectedGraphEdgeRelatedActions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] {
@@ -868,156 +819,35 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphNodeModels: [StoryKnowledgeNeighborhoodGraphView.NodeModel] {
-        graphVisibleNodes.map { node in
-            StoryKnowledgeNeighborhoodGraphView.NodeModel(
-                id: node.id,
-                title: node.name,
-                subtitle: node.kind.rawValue.capitalized,
-                summary: node.summary,
-                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: node)),
-                kind: node.kind,
-                status: node.status,
-                confidence: node.confidence,
-                isLinkedToCompendium: node.resolvedCompendiumID != nil
-            )
-        }
+        derivedState.graphNodeModels
     }
 
     private var graphEdgeModels: [StoryKnowledgeNeighborhoodGraphView.EdgeModel] {
-        graphVisibleEdges.map { edge in
-            StoryKnowledgeNeighborhoodGraphView.EdgeModel(
-                id: edge.id,
-                sourceNodeID: edge.sourceNodeID,
-                targetNodeID: edge.targetNodeID,
-                relation: edge.relation,
-                label: store.storyKnowledgeEdgeDisplayLabel(edge),
-                note: edge.note,
-                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: edge)),
-                status: edge.status
-            )
-        }
+        derivedState.graphEdgeModels
     }
 
     private var graphCoverageLabel: String {
-        let visibleNodeCount = graphVisibleNodes.count
-        let visibleEdgeCount = graphVisibleEdges.count
-        let totalNodeCount = graphBaseNodes.count
-        let totalEdgeCount = graphBaseEdges.count
-
-        if visibleNodeCount == totalNodeCount && visibleEdgeCount == totalEdgeCount {
-            return "\(visibleNodeCount) filtered nodes • \(visibleEdgeCount) filtered edges"
-        }
-
-        return "Showing \(visibleNodeCount) of \(totalNodeCount) filtered nodes • \(visibleEdgeCount) of \(totalEdgeCount) filtered edges"
+        derivedState.graphCoverageLabel
     }
 
     private var graphClusterSummaries: [GraphClusterSummary] {
-        let visibleNodes = graphVisibleNodes
-        let visibleEdges = graphVisibleEdges
-        let nodesByKind = Dictionary(grouping: visibleNodes) { $0.kind }
-
-        return StoryKnowledgeNodeKind.allCases.compactMap { kind in
-            let nodes = nodesByKind[kind] ?? []
-            guard !nodes.isEmpty else { return nil }
-
-            let nodeIDs = Set(nodes.map(\.id))
-            let incidentEdges = visibleEdges.filter { edge in
-                nodeIDs.contains(edge.sourceNodeID) || nodeIDs.contains(edge.targetNodeID)
-            }
-            let crossKindEdgeCount = incidentEdges.filter { edge in
-                guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
-                      let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
-                    return false
-                }
-                return sourceKind != targetKind
-            }
-            .count
-
-            let topRelations = Dictionary(grouping: incidentEdges) { edge in
-                store.storyKnowledgeEdgeDisplayLabel(edge)
-            }
-            .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
-            .sorted { lhs, rhs in
-                if lhs.count != rhs.count {
-                    return lhs.count > rhs.count
-                }
-                return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
-            }
-
-            return GraphClusterSummary(
-                kind: kind,
-                nodeCount: nodes.count,
-                canonicalNodeCount: nodes.filter { $0.status == .canonical }.count,
-                pendingNodeCount: nodes.filter { $0.status == .inferred }.count,
-                incidentEdgeCount: incidentEdges.count,
-                crossKindEdgeCount: crossKindEdgeCount,
-                topRelations: Array(topRelations.prefix(3))
-            )
-        }
+        derivedState.graphClusterSummaries
     }
 
     private var graphClusterConnectionSummaries: [GraphClusterConnectionSummary] {
-        let groupedEdges = Dictionary(grouping: graphVisibleEdges.compactMap { edge -> (String, StoryKnowledgeEdge)? in
-            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
-                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind,
-                  sourceKind != targetKind else {
-                return nil
-            }
-            return ("\(sourceKind.rawValue)->\(targetKind.rawValue)", edge)
-        }, by: \.0)
-
-        return groupedEdges.compactMap { _, entries in
-            guard let firstEdge = entries.first?.1,
-                  let sourceKind = storyKnowledgeNodesByID[firstEdge.sourceNodeID]?.kind,
-                  let targetKind = storyKnowledgeNodesByID[firstEdge.targetNodeID]?.kind else {
-                return nil
-            }
-
-            let edges = entries.map(\.1)
-            let pairCount = Set(
-                edges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }
-            ).count
-            let topRelations = Dictionary(grouping: edges) { $0.relation }
-                .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
-                .sorted { lhs, rhs in
-                    if lhs.count != rhs.count {
-                        return lhs.count > rhs.count
-                    }
-                    return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
-                }
-
-            return GraphClusterConnectionSummary(
-                sourceKind: sourceKind,
-                targetKind: targetKind,
-                edgeCount: edges.count,
-                pairCount: pairCount,
-                pendingEdgeCount: edges.filter { $0.status == .inferred }.count,
-                topRelations: Array(topRelations.prefix(3)),
-                evidenceItems: mergedEvidenceItems(
-                    edges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
-                )
-            )
-        }
-        .sorted { lhs, rhs in
-            if lhs.edgeCount != rhs.edgeCount {
-                return lhs.edgeCount > rhs.edgeCount
-            }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-        }
+        derivedState.graphClusterConnectionSummaries
     }
 
     private var activeFocusedGraphConnectionSummary: GraphClusterConnectionSummary? {
         guard let focus = activeExpandedGraphConnectionFocus else { return nil }
-        return graphClusterConnectionSummaries.first {
-            $0.sourceKind == focus.sourceKind && $0.targetKind == focus.targetKind
-        }
+        return derivedState.graphClusterConnectionSummaryLookup[
+            graphClusterConnectionSummaryKey(sourceKind: focus.sourceKind, targetKind: focus.targetKind)
+        ]
     }
 
     private var activeFocusedGraphRelationSummary: GraphFocusedLinkRelationSummary? {
         guard let focus = activeExpandedGraphRelationFocus else { return nil }
-        return graphFocusedLinkRelationSummaries.first {
-            normalizedRelationKey($0.relation) == normalizedRelationKey(focus.relation)
-        }
+        return derivedState.graphFocusedLinkRelationSummaryLookup[normalizedRelationKey(focus.relation)]
     }
 
     private var expandedGraphFocusHighlights: [StoryKnowledgeNeighborhoodGraphView.FocusHighlight] {
@@ -1134,41 +964,7 @@ struct StoryKnowledgePanelView: View {
     }
 
     private var graphFocusedLinkRelationSummaries: [GraphFocusedLinkRelationSummary] {
-        guard activeExpandedGraphConnectionFocus != nil else { return [] }
-
-        let edges = graphConnectionFocusedAcceptedEdges + graphConnectionFocusedPendingEdges
-        let groupedEdges = Dictionary(grouping: edges) { normalizedRelationKey($0.relation) }
-
-        return groupedEdges.compactMap { _, relationEdges in
-            guard let firstEdge = relationEdges.first else { return nil }
-
-            let pairCount = Set(
-                relationEdges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }
-            ).count
-            let pairLabels = Array(
-                Set(relationEdges.map { store.storyKnowledgeEdgeDisplayLabel($0) })
-            )
-            .sorted { lhs, rhs in
-                lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
-            }
-
-            return GraphFocusedLinkRelationSummary(
-                relation: firstEdge.relation,
-                edgeCount: relationEdges.count,
-                pairCount: pairCount,
-                pendingEdgeCount: relationEdges.filter { $0.status == .inferred }.count,
-                pairLabels: Array(pairLabels.prefix(3)),
-                evidenceItems: mergedEvidenceItems(
-                    relationEdges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
-                )
-            )
-        }
-        .sorted { lhs, rhs in
-            if lhs.edgeCount != rhs.edgeCount {
-                return lhs.edgeCount > rhs.edgeCount
-            }
-            return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
-        }
+        derivedState.graphFocusedLinkRelationSummaries
     }
 
     private var visibilityFilter: StoryKnowledgePanelVisibilityFilter {
@@ -1392,6 +1188,9 @@ struct StoryKnowledgePanelView: View {
             expandedGraphCollapsedKinds = expandedGraphCollapsedKinds.intersection(availableKinds)
             expandedGraphIsolatedKinds = expandedGraphIsolatedKinds.intersection(availableKinds)
         }
+        .onChange(of: derivedStateKey, initial: true) { _, _ in
+            refreshDerivedState()
+        }
     }
 
     private var header: some View {
@@ -1471,14 +1270,6 @@ struct StoryKnowledgePanelView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-
-                    Spacer(minLength: 0)
-
-                    Button("Clear Focus") {
-                        self.conflictFocus = nil
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
                 }
             }
         }
@@ -1614,6 +1405,14 @@ struct StoryKnowledgePanelView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 250)
 
+                if conflictFocus != nil {
+                    Button("Clear Sidebar Focus") {
+                        conflictFocus = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Clear the current sidebar focus filter")
+                }
+
                 if hasGraphSelection {
                     Button("Clear Selection") {
                         clearGraphSelection()
@@ -1668,6 +1467,7 @@ struct StoryKnowledgePanelView: View {
                     onSelectClusterKind: expandedGraphLayoutMode == .kindClusters ? { kind in
                         toggleKindFilter(for: kind)
                     } : nil,
+                    fillsAvailableHeight: true,
                     selectedNodeID: $graphSelectedNodeID,
                     selectedEdgeID: $graphSelectedEdgeID
                 )
@@ -2565,31 +2365,230 @@ struct StoryKnowledgePanelView: View {
         refreshTask = nil
     }
 
-    private func graphVisibleEdges(for mode: GraphDensityMode) -> [StoryKnowledgeEdge] {
-        let focusMultiplier = conflictFocus == nil ? 1 : 2
-        let acceptedBudget = min(mode.acceptedEdgeBudget * focusMultiplier, graphBaseAcceptedEdges.count)
-        let pendingBudget = min(mode.pendingEdgeBudget * focusMultiplier, graphBasePendingEdges.count)
-
-        var edges: [StoryKnowledgeEdge] = []
-
-        if visibilityFilter != .pending {
-            edges.append(contentsOf: graphBaseAcceptedEdges.prefix(acceptedBudget))
+    private func refreshDerivedState() {
+        let storyKnowledgeNodesByID = Dictionary(
+            uniqueKeysWithValues: mergedStoryKnowledgeNodes.map { ($0.id, $0) }
+        )
+        let filteredAcceptedNodes = sort(nodes: acceptedNodes.filter {
+            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
+        })
+        let filteredConflictItems = store.storyKnowledgeConflictItems.filter {
+            matchesFocus(conflict: $0) && matchesConflict($0)
         }
-        if visibilityFilter != .accepted {
-            edges.append(contentsOf: graphBasePendingEdges.prefix(pendingBudget))
+        let filteredAcceptedEdges = sort(edges: acceptedEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
+        })
+        let filteredPendingNodes = sort(nodes: deduplicatedPendingNodes.filter {
+            matchesFocus(node: $0) && matchesNodeKind(node: $0) && matchesSearch(node: $0)
+        })
+        let filteredPendingEdges = sort(edges: deduplicatedPendingEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0) && matchesSearch(edge: $0)
+        })
+        let filteredAcceptedEdgesIgnoringSearch = sort(edges: acceptedEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
+        })
+        let filteredPendingEdgesIgnoringSearch = sort(edges: deduplicatedPendingEdges.filter {
+            matchesFocus(edge: $0) && matchesNodeKind(edge: $0) && matchesRelation(edge: $0)
+        })
+
+        let visibleDiagnosticEdges: [StoryKnowledgeEdge] = {
+            let accepted = visibilityFilter == .pending ? [] : filteredAcceptedEdges
+            let pending = visibilityFilter == .accepted ? [] : filteredPendingEdges
+            return accepted + pending
+        }()
+        let collapsedRelationSummaries = buildCollapsedRelationSummaries(from: visibleDiagnosticEdges)
+
+        let graphCandidateNodes: [StoryKnowledgeNode] = {
+            switch visibilityFilter {
+            case .pending:
+                return filteredPendingNodes
+            case .accepted:
+                return filteredAcceptedNodes
+            case .all:
+                return deduplicatedStoryKnowledgeNodes(filteredAcceptedNodes + filteredPendingNodes)
+            }
+        }()
+
+        let clusterScopedAcceptedEdges = applyExpandedClusterCanvasScope(to: filteredAcceptedEdges)
+        let clusterScopedPendingEdges = applyExpandedClusterCanvasScope(to: filteredPendingEdges)
+        let clusterScopedAcceptedEdgesIgnoringSearch = applyExpandedClusterCanvasScope(to: filteredAcceptedEdgesIgnoringSearch)
+        let clusterScopedPendingEdgesIgnoringSearch = applyExpandedClusterCanvasScope(to: filteredPendingEdgesIgnoringSearch)
+        let connectionFocusedAcceptedEdges = applyExpandedConnectionFocus(to: clusterScopedAcceptedEdges)
+        let connectionFocusedPendingEdges = applyExpandedConnectionFocus(to: clusterScopedPendingEdges)
+        let connectionFocusedAcceptedEdgesIgnoringSearch = applyExpandedConnectionFocus(to: clusterScopedAcceptedEdgesIgnoringSearch)
+        let connectionFocusedPendingEdgesIgnoringSearch = applyExpandedConnectionFocus(to: clusterScopedPendingEdgesIgnoringSearch)
+        let baseAcceptedEdges = applyExpandedRelationFocus(to: connectionFocusedAcceptedEdges)
+        let basePendingEdges = applyExpandedRelationFocus(to: connectionFocusedPendingEdges)
+        let baseAcceptedEdgesIgnoringSearch = applyExpandedRelationFocus(to: connectionFocusedAcceptedEdgesIgnoringSearch)
+        let basePendingEdgesIgnoringSearch = applyExpandedRelationFocus(to: connectionFocusedPendingEdgesIgnoringSearch)
+        let connectionVisibleEdges: [StoryKnowledgeEdge] = {
+            let accepted = visibilityFilter == .pending ? [] : connectionFocusedAcceptedEdges
+            let pending = visibilityFilter == .accepted ? [] : connectionFocusedPendingEdges
+            return accepted + pending
+        }()
+        let baseEdges: [StoryKnowledgeEdge] = {
+            let accepted = visibilityFilter == .pending ? [] : baseAcceptedEdges
+            let pending = visibilityFilter == .accepted ? [] : basePendingEdges
+            return accepted + pending
+        }()
+        let baseEdgesIgnoringSearch: [StoryKnowledgeEdge] = {
+            let accepted = visibilityFilter == .pending ? [] : baseAcceptedEdgesIgnoringSearch
+            let pending = visibilityFilter == .accepted ? [] : basePendingEdgesIgnoringSearch
+            return accepted + pending
+        }()
+        let baseNodes: [StoryKnowledgeNode] = {
+            if activeExpandedGraphConnectionFocus != nil || activeExpandedGraphRelationFocus != nil || hasExpandedGraphClusterCanvasScope {
+                let nodeIDs = Set(baseEdges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
+                return graphCandidateNodes.filter { nodeIDs.contains($0.id) }
+            }
+            return graphCandidateNodes
+        }()
+
+        let graphVisibleEdges = buildGraphVisibleEdges(
+            mode: activeGraphDensityMode,
+            baseAcceptedEdges: baseAcceptedEdges,
+            basePendingEdges: basePendingEdges
+        )
+        let graphVisibleNodes = buildGraphVisibleNodes(
+            mode: activeGraphDensityMode,
+            edges: graphVisibleEdges,
+            baseNodes: baseNodes
+        )
+        let graphVisibleNodesByID = Dictionary(uniqueKeysWithValues: graphVisibleNodes.map { ($0.id, $0) })
+        let graphVisibleEdgesByID = Dictionary(uniqueKeysWithValues: graphVisibleEdges.map { ($0.id, $0) })
+        let graphIncidentEdgesByNodeID = buildGraphIncidentEdgesByNodeID(from: graphVisibleEdges)
+        let graphNavigableNodes = graphVisibleNodes.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
-
-        return Array(edges.prefix(mode.totalEdgeCap))
-    }
-
-    private func graphVisibleNodes(
-        for mode: GraphDensityMode,
-        edges: [StoryKnowledgeEdge]
-    ) -> [StoryKnowledgeNode] {
-        let edgeNodeIDs = Set(
-            edges.flatMap { [$0.sourceNodeID, $0.targetNodeID] }
+        let graphNavigableEdges = sort(edges: graphVisibleEdges)
+        let graphNodeModels = buildGraphNodeModels(from: graphVisibleNodes)
+        let graphEdgeModels = buildGraphEdgeModels(from: graphVisibleEdges)
+        let graphCoverageLabel = buildGraphCoverageLabel(
+            visibleNodes: graphVisibleNodes,
+            visibleEdges: graphVisibleEdges,
+            totalNodes: baseNodes,
+            totalEdges: baseEdges
+        )
+        let graphClusterSummaries = buildGraphClusterSummaries(
+            visibleNodes: graphVisibleNodes,
+            visibleEdges: graphVisibleEdges
+        )
+        let graphClusterConnectionSummaries = buildGraphClusterConnectionSummaries(
+            visibleEdges: graphVisibleEdges
+        )
+        let graphClusterConnectionSummaryLookup = Dictionary(
+            uniqueKeysWithValues: graphClusterConnectionSummaries.map {
+                (graphClusterConnectionSummaryKey(sourceKind: $0.sourceKind, targetKind: $0.targetKind), $0)
+            }
+        )
+        let graphFocusedLinkRelationSummaries = buildGraphFocusedLinkRelationSummaries(
+            connectionFocusedAcceptedEdges: connectionFocusedAcceptedEdges,
+            connectionFocusedPendingEdges: connectionFocusedPendingEdges
+        )
+        let graphFocusedLinkRelationSummaryLookup = Dictionary(
+            uniqueKeysWithValues: graphFocusedLinkRelationSummaries.map {
+                (normalizedRelationKey($0.relation), $0)
+            }
         )
 
+        derivedState = PanelDerivedState(
+            storyKnowledgeNodesByID: storyKnowledgeNodesByID,
+            filteredAcceptedNodes: filteredAcceptedNodes,
+            filteredConflictItems: filteredConflictItems,
+            filteredAcceptedEdges: filteredAcceptedEdges,
+            filteredPendingNodes: filteredPendingNodes,
+            filteredPendingEdges: filteredPendingEdges,
+            filteredAcceptedEdgesIgnoringSearch: filteredAcceptedEdgesIgnoringSearch,
+            filteredPendingEdgesIgnoringSearch: filteredPendingEdgesIgnoringSearch,
+            collapsedRelationSummaries: collapsedRelationSummaries,
+            graphConnectionFocusedAcceptedEdges: connectionFocusedAcceptedEdges,
+            graphConnectionFocusedPendingEdges: connectionFocusedPendingEdges,
+            graphConnectionVisibleEdges: connectionVisibleEdges,
+            graphBaseAcceptedEdges: baseAcceptedEdges,
+            graphBasePendingEdges: basePendingEdges,
+            graphBaseAcceptedEdgesIgnoringSearch: baseAcceptedEdgesIgnoringSearch,
+            graphBasePendingEdgesIgnoringSearch: basePendingEdgesIgnoringSearch,
+            graphBaseEdgesIgnoringSearch: baseEdgesIgnoringSearch,
+            graphVisibleEdges: graphVisibleEdges,
+            graphVisibleNodes: graphVisibleNodes,
+            graphVisibleNodesByID: graphVisibleNodesByID,
+            graphVisibleEdgesByID: graphVisibleEdgesByID,
+            graphIncidentEdgesByNodeID: graphIncidentEdgesByNodeID,
+            graphNavigableNodes: graphNavigableNodes,
+            graphNavigableEdges: graphNavigableEdges,
+            graphNodeModels: graphNodeModels,
+            graphEdgeModels: graphEdgeModels,
+            graphCoverageLabel: graphCoverageLabel,
+            graphClusterSummaries: graphClusterSummaries,
+            graphClusterConnectionSummaries: graphClusterConnectionSummaries,
+            graphClusterConnectionSummaryLookup: graphClusterConnectionSummaryLookup,
+            graphFocusedLinkRelationSummaries: graphFocusedLinkRelationSummaries,
+            graphFocusedLinkRelationSummaryLookup: graphFocusedLinkRelationSummaryLookup
+        )
+    }
+
+    private func buildCollapsedRelationSummaries(from edges: [StoryKnowledgeEdge]) -> [CollapsedRelationSummary] {
+        let groupedEdges = Dictionary(grouping: edges.filter { !$0.observedRelations.isEmpty }) { $0.relation }
+        return groupedEdges.compactMap { relation, relationEdges in
+            let observedRelations = mergedObservedRelations(relationEdges.flatMap(\.observedRelations))
+            guard !observedRelations.isEmpty else { return nil }
+            return CollapsedRelationSummary(
+                relation: relation,
+                observedRelations: observedRelations,
+                edgeCount: relationEdges.count,
+                pendingEdgeCount: relationEdges.filter { $0.status == .inferred }.count
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            if lhs.observedRelations.count != rhs.observedRelations.count {
+                return lhs.observedRelations.count > rhs.observedRelations.count
+            }
+            return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+        }
+    }
+
+    private func buildGraphVisibleEdges(
+        mode: GraphDensityMode?,
+        baseAcceptedEdges: [StoryKnowledgeEdge],
+        basePendingEdges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeEdge] {
+        if let mode {
+            let focusMultiplier = conflictFocus == nil ? 1 : 2
+            let acceptedBudget = min(mode.acceptedEdgeBudget * focusMultiplier, baseAcceptedEdges.count)
+            let pendingBudget = min(mode.pendingEdgeBudget * focusMultiplier, basePendingEdges.count)
+
+            var edges: [StoryKnowledgeEdge] = []
+            if visibilityFilter != .pending {
+                edges.append(contentsOf: baseAcceptedEdges.prefix(acceptedBudget))
+            }
+            if visibilityFilter != .accepted {
+                edges.append(contentsOf: basePendingEdges.prefix(pendingBudget))
+            }
+            return Array(edges.prefix(mode.totalEdgeCap))
+        }
+
+        let acceptedBudget = conflictFocus == nil ? 16 : 24
+        let pendingBudget = conflictFocus == nil ? 8 : 12
+        var edges: [StoryKnowledgeEdge] = []
+        if visibilityFilter != .pending {
+            edges.append(contentsOf: baseAcceptedEdges.prefix(acceptedBudget))
+        }
+        if visibilityFilter != .accepted {
+            edges.append(contentsOf: basePendingEdges.prefix(pendingBudget))
+        }
+        return Array(edges.prefix(28))
+    }
+
+    private func buildGraphVisibleNodes(
+        mode: GraphDensityMode?,
+        edges: [StoryKnowledgeEdge],
+        baseNodes: [StoryKnowledgeNode]
+    ) -> [StoryKnowledgeNode] {
+        let nodeCap = mode?.nodeCap ?? 18
+        let edgeNodeIDs = Set(edges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
         var nodes: [StoryKnowledgeNode] = []
         var seen = Set<UUID>()
 
@@ -2602,14 +2601,212 @@ struct StoryKnowledgePanelView: View {
             nodes.append(node)
         }
 
-        for node in graphBaseNodes where seen.insert(node.id).inserted {
+        for node in baseNodes where seen.insert(node.id).inserted {
             nodes.append(node)
-            if nodes.count >= mode.nodeCap {
+            if nodes.count >= nodeCap {
                 break
             }
         }
 
         return nodes
+    }
+
+    private func buildGraphIncidentEdgesByNodeID(
+        from edges: [StoryKnowledgeEdge]
+    ) -> [UUID: [StoryKnowledgeEdge]] {
+        let groupedEdges = Dictionary(grouping: edges.flatMap { edge in
+            [(edge.sourceNodeID, edge), (edge.targetNodeID, edge)]
+        }, by: \.0)
+
+        return groupedEdges.mapValues { entries in
+            sort(edges: entries.map(\.1))
+        }
+    }
+
+    private func buildGraphNodeModels(
+        from nodes: [StoryKnowledgeNode]
+    ) -> [StoryKnowledgeNeighborhoodGraphView.NodeModel] {
+        nodes.map { node in
+            StoryKnowledgeNeighborhoodGraphView.NodeModel(
+                id: node.id,
+                title: node.name,
+                subtitle: node.kind.rawValue.capitalized,
+                summary: node.summary,
+                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: node)),
+                kind: node.kind,
+                status: node.status,
+                confidence: node.confidence,
+                isLinkedToCompendium: node.resolvedCompendiumID != nil
+            )
+        }
+    }
+
+    private func buildGraphEdgeModels(
+        from edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeNeighborhoodGraphView.EdgeModel] {
+        edges.map { edge in
+            StoryKnowledgeNeighborhoodGraphView.EdgeModel(
+                id: edge.id,
+                sourceNodeID: edge.sourceNodeID,
+                targetNodeID: edge.targetNodeID,
+                relation: edge.relation,
+                label: store.storyKnowledgeEdgeDisplayLabel(edge),
+                note: edge.note,
+                evidenceSummary: graphEvidencePreviewText(store.storyKnowledgeEvidenceItems(for: edge)),
+                status: edge.status
+            )
+        }
+    }
+
+    private func buildGraphCoverageLabel(
+        visibleNodes: [StoryKnowledgeNode],
+        visibleEdges: [StoryKnowledgeEdge],
+        totalNodes: [StoryKnowledgeNode],
+        totalEdges: [StoryKnowledgeEdge]
+    ) -> String {
+        if visibleNodes.count == totalNodes.count && visibleEdges.count == totalEdges.count {
+            return "\(visibleNodes.count) filtered nodes • \(visibleEdges.count) filtered edges"
+        }
+        return "Showing \(visibleNodes.count) of \(totalNodes.count) filtered nodes • \(visibleEdges.count) of \(totalEdges.count) filtered edges"
+    }
+
+    private func buildGraphClusterSummaries(
+        visibleNodes: [StoryKnowledgeNode],
+        visibleEdges: [StoryKnowledgeEdge]
+    ) -> [GraphClusterSummary] {
+        let nodesByKind = Dictionary(grouping: visibleNodes) { $0.kind }
+        return StoryKnowledgeNodeKind.allCases.compactMap { kind in
+            let nodes = nodesByKind[kind] ?? []
+            guard !nodes.isEmpty else { return nil }
+
+            let nodeIDs = Set(nodes.map(\.id))
+            let incidentEdges = visibleEdges.filter { edge in
+                nodeIDs.contains(edge.sourceNodeID) || nodeIDs.contains(edge.targetNodeID)
+            }
+            let crossKindEdgeCount = incidentEdges.filter { edge in
+                guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                      let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind else {
+                    return false
+                }
+                return sourceKind != targetKind
+            }.count
+            let topRelations = Dictionary(grouping: incidentEdges) { edge in
+                store.storyKnowledgeEdgeDisplayLabel(edge)
+            }
+            .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
+            .sorted { lhs, rhs in
+                if lhs.count != rhs.count {
+                    return lhs.count > rhs.count
+                }
+                return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+            }
+
+            return GraphClusterSummary(
+                kind: kind,
+                nodeCount: nodes.count,
+                canonicalNodeCount: nodes.filter { $0.status == .canonical }.count,
+                pendingNodeCount: nodes.filter { $0.status == .inferred }.count,
+                incidentEdgeCount: incidentEdges.count,
+                crossKindEdgeCount: crossKindEdgeCount,
+                topRelations: Array(topRelations.prefix(3))
+            )
+        }
+    }
+
+    private func buildGraphClusterConnectionSummaries(
+        visibleEdges: [StoryKnowledgeEdge]
+    ) -> [GraphClusterConnectionSummary] {
+        let groupedEdges = Dictionary(grouping: visibleEdges.compactMap { edge -> (String, StoryKnowledgeEdge)? in
+            guard let sourceKind = storyKnowledgeNodesByID[edge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[edge.targetNodeID]?.kind,
+                  sourceKind != targetKind else {
+                return nil
+            }
+            return ("\(sourceKind.rawValue)->\(targetKind.rawValue)", edge)
+        }, by: \.0)
+
+        return groupedEdges.compactMap { _, entries in
+            guard let firstEdge = entries.first?.1,
+                  let sourceKind = storyKnowledgeNodesByID[firstEdge.sourceNodeID]?.kind,
+                  let targetKind = storyKnowledgeNodesByID[firstEdge.targetNodeID]?.kind else {
+                return nil
+            }
+
+            let edges = entries.map(\.1)
+            let pairCount = Set(edges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }).count
+            let topRelations = Dictionary(grouping: edges) { $0.relation }
+                .map { GraphClusterRelationSummary(relation: $0.key, count: $0.value.count) }
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count {
+                        return lhs.count > rhs.count
+                    }
+                    return lhs.relation.localizedCaseInsensitiveCompare(rhs.relation) == .orderedAscending
+                }
+
+            return GraphClusterConnectionSummary(
+                sourceKind: sourceKind,
+                targetKind: targetKind,
+                edgeCount: edges.count,
+                pairCount: pairCount,
+                pendingEdgeCount: edges.filter { $0.status == .inferred }.count,
+                topRelations: Array(topRelations.prefix(3)),
+                evidenceItems: mergedEvidenceItems(
+                    edges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
+                )
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    private func buildGraphFocusedLinkRelationSummaries(
+        connectionFocusedAcceptedEdges: [StoryKnowledgeEdge],
+        connectionFocusedPendingEdges: [StoryKnowledgeEdge]
+    ) -> [GraphFocusedLinkRelationSummary] {
+        guard activeExpandedGraphConnectionFocus != nil else { return [] }
+
+        let edges = connectionFocusedAcceptedEdges + connectionFocusedPendingEdges
+        let groupedEdges = Dictionary(grouping: edges) { normalizedRelationKey($0.relation) }
+
+        return groupedEdges.compactMap { _, relationEdges in
+            guard let firstEdge = relationEdges.first else { return nil }
+
+            let pairCount = Set(
+                relationEdges.map { "\($0.sourceNodeID.uuidString)->\($0.targetNodeID.uuidString)" }
+            ).count
+            let pairLabels = Array(Set(relationEdges.map { store.storyKnowledgeEdgeDisplayLabel($0) }))
+                .sorted { lhs, rhs in
+                    lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                }
+
+            return GraphFocusedLinkRelationSummary(
+                relation: firstEdge.relation,
+                edgeCount: relationEdges.count,
+                pairCount: pairCount,
+                pendingEdgeCount: relationEdges.filter { $0.status == .inferred }.count,
+                pairLabels: Array(pairLabels.prefix(3)),
+                evidenceItems: mergedEvidenceItems(
+                    relationEdges.flatMap { store.storyKnowledgeEvidenceItems(for: $0) }
+                )
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.edgeCount != rhs.edgeCount {
+                return lhs.edgeCount > rhs.edgeCount
+            }
+            return lhs.displayLabel.localizedCaseInsensitiveCompare(rhs.displayLabel) == .orderedAscending
+        }
+    }
+
+    private func graphClusterConnectionSummaryKey(
+        sourceKind: StoryKnowledgeNodeKind,
+        targetKind: StoryKnowledgeNodeKind
+    ) -> String {
+        "\(sourceKind.rawValue)->\(targetKind.rawValue)"
     }
 
     private func clearGraphSelection() {

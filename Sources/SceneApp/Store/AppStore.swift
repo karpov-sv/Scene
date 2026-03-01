@@ -823,6 +823,10 @@ final class AppStore: ObservableObject {
     private var proseRunTask: Task<Void, Never>?
     private var proseRunID: UUID?
     private var searchDebounceTask: Task<Void, Never>?
+    private var cachedStoryKnowledgeNodeLookup: [UUID: StoryKnowledgeNode] = [:]
+    private var cachedStoryKnowledgeNodeLookupStamp: Date?
+    private var cachedStoryKnowledgeEvidenceLookup: [UUID: StoryKnowledgeEvidenceItem] = [:]
+    private var cachedStoryKnowledgeEvidenceLookupStamp: Date?
     private var documentSaveInProgress: Bool = false
     private var pendingDocumentSaveRequest: Bool = false
     private var proseGenerationSessionContext: ProseGenerationSessionContext?
@@ -11321,7 +11325,7 @@ final class AppStore: ObservableObject {
     }
 
     private func storyKnowledgeNode(for nodeID: UUID) -> StoryKnowledgeNode? {
-        project.storyKnowledgeNodes.first(where: { $0.id == nodeID })
+        storyKnowledgeNodeLookup()[nodeID]
     }
 
     private func resolveStoryKnowledgeNode(
@@ -14083,17 +14087,40 @@ final class AppStore: ObservableObject {
     }
 
     private func storyKnowledgeEvidenceItems(forSceneIDs sceneIDs: [UUID]) -> [StoryKnowledgeEvidenceItem] {
-        deduplicatedUUIDs(sceneIDs).compactMap { sceneID in
-            guard let location = sceneLocation(for: sceneID) else { return nil }
-            let chapter = project.chapters[location.chapterIndex]
-            let scene = chapter.scenes[location.sceneIndex]
-            return StoryKnowledgeEvidenceItem(
-                sceneID: sceneID,
-                chapterID: chapter.id,
-                chapterTitle: displayChapterTitle(chapter),
-                sceneTitle: displaySceneTitle(scene)
+        let evidenceLookup = storyKnowledgeEvidenceLookup()
+        return deduplicatedUUIDs(sceneIDs).compactMap { evidenceLookup[$0] }
+    }
+
+    private func storyKnowledgeNodeLookup() -> [UUID: StoryKnowledgeNode] {
+        let stamp = project.updatedAt
+        if cachedStoryKnowledgeNodeLookupStamp != stamp {
+            cachedStoryKnowledgeNodeLookup = Dictionary(
+                uniqueKeysWithValues: project.storyKnowledgeNodes.map { ($0.id, $0) }
             )
+            cachedStoryKnowledgeNodeLookupStamp = stamp
         }
+        return cachedStoryKnowledgeNodeLookup
+    }
+
+    private func storyKnowledgeEvidenceLookup() -> [UUID: StoryKnowledgeEvidenceItem] {
+        let stamp = project.updatedAt
+        if cachedStoryKnowledgeEvidenceLookupStamp != stamp {
+            var lookup: [UUID: StoryKnowledgeEvidenceItem] = [:]
+            for chapter in project.chapters {
+                let chapterTitle = displayChapterTitle(chapter)
+                for scene in chapter.scenes {
+                    lookup[scene.id] = StoryKnowledgeEvidenceItem(
+                        sceneID: scene.id,
+                        chapterID: chapter.id,
+                        chapterTitle: chapterTitle,
+                        sceneTitle: displaySceneTitle(scene)
+                    )
+                }
+            }
+            cachedStoryKnowledgeEvidenceLookup = lookup
+            cachedStoryKnowledgeEvidenceLookupStamp = stamp
+        }
+        return cachedStoryKnowledgeEvidenceLookup
     }
 
     private func storyKnowledgePairKey(sourceNodeID: UUID, targetNodeID: UUID) -> String {
