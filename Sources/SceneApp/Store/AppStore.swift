@@ -229,6 +229,7 @@ final class AppStore: ObservableObject {
     private static let rollingWorkshopMemoryMaxChars = 3200
     private static let rollingSceneMemoryMaxChars = 2200
     private static let rollingChapterMemoryMaxChars = 2600
+    private static let internalMemoryPromptBulletLimit = 8
     private static let rollingSceneMemorySourceChars = 12000
     private static let rollingChapterMemorySourceChars = 18000
     private static let rollingChapterMemorySceneChunkChars = 6000
@@ -236,11 +237,19 @@ final class AppStore: ObservableObject {
     private static let autoStoryMemorySceneSummaryChars = 1600
     private static let autoStoryMemoryChapterSummaryChars = 2200
     private static let autoStoryMemoryProjectSummaryChars = 2600
+    private static let autoStoryMemoryProjectChapterLineChars = 180
     private static let autoStoryMemoryFactChars = 220
     private static let autoStoryMemoryThreadChars = 220
     private static let autoStoryMemoryKnowledgeContextChars = 1800
     private static let autoStoryMemoryCatalogChars = 5000
     private static let autoStoryMemoryNodeSummaryChars = 180
+    private static let autoStoryMemoryProjectThreadsSectionChars = 900
+    private static let autoStoryMemoryProjectKnowledgeSectionChars = 650
+    private static let autoStoryMemoryPromptFactLimit = 6
+    private static let autoStoryMemoryPromptThreadLimit = 6
+    private static let autoStoryMemoryPromptEntityLimit = 8
+    private static let autoStoryMemoryPromptRelationshipLimit = 8
+    private static let autoStoryMemoryPromptAliasLimit = 3
     private static let maxVisibleTaskToasts = 4
     private static let epubAuxDocumentKeepThresholdChars = 1200
     private static let epubNonBodyNameMarkers: [String] = [
@@ -616,6 +625,34 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private struct StoryMemoryExtractionParseResult {
+        let payload: StoryMemoryExtractionPayload?
+        let extractedJSONCandidate: String?
+        let errorMessage: String?
+    }
+
+    private struct RankedStoryMemoryLine {
+        let text: String
+        let updatedAt: Date
+    }
+
+    struct StoryMemoryDebugSnapshot: Identifiable, Equatable {
+        let id: UUID
+        let operation: String
+        let chapterTitle: String
+        let sceneTitle: String
+        let request: TextGenerationRequest
+        let rawResponse: String?
+        let extractedJSONCandidate: String?
+        let usage: TokenUsage?
+        let errorMessage: String?
+        let capturedAt: Date
+
+        var statusLabel: String {
+            errorMessage == nil ? "Success" : "Failed"
+        }
+    }
+
     private struct ProseGenerationSessionContext {
         let sessionID: UUID
         let sceneID: UUID
@@ -734,6 +771,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var proseLiveUsage: TokenUsage?
     @Published private(set) var proseCandidateSession: ProseCandidateSessionState?
     @Published var lastError: String?
+    @Published private(set) var storyMemoryDebugSnapshot: StoryMemoryDebugSnapshot?
     @Published private(set) var availableRemoteModels: [String] = []
     @Published var isDiscoveringModels: Bool = false
     @Published var modelDiscoveryStatus: String = ""
@@ -1236,6 +1274,20 @@ final class AppStore: ObservableObject {
             return nil
         }
         return memory.updatedAt
+    }
+
+    var hasStoredProjectStoryMemory: Bool {
+        project.projectStoryMemory != nil
+            || !project.chapterStoryMemoryByChapter.isEmpty
+            || !project.sceneStoryMemoryByScene.isEmpty
+    }
+
+    var hasStoredStoryKnowledgeGraph: Bool {
+        !project.storyKnowledgeNodes.isEmpty || !project.storyKnowledgeEdges.isEmpty
+    }
+
+    var hasStoryMemoryDebugSnapshot: Bool {
+        storyMemoryDebugSnapshot != nil
     }
 
     var selectedSceneRelevantStoryKnowledge: String {
@@ -4156,6 +4208,8 @@ final class AppStore: ObservableObject {
 
         Output rules:
         - Return plain prose bullets or short paragraphs only.
+        - Return at most \(Self.internalMemoryPromptBulletLimit) bullets, or at most 2 short paragraphs.
+        - Keep each bullet to one sentence whenever possible.
         - Keep stable facts, decisions, constraints, unresolved questions, and character intentions.
         - Remove repetition and low-value narration details.
         - Do not invent facts not present in input.
@@ -4184,7 +4238,7 @@ final class AppStore: ObservableObject {
             userPrompt: userPrompt,
             model: resolvedPrimaryModel(),
             temperature: min(project.settings.temperature, 0.3),
-            maxTokens: min(project.settings.maxTokens, 900)
+            maxTokens: nil
         )
         let toastID = startTaskProgressToast("Updating scene memory…")
 
@@ -4313,16 +4367,30 @@ final class AppStore: ObservableObject {
 
         storyMemoryRefreshTask?.cancel()
         let toastID = startTaskProgressToast("Rebuilding story memory…")
-        await refreshAutoStoryMemory(for: sceneID, force: true, saveAfterUpdate: true)
-        let summary = selectedSceneStoryMemorySummary
+        do {
+            try await refreshAutoStoryMemory(
+                for: sceneID,
+                force: true,
+                saveAfterUpdate: true,
+                operationLabel: "Scene rebuild"
+            )
+            try Task.checkCancellation()
+            let summary = selectedSceneStoryMemorySummary
 
-        if summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            finishTaskWarningToast(toastID, "Story memory rebuild produced no scene memory.")
-        } else {
-            finishTaskSuccessToast(toastID, "Story memory rebuilt.")
+            if hasAutoStoryMemoryContent(for: sceneID) {
+                finishTaskSuccessToast(toastID, "Story memory rebuilt.")
+            } else {
+                finishTaskWarningToast(toastID, "Story memory rebuild produced no scene memory.")
+            }
+
+            return summary
+        } catch is CancellationError {
+            finishTaskCancelledToast(toastID, "Story memory rebuild cancelled.")
+            throw CancellationError()
+        } catch {
+            finishTaskErrorToast(toastID, "Story memory rebuild failed.")
+            throw error
         }
-
-        return summary
     }
 
     func rebuildAllStoryMemory() async throws {
@@ -4343,9 +4411,16 @@ final class AppStore: ObservableObject {
                     updating: toastID,
                     autoDismiss: false
                 )
-                await refreshAutoStoryMemory(for: sceneID, force: true, saveAfterUpdate: false)
+                try await refreshAutoStoryMemory(
+                    for: sceneID,
+                    force: true,
+                    saveAfterUpdate: false,
+                    operationLabel: "Project rebuild (\(index + 1)/\(sceneIDs.count))"
+                )
+                try Task.checkCancellation()
             }
 
+            try Task.checkCancellation()
             rebuildProjectStoryMemory()
             saveProject()
             finishTaskSuccessToast(toastID, "Project story memory rebuilt.")
@@ -4356,6 +4431,29 @@ final class AppStore: ObservableObject {
             finishTaskErrorToast(toastID, "Story memory rebuild failed.")
             throw error
         }
+    }
+
+    func clearProjectStoryMemory() {
+        storyMemoryRefreshTask?.cancel()
+        project.sceneStoryMemoryByScene = [:]
+        project.chapterStoryMemoryByChapter = [:]
+        project.projectStoryMemory = nil
+        saveProject()
+    }
+
+    func clearStoryKnowledgeGraph() {
+        storyMemoryRefreshTask?.cancel()
+        project.storyKnowledgeNodes = []
+        project.storyKnowledgeEdges = []
+
+        for key in project.sceneStoryMemoryByScene.keys {
+            guard var memory = project.sceneStoryMemoryByScene[key] else { continue }
+            memory.knowledgeNodeIDs = []
+            project.sceneStoryMemoryByScene[key] = memory
+        }
+
+        rebuildAllStoryMemoryRollups()
+        saveProject()
     }
 
     func updateSelectedChapterSummary(_ summary: String) {
@@ -10464,7 +10562,11 @@ final class AppStore: ObservableObject {
                 try? await Task.sleep(nanoseconds: Self.autoStoryMemoryDebounceNanoseconds)
             }
             guard !Task.isCancelled else { return }
-            await self.refreshAutoStoryMemory(for: sceneID, force: force)
+            try? await self.refreshAutoStoryMemory(
+                for: sceneID,
+                force: force,
+                operationLabel: force ? "Automatic refresh (forced)" : "Automatic refresh"
+            )
         }
     }
 
@@ -10486,11 +10588,20 @@ final class AppStore: ObservableObject {
         return memory.sourceContentHash != stableContentHash(scene.content)
     }
 
+    private func hasAutoStoryMemoryContent(for sceneID: UUID) -> Bool {
+        guard let memory = sceneStoryMemory(for: sceneID) else { return false }
+        return !memory.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !memory.facts.isEmpty
+            || !memory.openThreads.isEmpty
+            || !memory.knowledgeNodeIDs.isEmpty
+    }
+
     private func refreshAutoStoryMemory(
         for sceneID: UUID,
         force: Bool = false,
-        saveAfterUpdate: Bool = true
-    ) async {
+        saveAfterUpdate: Bool = true,
+        operationLabel: String = "Automatic refresh"
+    ) async throws {
         guard isProjectOpen,
               let location = sceneLocation(for: sceneID) else {
             return
@@ -10524,9 +10635,31 @@ final class AppStore: ObservableObject {
         do {
             let result = try await generateTextResult(request)
             guard !Task.isCancelled else { return }
-            guard let payload = decodeStoryMemoryExtractionPayload(from: result.text) else {
-                return
+            let parseResult = parseStoryMemoryExtractionPayload(from: result.text)
+            guard let payload = parseResult.payload else {
+                captureStoryMemoryDebugSnapshot(
+                    operation: operationLabel,
+                    scene: scene,
+                    chapter: chapter,
+                    request: request,
+                    rawResponse: result.text,
+                    usage: result.usage,
+                    extractedJSONCandidate: parseResult.extractedJSONCandidate,
+                    errorMessage: parseResult.errorMessage ?? "Story memory extraction returned invalid JSON."
+                )
+                throw AIServiceError.badResponse("Story memory extraction returned invalid JSON. Inspect the last story memory debug snapshot.")
             }
+
+            captureStoryMemoryDebugSnapshot(
+                operation: operationLabel,
+                scene: scene,
+                chapter: chapter,
+                request: request,
+                rawResponse: result.text,
+                usage: result.usage,
+                extractedJSONCandidate: parseResult.extractedJSONCandidate,
+                errorMessage: nil
+            )
 
             applyAutoStoryMemoryExtraction(
                 payload,
@@ -10538,9 +10671,22 @@ final class AppStore: ObservableObject {
                 saveProject(debounced: true)
             }
         } catch is CancellationError {
-            return
+            throw CancellationError()
         } catch {
-            return
+            if case AIServiceError.badResponse = error {
+                throw error
+            }
+            captureStoryMemoryDebugSnapshot(
+                operation: operationLabel,
+                scene: scene,
+                chapter: chapter,
+                request: request,
+                rawResponse: nil,
+                usage: nil,
+                extractedJSONCandidate: nil,
+                errorMessage: error.localizedDescription
+            )
+            throw error
         }
     }
 
@@ -10581,7 +10727,16 @@ final class AppStore: ObservableObject {
         - Use only facts supported by the scene text or provided scene summary.
         - Prefer stable world facts, goals, constraints, and unresolved tensions.
         - Skip low-confidence guesses instead of inventing.
+        - "summary" must be one short paragraph with at most 3 sentences.
+        - Return at most \(Self.autoStoryMemoryPromptFactLimit) "facts".
+        - Return at most \(Self.autoStoryMemoryPromptThreadLimit) "open_threads".
+        - Return at most \(Self.autoStoryMemoryPromptEntityLimit) "entities".
+        - Return at most \(Self.autoStoryMemoryPromptRelationshipLimit) "relationships".
+        - Each entity may include at most \(Self.autoStoryMemoryPromptAliasLimit) aliases.
+        - Keep each fact, open thread, entity summary, and relationship note to one short sentence.
+        - Omit weak or redundant items instead of filling every slot.
         - Keep summaries and notes concise.
+        - Return JSON only. Do not add commentary before or after the JSON object.
         """
 
         let compendiumCatalog = storyKnowledgeCatalogPrompt()
@@ -10620,15 +10775,34 @@ final class AppStore: ObservableObject {
             userPrompt: userPrompt,
             model: resolvedPrimaryModel(),
             temperature: min(project.settings.temperature, 0.2),
-            maxTokens: min(project.settings.maxTokens, 1400)
+            maxTokens: nil
         )
     }
 
-    private func decodeStoryMemoryExtractionPayload(from response: String) -> StoryMemoryExtractionPayload? {
+    private func parseStoryMemoryExtractionPayload(from response: String) -> StoryMemoryExtractionParseResult {
         guard let data = extractJSONObjectData(from: response) else {
-            return nil
+            return StoryMemoryExtractionParseResult(
+                payload: nil,
+                extractedJSONCandidate: nil,
+                errorMessage: "No valid JSON object found in provider response."
+            )
         }
-        return try? JSONDecoder().decode(StoryMemoryExtractionPayload.self, from: data)
+
+        let candidate = String(data: data, encoding: .utf8)
+        do {
+            let payload = try JSONDecoder().decode(StoryMemoryExtractionPayload.self, from: data)
+            return StoryMemoryExtractionParseResult(
+                payload: payload,
+                extractedJSONCandidate: candidate,
+                errorMessage: nil
+            )
+        } catch {
+            return StoryMemoryExtractionParseResult(
+                payload: nil,
+                extractedJSONCandidate: candidate,
+                errorMessage: storyMemoryExtractionParseErrorMessage(error)
+            )
+        }
     }
 
     private func extractJSONObjectData(from response: String) -> Data? {
@@ -10660,6 +10834,59 @@ final class AppStore: ObservableObject {
         }
 
         return nil
+    }
+
+    private func storyMemoryExtractionParseErrorMessage(_ error: Error) -> String {
+        switch error {
+        case let decodingError as DecodingError:
+            return "JSON matched, but did not decode: \(decodingErrorDescription(decodingError))"
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    private func decodingErrorDescription(_ error: DecodingError) -> String {
+        switch error {
+        case .dataCorrupted(let context):
+            return "\(context.debugDescription) at \(codingPathDescription(context.codingPath))"
+        case .keyNotFound(let key, let context):
+            return "Missing key '\(key.stringValue)' at \(codingPathDescription(context.codingPath)): \(context.debugDescription)"
+        case .typeMismatch(let type, let context):
+            return "Type mismatch for \(type) at \(codingPathDescription(context.codingPath)): \(context.debugDescription)"
+        case .valueNotFound(let type, let context):
+            return "Missing \(type) value at \(codingPathDescription(context.codingPath)): \(context.debugDescription)"
+        @unknown default:
+            return String(describing: error)
+        }
+    }
+
+    private func codingPathDescription(_ codingPath: [CodingKey]) -> String {
+        guard !codingPath.isEmpty else { return "<root>" }
+        return codingPath.map(\.stringValue).joined(separator: ".")
+    }
+
+    private func captureStoryMemoryDebugSnapshot(
+        operation: String,
+        scene: Scene,
+        chapter: Chapter,
+        request: TextGenerationRequest,
+        rawResponse: String?,
+        usage: TokenUsage?,
+        extractedJSONCandidate: String?,
+        errorMessage: String?
+    ) {
+        storyMemoryDebugSnapshot = StoryMemoryDebugSnapshot(
+            id: UUID(),
+            operation: operation,
+            chapterTitle: displayChapterTitle(chapter),
+            sceneTitle: displaySceneTitle(scene),
+            request: request,
+            rawResponse: rawResponse,
+            extractedJSONCandidate: extractedJSONCandidate,
+            usage: usage,
+            errorMessage: errorMessage,
+            capturedAt: .now
+        )
     }
 
     private func applyAutoStoryMemoryExtraction(
@@ -10761,17 +10988,22 @@ final class AppStore: ObservableObject {
             return "- \(displaySceneTitle(scene)): \(summary)"
         }
 
-        let openThreads = normalizedStoryMemoryLines(
-            validSceneMemory.flatMap(\.openThreads),
+        let openThreads = rankedStoryMemoryLines(
+            validSceneMemory.flatMap { memory in
+                memory.openThreads.map { RankedStoryMemoryLine(text: $0, updatedAt: memory.updatedAt) }
+            },
             maxCount: 10,
             maxCharsPerLine: Self.autoStoryMemoryThreadChars
         )
         let activeNodeIDs = activeStoryKnowledgeNodeIDs()
-        let knowledgeNodeIDs = deduplicatedUUIDs(validSceneMemory.flatMap(\.knowledgeNodeIDs))
-            .filter { activeNodeIDs.contains($0) }
-        let knowledgeLines = knowledgeNodeIDs.prefix(8).compactMap { nodeID -> String? in
-            guard let node = storyKnowledgeNode(for: nodeID),
-                  isActiveStoryKnowledgeNode(node) else { return nil }
+        let knowledgeNodes = sortedStoryMemoryNodes(
+            deduplicatedUUIDs(validSceneMemory.flatMap(\.knowledgeNodeIDs))
+                .filter { activeNodeIDs.contains($0) }
+                .compactMap(storyKnowledgeNode(for:))
+                .filter(isActiveStoryKnowledgeNode)
+        )
+        let knowledgeNodeIDs = knowledgeNodes.map(\.id)
+        let knowledgeLines = knowledgeNodes.prefix(8).map { node in
             return "- \(node.name)"
         }
 
@@ -10816,25 +11048,36 @@ final class AppStore: ObservableObject {
             return
         }
 
-        let chapterByID = Dictionary(uniqueKeysWithValues: project.chapters.map { ($0.id, $0) })
-        let chapterLines = validChapterMemory.compactMap { memory -> String? in
-            guard let chapter = chapterByID[memory.chapterID] else { return nil }
-            let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !summary.isEmpty else { return nil }
-            return "- \(displayChapterTitle(chapter)): \(summary)"
+        let chapterLines = project.chapters.compactMap { chapter -> RankedStoryMemoryLine? in
+            guard let memory = chapterStoryMemory(for: chapter.id) else { return nil }
+            let synopsis = projectChapterMemorySynopsis(for: chapter)
+            guard !synopsis.isEmpty else { return nil }
+            return RankedStoryMemoryLine(
+                text: "- \(displayChapterTitle(chapter)): \(synopsis)",
+                updatedAt: memory.updatedAt
+            )
         }
 
-        let openThreads = normalizedStoryMemoryLines(
-            validChapterMemory.flatMap(\.openThreads),
+        let projectSceneMemory = project.chapters.flatMap { chapter in
+            chapter.scenes.compactMap { scene in
+                sceneStoryMemory(for: scene.id)
+            }
+        }
+        let openThreads = rankedStoryMemoryLines(
+            projectSceneMemory.flatMap { memory in
+                memory.openThreads.map { RankedStoryMemoryLine(text: $0, updatedAt: memory.updatedAt) }
+            },
             maxCount: 12,
             maxCharsPerLine: Self.autoStoryMemoryThreadChars
         )
         let activeNodeIDs = activeStoryKnowledgeNodeIDs()
-        let activeNodes = deduplicatedUUIDs(validChapterMemory.flatMap(\.knowledgeNodeIDs))
-            .filter { activeNodeIDs.contains($0) }
-        let nodeLines = activeNodes.prefix(10).compactMap { nodeID -> String? in
-            guard let node = storyKnowledgeNode(for: nodeID),
-                  isActiveStoryKnowledgeNode(node) else { return nil }
+        let activeNodes = sortedStoryMemoryNodes(
+            deduplicatedUUIDs(validChapterMemory.flatMap(\.knowledgeNodeIDs))
+                .filter { activeNodeIDs.contains($0) }
+                .compactMap(storyKnowledgeNode(for:))
+                .filter(isActiveStoryKnowledgeNode)
+        )
+        let nodeLines = activeNodes.prefix(10).compactMap { node -> String? in
             let summary = node.summary.trimmingCharacters(in: .whitespacesAndNewlines)
             if summary.isEmpty {
                 return "- \(node.name)"
@@ -10842,21 +11085,11 @@ final class AppStore: ObservableObject {
             return "- \(node.name): \(summary)"
         }
 
-        var sections: [String] = []
-        if !chapterLines.isEmpty {
-            sections.append("Chapter state:\n" + chapterLines.joined(separator: "\n"))
-        }
-        if !openThreads.isEmpty {
-            sections.append("Project threads:\n" + openThreads.map { "- \($0)" }.joined(separator: "\n"))
-        }
-        if !nodeLines.isEmpty {
-            sections.append("World knowledge:\n" + nodeLines.joined(separator: "\n"))
-        }
-
         let fingerprint = projectStorySourceFingerprint()
-        let summary = normalizedRollingMemorySummary(
-            sections.joined(separator: "\n\n"),
-            maxChars: Self.autoStoryMemoryProjectSummaryChars
+        let summary = buildProjectStoryMemorySummary(
+            chapterLines: chapterLines,
+            openThreads: openThreads.map { "- \($0)" },
+            nodeLines: nodeLines
         )
         guard !summary.isEmpty else {
             project.projectStoryMemory = nil
@@ -10871,11 +11104,107 @@ final class AppStore: ObservableObject {
         )
     }
 
+    private func buildProjectStoryMemorySummary(
+        chapterLines: [RankedStoryMemoryLine],
+        openThreads: [String],
+        nodeLines: [String]
+    ) -> String {
+        var sections: [String] = []
+        var remainingChars = Self.autoStoryMemoryProjectSummaryChars
+
+        func appendSection(
+            title: String,
+            lines: [String],
+            preferredMaxChars: Int,
+            remainderLabel: @escaping (Int) -> String
+        ) {
+            guard !lines.isEmpty else { return }
+            let separatorChars = sections.isEmpty ? 0 : 2
+            let available = remainingChars - separatorChars
+            guard available > 0 else { return }
+
+            let section = boundedStoryMemorySection(
+                title: title,
+                lines: lines,
+                maxChars: min(preferredMaxChars, available),
+                remainderLabel: remainderLabel
+            )
+            guard !section.isEmpty else { return }
+
+            if separatorChars > 0 {
+                remainingChars -= separatorChars
+            }
+            sections.append(section)
+            remainingChars -= section.count
+        }
+
+        appendSection(
+            title: "Project threads",
+            lines: openThreads,
+            preferredMaxChars: Self.autoStoryMemoryProjectThreadsSectionChars,
+            remainderLabel: { hiddenCount in
+                "- +\(hiddenCount) more project thread" + (hiddenCount == 1 ? "" : "s")
+            }
+        )
+        appendSection(
+            title: "World knowledge",
+            lines: nodeLines,
+            preferredMaxChars: Self.autoStoryMemoryProjectKnowledgeSectionChars,
+            remainderLabel: { hiddenCount in
+                "- +\(hiddenCount) more knowledge item" + (hiddenCount == 1 ? "" : "s")
+            }
+        )
+        appendSection(
+            title: "Chapter state",
+            lines: chapterLines
+                .sorted(by: rankedStoryMemoryLineComparator)
+                .map(\.text),
+            preferredMaxChars: remainingChars,
+            remainderLabel: { hiddenCount in
+                "- +\(hiddenCount) more chapter" + (hiddenCount == 1 ? "" : "s")
+            }
+        )
+
+        return normalizedRollingMemorySummary(
+            sections.joined(separator: "\n\n"),
+            maxChars: Self.autoStoryMemoryProjectSummaryChars
+        )
+    }
+
     private func rebuildAllStoryMemoryRollups() {
         for chapter in project.chapters {
             rebuildChapterStoryMemory(for: chapter.id)
         }
         rebuildProjectStoryMemory()
+    }
+
+    private func projectChapterMemorySynopsis(for chapter: Chapter) -> String {
+        let sceneSummaries = chapter.scenes.compactMap { scene -> RankedStoryMemoryLine? in
+            guard let memory = sceneStoryMemory(for: scene.id) else { return nil }
+            let summary = memory.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !summary.isEmpty else { return nil }
+            return RankedStoryMemoryLine(text: summary, updatedAt: memory.updatedAt)
+        }
+        .sorted(by: rankedStoryMemoryLineComparator)
+        .map(\.text)
+        let sceneSynopsis = compactStoryMemorySynopsis(
+            from: sceneSummaries,
+            maxItems: 3,
+            maxChars: Self.autoStoryMemoryProjectChapterLineChars
+        )
+        if !sceneSynopsis.isEmpty {
+            return sceneSynopsis
+        }
+
+        let fallback = chapterStoryMemory(for: chapter.id)?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if fallback.isEmpty {
+            return ""
+        }
+
+        return normalizedRollingMemorySummary(
+            fallback,
+            maxChars: Self.autoStoryMemoryProjectChapterLineChars
+        )
     }
 
     private func storyKnowledgeCatalogPrompt() -> String {
@@ -11152,9 +11481,8 @@ final class AppStore: ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
     }
 
-    private func normalizedStoryMemoryLines(
+    private func deduplicatedStoryMemoryLines(
         _ values: [String],
-        maxCount: Int,
         maxCharsPerLine: Int
     ) -> [String] {
         var seen = Set<String>()
@@ -11167,12 +11495,141 @@ final class AppStore: ObservableObject {
             let key = trimmed.lowercased()
             guard seen.insert(key).inserted else { continue }
             lines.append(trimmed)
-            if lines.count >= maxCount {
+        }
+
+        return lines
+    }
+
+    private func normalizedStoryMemoryLines(
+        _ values: [String],
+        maxCount: Int,
+        maxCharsPerLine: Int
+    ) -> [String] {
+        Array(
+            deduplicatedStoryMemoryLines(values, maxCharsPerLine: maxCharsPerLine)
+                .prefix(maxCount)
+        )
+    }
+
+    private func compactStoryMemorySynopsis(
+        from values: [String],
+        maxItems: Int,
+        maxChars: Int
+    ) -> String {
+        let deduplicated = deduplicatedStoryMemoryLines(values, maxCharsPerLine: maxChars)
+        guard !deduplicated.isEmpty else { return "" }
+
+        let selected = Array(deduplicated.prefix(maxItems))
+        let remainderCount = max(0, deduplicated.count - selected.count)
+        var summary = normalizedRollingMemorySummary(
+            selected.joined(separator: "; "),
+            maxChars: maxChars
+        )
+        guard remainderCount > 0 else { return summary }
+
+        let suffix = " (+\(remainderCount) more)"
+        if summary.count + suffix.count <= maxChars {
+            summary += suffix
+        }
+        return summary
+    }
+
+    private func boundedStoryMemorySection(
+        title: String,
+        lines: [String],
+        maxChars: Int,
+        remainderLabel: (Int) -> String
+    ) -> String {
+        guard !lines.isEmpty, maxChars > title.count + 4 else { return "" }
+
+        let header = "\(title):\n"
+        let headerBudget = maxChars - header.count
+        guard headerBudget > 0 else { return "" }
+
+        let normalizedLines = lines.map(compactSingleLine).filter { !$0.isEmpty }
+        guard !normalizedLines.isEmpty else { return "" }
+
+        var selected: [String] = []
+        for line in normalizedLines {
+            let candidateBody = (selected + [line]).joined(separator: "\n")
+            if candidateBody.count <= headerBudget {
+                selected.append(line)
+            } else {
                 break
             }
         }
 
-        return lines
+        if selected.isEmpty {
+            let fallbackLine = normalizedRollingMemorySummary(normalizedLines[0], maxChars: headerBudget)
+            guard !fallbackLine.isEmpty else { return "" }
+            selected = [fallbackLine]
+        }
+
+        let hiddenCount = max(0, normalizedLines.count - selected.count)
+        if hiddenCount > 0 {
+            let hiddenLine = remainderLabel(hiddenCount)
+            var collapsed = selected
+            while !collapsed.isEmpty {
+                let candidateBody = (collapsed + [hiddenLine]).joined(separator: "\n")
+                if candidateBody.count <= headerBudget {
+                    selected = collapsed + [hiddenLine]
+                    break
+                }
+                if collapsed.count == 1 {
+                    break
+                }
+                collapsed.removeLast()
+            }
+        }
+
+        let body = selected.joined(separator: "\n")
+        guard !body.isEmpty else { return "" }
+        return normalizedRollingMemorySummary(header + body, maxChars: maxChars)
+    }
+
+    private func rankedStoryMemoryLineComparator(_ lhs: RankedStoryMemoryLine, _ rhs: RankedStoryMemoryLine) -> Bool {
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return lhs.text.localizedCaseInsensitiveCompare(rhs.text) == .orderedAscending
+    }
+
+    private func rankedStoryMemoryLines(
+        _ values: [RankedStoryMemoryLine],
+        maxCount: Int,
+        maxCharsPerLine: Int
+    ) -> [String] {
+        guard maxCount > 0 else { return [] }
+
+        var latestByKey: [String: RankedStoryMemoryLine] = [:]
+        for value in values {
+            let normalized = compactSingleLine(value.text)
+            guard !normalized.isEmpty else { continue }
+            let trimmed = String(normalized.prefix(maxCharsPerLine))
+            let candidate = RankedStoryMemoryLine(text: trimmed, updatedAt: value.updatedAt)
+            let key = trimmed.lowercased()
+            if let existing = latestByKey[key] {
+                if rankedStoryMemoryLineComparator(candidate, existing) {
+                    latestByKey[key] = candidate
+                }
+            } else {
+                latestByKey[key] = candidate
+            }
+        }
+
+        return latestByKey.values
+            .sorted(by: rankedStoryMemoryLineComparator)
+            .prefix(maxCount)
+            .map(\.text)
+    }
+
+    private func sortedStoryMemoryNodes(_ nodes: [StoryKnowledgeNode]) -> [StoryKnowledgeNode] {
+        nodes.sorted { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
     private func deduplicatedUUIDs(_ values: [UUID]) -> [UUID] {
@@ -11304,6 +11761,8 @@ final class AppStore: ObservableObject {
 
         Output rules:
         - Return plain prose bullets or short paragraphs only.
+        - Return at most \(Self.internalMemoryPromptBulletLimit) bullets, or at most 2 short paragraphs.
+        - Keep each bullet to one sentence whenever possible.
         - Keep stable facts, decisions, constraints, unresolved questions, and user preferences.
         - Remove repetition and low-value chatter.
         - Do not invent facts not present in input.
@@ -11340,7 +11799,7 @@ final class AppStore: ObservableObject {
             userPrompt: userPrompt,
             model: resolvedPrimaryModel(),
             temperature: min(project.settings.temperature, 0.3),
-            maxTokens: min(project.settings.maxTokens, 900)
+            maxTokens: nil
         )
         let toastID = startTaskProgressToast("Updating workshop memory…")
 
@@ -11475,7 +11934,23 @@ final class AppStore: ObservableObject {
             .replacingOccurrences(of: "\\s+\\n", with: "\n", options: .regularExpression)
             .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
         guard maxChars > 0 else { return "" }
-        return normalized.count > maxChars ? String(normalized.prefix(maxChars)) : normalized
+        guard normalized.count > maxChars else { return normalized }
+
+        let truncated = String(normalized.prefix(maxChars)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard truncated.count > maxChars / 2 else { return truncated }
+
+        let boundaryCandidates = ["\n\n", ". ", "! ", "? ", ":\n", "\n- ", "\n"]
+        for boundary in boundaryCandidates {
+            if let range = truncated.range(of: boundary, options: .backwards),
+               range.upperBound < truncated.endIndex {
+                let candidate = String(truncated[..<range.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if candidate.count >= maxChars / 2 {
+                    return candidate
+                }
+            }
+        }
+
+        return truncated
     }
 
     private func stableContentHash(_ value: String) -> String {
@@ -11638,6 +12113,8 @@ final class AppStore: ObservableObject {
 
         Output rules:
         - Return plain prose bullets or short paragraphs only.
+        - Return at most \(Self.internalMemoryPromptBulletLimit) bullets, or at most 2 short paragraphs.
+        - Keep each bullet to one sentence whenever possible.
         - Keep stable facts, chapter-level decisions, continuity constraints, unresolved questions, and arc-level shifts.
         - Remove repetition and low-value narration details.
         - Do not invent facts not present in input.
@@ -11665,7 +12142,7 @@ final class AppStore: ObservableObject {
             userPrompt: userPrompt,
             model: resolvedPrimaryModel(),
             temperature: min(project.settings.temperature, 0.3),
-            maxTokens: min(project.settings.maxTokens, 1000)
+            maxTokens: nil
         )
 
         let result = try await generateTextResult(request)

@@ -14,7 +14,7 @@ final class OpenAICompatibleAIService: AIProviderServiceBase, @unchecked Sendabl
         let model: String
         let messages: [ChatMessage]
         let temperature: Double
-        let max_tokens: Int
+        let max_tokens: Int?
         let stream: Bool
         let stream_options: StreamOptions?
     }

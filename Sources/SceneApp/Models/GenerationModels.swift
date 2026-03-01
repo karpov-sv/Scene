@@ -29,7 +29,7 @@ struct TextGenerationRequest: Sendable, Equatable {
     var userPrompt: String
     var model: String
     var temperature: Double
-    var maxTokens: Int
+    var maxTokens: Int?
 }
 
 enum AIServiceError: LocalizedError {

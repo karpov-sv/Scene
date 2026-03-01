@@ -460,9 +460,15 @@ struct SceneSummaryPanelView: View {
             projectUpdatedAt: store.projectStoryMemoryUpdatedAt,
             relevantKnowledge: store.selectedSceneRelevantStoryKnowledge,
             isUpdating: isRefreshingStoryMemory,
+            hasProjectMemory: store.hasStoredProjectStoryMemory,
+            hasKnowledgeGraph: store.hasStoredStoryKnowledgeGraph,
+            hasDebugSnapshot: store.hasStoryMemoryDebugSnapshot,
             updateErrorMessage: storyMemoryError.isEmpty ? nil : storyMemoryError,
             onRebuildScene: rebuildSelectedStoryMemory,
-            onRebuildProject: rebuildProjectStoryMemory
+            onRebuildProject: rebuildProjectStoryMemory,
+            onCancelUpdate: cancelStoryMemoryRefresh,
+            onClearProjectMemory: clearProjectStoryMemory,
+            onClearKnowledgeGraph: clearStoryKnowledgeGraph
         )
     }
 
@@ -597,6 +603,18 @@ struct SceneSummaryPanelView: View {
         storyMemoryTask = nil
     }
 
+    private func clearProjectStoryMemory() {
+        cancelStoryMemoryRefresh()
+        storyMemoryError = ""
+        store.clearProjectStoryMemory()
+    }
+
+    private func clearStoryKnowledgeGraph() {
+        cancelStoryMemoryRefresh()
+        storyMemoryError = ""
+        store.clearStoryKnowledgeGraph()
+    }
+
     private func clearCurrentScope() {
         switch scope {
         case .scene:
@@ -610,6 +628,7 @@ struct SceneSummaryPanelView: View {
 private struct AutoStoryMemorySheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
+    @State private var isDebugSheetPresented: Bool = false
 
     let sceneSummary: String
     let sceneFacts: [String]
@@ -623,9 +642,15 @@ private struct AutoStoryMemorySheet: View {
     let projectUpdatedAt: Date?
     let relevantKnowledge: String
     let isUpdating: Bool
+    let hasProjectMemory: Bool
+    let hasKnowledgeGraph: Bool
+    let hasDebugSnapshot: Bool
     let updateErrorMessage: String?
     let onRebuildScene: () -> Void
     let onRebuildProject: () -> Void
+    let onCancelUpdate: () -> Void
+    let onClearProjectMemory: () -> Void
+    let onClearKnowledgeGraph: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -700,7 +725,6 @@ private struct AutoStoryMemorySheet: View {
                     )
 
                     pendingNodeSection()
-
                     pendingEdgeSection()
                 }
                 .padding(12)
@@ -718,6 +742,27 @@ private struct AutoStoryMemorySheet: View {
                     onRebuildProject()
                 }
                 .disabled(isUpdating)
+
+                Button("Clear Story Memory") {
+                    onClearProjectMemory()
+                }
+                .disabled(isUpdating || !hasProjectMemory)
+
+                Button("Clear Knowledge Graph") {
+                    onClearKnowledgeGraph()
+                }
+                .disabled(isUpdating || !hasKnowledgeGraph)
+
+                Button("Debug Last Extraction") {
+                    isDebugSheetPresented = true
+                }
+                .disabled(!hasDebugSnapshot)
+
+                if isUpdating {
+                    Button("Cancel") {
+                        onCancelUpdate()
+                    }
+                }
 
                 Spacer(minLength: 0)
 
@@ -739,6 +784,22 @@ private struct AutoStoryMemorySheet: View {
             }
         }
         .frame(minWidth: 640, minHeight: 520)
+        .sheet(isPresented: $isDebugSheetPresented) {
+            if let snapshot = store.storyMemoryDebugSnapshot {
+                StoryMemoryDebugSheet(snapshot: snapshot)
+            } else {
+                ContentUnavailableView(
+                    "No Debug Snapshot",
+                    systemImage: "ladybug",
+                    description: Text("Run a story memory rebuild first to capture the latest request and response.")
+                )
+                .frame(minWidth: 720, minHeight: 520)
+            }
+        }
+        .onChange(of: store.storyMemoryDebugSnapshot?.id, initial: false) { _, newID in
+            guard newID != nil, updateErrorMessage != nil else { return }
+            isDebugSheetPresented = true
+        }
     }
 
     @ViewBuilder
@@ -927,6 +988,136 @@ private struct AutoStoryMemorySheet: View {
         formatter.timeStyle = .short
         return formatter
     }()
+}
+
+private struct StoryMemoryDebugSheet: View {
+    let snapshot: AppStore.StoryMemoryDebugSnapshot
+    @Environment(\.dismiss) private var dismiss
+
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Story Memory Debug")
+                        .font(.title3.weight(.semibold))
+                    Text("\(snapshot.chapterTitle) / \(snapshot.sceneTitle)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(snapshot.statusLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(snapshot.errorMessage == nil ? .green : .red)
+
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    GroupBox("Attempt") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Operation: \(snapshot.operation)")
+                            Text("Model: \(snapshot.request.model)")
+                            Text("Captured: \(Self.timestampFormatter.string(from: snapshot.capturedAt))")
+                            Text("Temperature: \(String(format: "%.2f", snapshot.request.temperature))")
+                            Text(
+                                "Max tokens: "
+                                    + (snapshot.request.maxTokens.map(String.init) ?? "Provider managed")
+                            )
+
+                            if let usage = snapshot.usage {
+                                Text(tokenUsageLabel(usage))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if let errorMessage = snapshot.errorMessage,
+                       !errorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        GroupBox("Parse Error") {
+                            Text(errorMessage)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    GroupBox("System Prompt") {
+                        PayloadPreviewSyntaxTextView(
+                            text: snapshot.request.systemPrompt,
+                            highlightsJSON: false
+                        )
+                        .frame(minHeight: 180)
+                    }
+
+                    GroupBox("User Prompt") {
+                        PayloadPreviewSyntaxTextView(
+                            text: snapshot.request.userPrompt,
+                            highlightsJSON: false
+                        )
+                        .frame(minHeight: 280)
+                    }
+
+                    GroupBox("Raw Response") {
+                        PayloadPreviewSyntaxTextView(
+                            text: fallbackText(
+                                snapshot.rawResponse,
+                                emptyMessage: "No provider response was captured for this attempt."
+                            ),
+                            highlightsJSON: false
+                        )
+                        .frame(minHeight: 280)
+                    }
+
+                    GroupBox("Extracted JSON Candidate") {
+                        PayloadPreviewSyntaxTextView(
+                            text: fallbackText(
+                                snapshot.extractedJSONCandidate,
+                                emptyMessage: "No valid JSON object was extracted from the raw response."
+                            ),
+                            highlightsJSON: true
+                        )
+                        .frame(minHeight: 220)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 920, minHeight: 760)
+    }
+
+    private func fallbackText(_ value: String?, emptyMessage: String) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            return emptyMessage
+        }
+        return trimmed
+    }
+
+    private func tokenUsageLabel(_ usage: TokenUsage) -> String {
+        let total = usage.totalTokens ?? 0
+        let prompt = usage.promptTokens ?? 0
+        let completion = usage.completionTokens ?? 0
+        let suffix = usage.isEstimated ? " (estimated)" : ""
+        return "Usage: total \(total), prompt \(prompt), completion \(completion)\(suffix)"
+    }
 }
 
 private struct SceneRollingMemorySheet: View {

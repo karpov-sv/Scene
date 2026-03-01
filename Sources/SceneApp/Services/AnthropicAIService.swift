@@ -2,6 +2,7 @@ import Foundation
 
 final class AnthropicAIService: AIProviderServiceBase, @unchecked Sendable {
     private static let anthropicVersion = "2023-06-01"
+    private static let uncappedFallbackMaxTokens = 8_192
 
     private struct TextPart: Codable {
         let type: String
@@ -88,7 +89,7 @@ final class AnthropicAIService: AIProviderServiceBase, @unchecked Sendable {
 
         let payload = MessagesRequest(
             model: request.model,
-            max_tokens: request.maxTokens,
+            max_tokens: providerMaxTokens(for: request),
             temperature: request.temperature,
             system: request.systemPrompt,
             messages: [
@@ -141,7 +142,7 @@ final class AnthropicAIService: AIProviderServiceBase, @unchecked Sendable {
         let endpoint = try makeMessagesURL(from: settings.endpoint)
         let payload = MessagesRequest(
             model: request.model,
-            max_tokens: request.maxTokens,
+            max_tokens: providerMaxTokens(for: request),
             temperature: request.temperature,
             system: request.systemPrompt,
             messages: [
@@ -331,5 +332,9 @@ final class AnthropicAIService: AIProviderServiceBase, @unchecked Sendable {
             completionTokens: completion,
             totalTokens: total
         )
+    }
+
+    private func providerMaxTokens(for request: TextGenerationRequest) -> Int {
+        max(request.maxTokens ?? Self.uncappedFallbackMaxTokens, 1)
     }
 }
