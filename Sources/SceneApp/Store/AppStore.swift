@@ -4694,6 +4694,127 @@ final class AppStore: ObservableObject {
         _ = acceptStoryKnowledgeEdge(edgeID, shouldSave: true)
     }
 
+    @discardableResult
+    func updateStoryKnowledgeNode(
+        _ nodeID: UUID,
+        name: String,
+        kind: StoryKnowledgeNodeKind,
+        summary: String,
+        aliases: [String]
+    ) -> Bool {
+        guard isProjectOpen,
+              let nodeIndex = project.storyKnowledgeNodes.firstIndex(where: { $0.id == nodeID }) else {
+            return false
+        }
+
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else { return false }
+
+        var node = project.storyKnowledgeNodes[nodeIndex]
+        let normalizedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedAliases = normalizedStoryMemoryLines(
+            aliases
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter {
+                    !$0.isEmpty && normalizedStoryKnowledgeKey($0) != normalizedStoryKnowledgeKey(normalizedName)
+                },
+            maxCount: 12,
+            maxCharsPerLine: 80
+        )
+
+        var didMutate = false
+        if node.name != normalizedName {
+            node.name = normalizedName
+            didMutate = true
+        }
+        if node.kind != kind {
+            node.kind = kind
+            didMutate = true
+        }
+        if node.summary != normalizedSummary {
+            node.summary = normalizedSummary
+            didMutate = true
+        }
+        if node.aliases != normalizedAliases {
+            node.aliases = normalizedAliases
+            didMutate = true
+        }
+
+        guard didMutate else { return false }
+
+        node.updatedAt = .now
+        project.storyKnowledgeNodes[nodeIndex] = node
+        sanitizeStoryKnowledgeGraph()
+        rebuildAllStoryMemoryRollups()
+        saveProject(debounced: true)
+        return true
+    }
+
+    @discardableResult
+    func updateStoryKnowledgeEdge(
+        _ edgeID: UUID,
+        relation: String,
+        note: String
+    ) -> Bool {
+        guard isProjectOpen,
+              let edgeIndex = project.storyKnowledgeEdges.firstIndex(where: { $0.id == edgeID }) else {
+            return false
+        }
+
+        let existingEdge = project.storyKnowledgeEdges[edgeIndex]
+        guard let canonicalEdge = canonicalizedStoryKnowledgeEdge(
+            sourceNodeID: existingEdge.sourceNodeID,
+            targetNodeID: existingEdge.targetNodeID,
+            relation: relation
+        ) else {
+            return false
+        }
+
+        let normalizedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let additionalObservedRelations = observedStoryKnowledgeRelations(
+            rawRelation: relation,
+            canonicalRelation: canonicalEdge.relation,
+            sceneIDs: existingEdge.evidenceSceneIDs
+        )
+
+        var updatedEdge = existingEdge
+        var didMutate = false
+
+        if updatedEdge.sourceNodeID != canonicalEdge.sourceNodeID {
+            updatedEdge.sourceNodeID = canonicalEdge.sourceNodeID
+            didMutate = true
+        }
+        if updatedEdge.targetNodeID != canonicalEdge.targetNodeID {
+            updatedEdge.targetNodeID = canonicalEdge.targetNodeID
+            didMutate = true
+        }
+        if updatedEdge.relation != canonicalEdge.relation {
+            updatedEdge.relation = canonicalEdge.relation
+            didMutate = true
+        }
+        let mergedObservedRelations = mergedStoryKnowledgeObservedRelations(
+            existing: updatedEdge.observedRelations,
+            additional: additionalObservedRelations
+        )
+        if updatedEdge.observedRelations != mergedObservedRelations {
+            updatedEdge.observedRelations = mergedObservedRelations
+            didMutate = true
+        }
+        if updatedEdge.note != normalizedNote {
+            updatedEdge.note = normalizedNote
+            didMutate = true
+        }
+
+        guard didMutate else { return false }
+
+        updatedEdge.updatedAt = .now
+        project.storyKnowledgeEdges[edgeIndex] = updatedEdge
+        sanitizeStoryKnowledgeGraph()
+        rebuildAllStoryMemoryRollups()
+        saveProject(debounced: true)
+        return true
+    }
+
     func acceptStoryKnowledgeEdges(_ edgeIDs: [UUID]) {
         var didMutate = false
         for edgeID in deduplicatedUUIDs(edgeIDs) {

@@ -7,6 +7,11 @@ struct StoryKnowledgePanelView: View {
         let compendiumID: UUID?
     }
 
+    private enum GraphInspectorEditTarget: Equatable {
+        case node(UUID)
+        case edge(UUID)
+    }
+
     private enum GraphDensityMode: String, CaseIterable, Identifiable {
         case balanced
         case wide
@@ -210,6 +215,7 @@ struct StoryKnowledgePanelView: View {
     @State private var refreshTask: Task<Void, Never>?
     @State private var refreshError: String = ""
     @State private var compendiumMergePreview: AppStore.StoryKnowledgeCompendiumMergePreview?
+    @State private var graphInspectorEditTarget: GraphInspectorEditTarget?
     @State private var selectedPendingNodeIDs: Set<UUID> = []
     @State private var selectedPendingEdgeIDs: Set<UUID> = []
     @State private var conflictFocus: ConflictFocus?
@@ -681,6 +687,27 @@ struct StoryKnowledgePanelView: View {
         }
     }
 
+    private var isEditingSelectedGraphNode: Bool {
+        guard let selectedGraphNode else { return false }
+        guard case .node(let nodeID) = graphInspectorEditTarget else { return false }
+        return nodeID == selectedGraphNode.id
+    }
+
+    private var isEditingSelectedGraphEdge: Bool {
+        guard let selectedGraphEdge else { return false }
+        guard case .edge(let edgeID) = graphInspectorEditTarget else { return false }
+        return edgeID == selectedGraphEdge.id
+    }
+
+    private var hasExpandedGraphHeaderActions: Bool {
+        conflictFocus != nil
+            || hasGraphSelection
+            || nodeKindFilter != .all
+            || activeExpandedGraphConnectionFocus != nil
+            || activeExpandedGraphRelationFocus != nil
+            || hasExpandedGraphClusterCanvasScope
+    }
+
     private var expandedGraphSelectionOverlay: StoryKnowledgeNeighborhoodGraphView.SelectionOverlay? {
         guard showingExpandedGraph else { return nil }
 
@@ -717,6 +744,12 @@ struct StoryKnowledgePanelView: View {
                 )
             ]
             if selectedGraphEdge.status == .inferred {
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Edit",
+                        action: { beginGraphInspectorEdit(for: selectedGraphEdge) }
+                    )
+                )
                 actions.append(
                     StoryKnowledgeNeighborhoodGraphView.SelectionAction(
                         title: "Accept",
@@ -807,6 +840,12 @@ struct StoryKnowledgePanelView: View {
             }
 
             if selectedGraphNode.status == .inferred {
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Edit",
+                        action: { beginGraphInspectorEdit(for: selectedGraphNode) }
+                    )
+                )
                 actions.append(
                     StoryKnowledgeNeighborhoodGraphView.SelectionAction(
                         title: "Promote to Compendium",
@@ -1202,12 +1241,20 @@ struct StoryKnowledgePanelView: View {
             if !visibleNodeIDs.contains(graphSelectedNodeID) {
                 self.graphSelectedNodeID = visibleNodeIDs.first
             }
+            synchronizeGraphInspectorEditTarget()
         }
         .onChange(of: graphVisibleEdges.map(\.id), initial: false) { _, visibleEdgeIDs in
             guard let graphSelectedEdgeID else { return }
             if !visibleEdgeIDs.contains(graphSelectedEdgeID) {
                 self.graphSelectedEdgeID = nil
             }
+            synchronizeGraphInspectorEditTarget()
+        }
+        .onChange(of: graphSelectedNodeID, initial: false) { _, _ in
+            synchronizeGraphInspectorEditTarget()
+        }
+        .onChange(of: graphSelectedEdgeID, initial: false) { _, _ in
+            synchronizeGraphInspectorEditTarget()
         }
         .onChange(of: expandedGraphLayoutMode, initial: false) { _, newLayoutMode in
             if newLayoutMode != .kindClusters {
@@ -1236,6 +1283,11 @@ struct StoryKnowledgePanelView: View {
         }
         .onChange(of: derivedStateKey, initial: true) { _, _ in
             refreshDerivedState()
+        }
+        .onChange(of: showingExpandedGraph, initial: false) { _, isShowing in
+            if !isShowing {
+                graphInspectorEditTarget = nil
+            }
         }
     }
 
@@ -1357,110 +1409,125 @@ struct StoryKnowledgePanelView: View {
 
     private var expandedGraphSheet: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Knowledge Graph Canvas")
-                        .font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Knowledge Graph Canvas")
+                            .font(.title3.weight(.semibold))
 
-                    Text(graphCoverageLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text(graphCoverageLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    if let activeExpandedGraphConnectionFocus {
-                        graphFocusScopeLine(
-                            label: activeExpandedGraphConnectionFocus.label,
-                            systemImage: "point.3.filled.connected.trianglepath.dotted",
-                            badges: graphFocusCoverageBadges(
-                                edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
-                                pairCount: activeFocusedGraphConnectionSummary?.pairCount,
-                                pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
-                                evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
+                        if let activeExpandedGraphConnectionFocus {
+                            graphFocusScopeLine(
+                                label: activeExpandedGraphConnectionFocus.label,
+                                systemImage: "point.3.filled.connected.trianglepath.dotted",
+                                badges: graphFocusCoverageBadges(
+                                    edgeCount: activeFocusedGraphConnectionSummary?.edgeCount ?? 0,
+                                    pairCount: activeFocusedGraphConnectionSummary?.pairCount,
+                                    pendingEdgeCount: activeFocusedGraphConnectionSummary?.pendingEdgeCount ?? 0,
+                                    evidenceItems: activeFocusedGraphConnectionSummary?.evidenceItems ?? []
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    if let activeExpandedGraphRelationFocus {
-                        graphFocusScopeLine(
-                            label: activeExpandedGraphRelationFocus.label,
-                            systemImage: "line.3.horizontal.decrease.circle",
-                            badges: graphFocusCoverageBadges(
-                                edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
-                                pairCount: activeFocusedGraphRelationSummary?.pairCount,
-                                pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
-                                evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
+                        if let activeExpandedGraphRelationFocus {
+                            graphFocusScopeLine(
+                                label: activeExpandedGraphRelationFocus.label,
+                                systemImage: "line.3.horizontal.decrease.circle",
+                                badges: graphFocusCoverageBadges(
+                                    edgeCount: activeFocusedGraphRelationSummary?.edgeCount ?? 0,
+                                    pairCount: activeFocusedGraphRelationSummary?.pairCount,
+                                    pendingEdgeCount: activeFocusedGraphRelationSummary?.pendingEdgeCount ?? 0,
+                                    evidenceItems: activeFocusedGraphRelationSummary?.evidenceItems ?? []
+                                )
                             )
-                        )
+                        }
+
+                        if !activeExpandedGraphIsolatedKinds.isEmpty {
+                            graphFocusScopeLine(
+                                label: isolatedClusterScopeLabel,
+                                systemImage: "scope",
+                                badges: ["\(activeExpandedGraphIsolatedKinds.count) local"]
+                            )
+                        }
+
+                        if !activeExpandedGraphCollapsedKinds.isEmpty {
+                            graphFocusScopeLine(
+                                label: "Collapsed clusters: \(activeExpandedGraphCollapsedKinds.map(\.rawValue.capitalized).sorted().joined(separator: ", "))",
+                                systemImage: "eye.slash",
+                                badges: ["\(activeExpandedGraphCollapsedKinds.count) hidden"]
+                            )
+                        }
                     }
 
-                    if !activeExpandedGraphIsolatedKinds.isEmpty {
-                        graphFocusScopeLine(
-                            label: isolatedClusterScopeLabel,
-                            systemImage: "scope",
-                            badges: ["\(activeExpandedGraphIsolatedKinds.count) local"]
-                        )
-                    }
+                    Spacer(minLength: 0)
 
-                    if !activeExpandedGraphCollapsedKinds.isEmpty {
-                        graphFocusScopeLine(
-                            label: "Collapsed clusters: \(activeExpandedGraphCollapsedKinds.map(\.rawValue.capitalized).sorted().joined(separator: ", "))",
-                            systemImage: "eye.slash",
-                            badges: ["\(activeExpandedGraphCollapsedKinds.count) hidden"]
-                        )
+                    Picker("Canvas Density", selection: $expandedGraphDensity) {
+                        ForEach(GraphDensityMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
+
+                    Picker("Layout", selection: $expandedGraphLayoutMode) {
+                        ForEach(StoryKnowledgeNeighborhoodGraphView.LayoutMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 250)
                 }
 
-                Spacer(minLength: 0)
+                if hasExpandedGraphHeaderActions {
+                    HStack(spacing: 10) {
+                        if conflictFocus != nil {
+                            Button("Clear Focus") {
+                                conflictFocus = nil
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Clear the current focus filter")
+                        }
 
-                Picker("Canvas Density", selection: $expandedGraphDensity) {
-                    ForEach(GraphDensityMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 280)
+                        if hasGraphSelection {
+                            Button("Clear Selection") {
+                                clearGraphSelection()
+                            }
+                            .buttonStyle(.borderless)
+                        }
 
-                Picker("Layout", selection: $expandedGraphLayoutMode) {
-                    ForEach(StoryKnowledgeNeighborhoodGraphView.LayoutMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 250)
+                        if nodeKindFilter != .all {
+                            Button("Clear Kind Filter") {
+                                store.setStoryKnowledgePanelNodeKindFilter(.all)
+                            }
+                            .buttonStyle(.borderless)
+                        }
 
-                if conflictFocus != nil {
-                    Button("Clear Focus") {
-                        conflictFocus = nil
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Clear the current focus filter")
-                }
+                        if activeExpandedGraphConnectionFocus != nil {
+                            Button("Clear Link Focus") {
+                                expandedGraphConnectionFocus = nil
+                            }
+                            .buttonStyle(.borderless)
+                        }
 
-                if hasGraphSelection {
-                    Button("Clear Selection") {
-                        clearGraphSelection()
-                    }
-                    .buttonStyle(.borderless)
-                }
+                        if activeExpandedGraphRelationFocus != nil {
+                            Button("Clear Relation Focus") {
+                                expandedGraphRelationFocus = nil
+                            }
+                            .buttonStyle(.borderless)
+                        }
 
-                if activeExpandedGraphConnectionFocus != nil {
-                    Button("Clear Link Focus") {
-                        expandedGraphConnectionFocus = nil
-                    }
-                    .buttonStyle(.borderless)
-                }
+                        if hasExpandedGraphClusterCanvasScope {
+                            Button("Clear Cluster Scope") {
+                                clearExpandedClusterCanvasScope()
+                            }
+                            .buttonStyle(.borderless)
+                        }
 
-                if activeExpandedGraphRelationFocus != nil {
-                    Button("Clear Relation Focus") {
-                        expandedGraphRelationFocus = nil
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.borderless)
-                }
-
-                if hasExpandedGraphClusterCanvasScope {
-                    Button("Clear Cluster Scope") {
-                        clearExpandedClusterCanvasScope()
-                    }
-                    .buttonStyle(.borderless)
                 }
             }
             .padding(16)
@@ -1620,7 +1687,47 @@ struct StoryKnowledgePanelView: View {
     @ViewBuilder
     private var graphSelectionInspector: some View {
         if let selectionOverlay = expandedGraphSelectionOverlay {
-            graphSelectionInspectorCard(selectionOverlay)
+            VStack(alignment: .leading, spacing: 12) {
+                graphSelectionInspectorCard(selectionOverlay)
+
+                if let selectedGraphNode, isEditingSelectedGraphNode {
+                    StoryKnowledgeNodeInspectorEditor(
+                        node: selectedGraphNode,
+                        onSave: { name, kind, summary, aliases in
+                            _ = store.updateStoryKnowledgeNode(
+                                selectedGraphNode.id,
+                                name: name,
+                                kind: kind,
+                                summary: summary,
+                                aliases: aliases
+                            )
+                            graphInspectorEditTarget = nil
+                        },
+                        onCancel: {
+                            graphInspectorEditTarget = nil
+                        }
+                    )
+                    .id(selectedGraphNode.id)
+                } else if let selectedGraphEdge, isEditingSelectedGraphEdge {
+                    StoryKnowledgeEdgeInspectorEditor(
+                        edge: selectedGraphEdge,
+                        sourceName: storyKnowledgeNodesByID[selectedGraphEdge.sourceNodeID]?.name ?? "Unknown",
+                        targetName: storyKnowledgeNodesByID[selectedGraphEdge.targetNodeID]?.name ?? "Unknown",
+                        onSave: { relation, note in
+                            _ = store.updateStoryKnowledgeEdge(
+                                selectedGraphEdge.id,
+                                relation: relation,
+                                note: note
+                            )
+                            graphInspectorEditTarget = nil
+                        },
+                        onCancel: {
+                            graphInspectorEditTarget = nil
+                        }
+                    )
+                    .id(selectedGraphEdge.id)
+                }
+            }
         }
     }
 
@@ -2170,6 +2277,7 @@ struct StoryKnowledgePanelView: View {
                         onUpdateCompendium: {
                             compendiumMergePreview = store.storyKnowledgeCompendiumMergePreview(for: node.id)
                         },
+                        onEdit: nil,
                         onPromote: { store.promoteStoryKnowledgeNodeToCompendium(node.id) },
                         onReject: { store.rejectStoryKnowledgeNode(node.id) }
                     )
@@ -2199,6 +2307,7 @@ struct StoryKnowledgePanelView: View {
                         isSelected: false,
                         onToggleSelection: nil,
                         onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
+                        onEdit: nil,
                         onAccept: { store.acceptStoryKnowledgeEdge(edge.id) },
                         onReject: { store.rejectStoryKnowledgeEdge(edge.id) }
                     )
@@ -2256,6 +2365,9 @@ struct StoryKnowledgePanelView: View {
                         onOpenCompendiumEntry: onOpenCompendiumEntry,
                         onUpdateCompendium: {
                             compendiumMergePreview = store.storyKnowledgeCompendiumMergePreview(for: node.id)
+                        },
+                        onEdit: {
+                            beginGraphInspectorEdit(for: node)
                         },
                         onPromote: {
                             selectedPendingNodeIDs.remove(node.id)
@@ -2319,6 +2431,9 @@ struct StoryKnowledgePanelView: View {
                         isSelected: selectedPendingEdgeIDs.contains(edge.id),
                         onToggleSelection: { togglePendingEdgeSelection(edge.id) },
                         onRevealScene: { store.revealStoryKnowledgeEvidenceScene($0) },
+                        onEdit: {
+                            beginGraphInspectorEdit(for: edge)
+                        },
                         onAccept: {
                             selectedPendingEdgeIDs.remove(edge.id)
                             store.acceptStoryKnowledgeEdge(edge.id)
@@ -2452,6 +2567,10 @@ struct StoryKnowledgePanelView: View {
             }
             return graphCandidateNodes
         }()
+        let baseNodePool = buildGraphBaseNodePool(
+            baseNodes: baseNodes,
+            edges: baseEdges
+        )
 
         let graphVisibleEdges = buildGraphVisibleEdges(
             mode: activeGraphDensityMode,
@@ -2461,7 +2580,7 @@ struct StoryKnowledgePanelView: View {
         let graphVisibleNodes = buildGraphVisibleNodes(
             mode: activeGraphDensityMode,
             edges: graphVisibleEdges,
-            baseNodes: baseNodes
+            baseNodes: baseNodePool
         )
         let graphVisibleNodesByID = Dictionary(uniqueKeysWithValues: graphVisibleNodes.map { ($0.id, $0) })
         let graphVisibleEdgesByID = Dictionary(uniqueKeysWithValues: graphVisibleEdges.map { ($0.id, $0) })
@@ -2475,7 +2594,7 @@ struct StoryKnowledgePanelView: View {
         let graphCoverageLabel = buildGraphCoverageLabel(
             visibleNodes: graphVisibleNodes,
             visibleEdges: graphVisibleEdges,
-            totalNodes: baseNodes,
+            totalNodes: baseNodePool,
             totalEdges: baseEdges
         )
         let graphClusterSummaries = buildGraphClusterSummaries(
@@ -2615,6 +2734,30 @@ struct StoryKnowledgePanelView: View {
             if nodes.count >= nodeCap {
                 break
             }
+        }
+
+        return nodes
+    }
+
+    private func buildGraphBaseNodePool(
+        baseNodes: [StoryKnowledgeNode],
+        edges: [StoryKnowledgeEdge]
+    ) -> [StoryKnowledgeNode] {
+        var nodes: [StoryKnowledgeNode] = []
+        var seen = Set<UUID>()
+
+        for node in baseNodes where seen.insert(node.id).inserted {
+            nodes.append(node)
+        }
+
+        let edgeNodeIDs = Set(edges.flatMap { [$0.sourceNodeID, $0.targetNodeID] })
+        for nodeID in edgeNodeIDs.sorted(by: { lhs, rhs in
+            let lhsName = storyKnowledgeNodesByID[lhs]?.name ?? ""
+            let rhsName = storyKnowledgeNodesByID[rhs]?.name ?? ""
+            return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
+        }) {
+            guard let node = storyKnowledgeNodesByID[nodeID], seen.insert(node.id).inserted else { continue }
+            nodes.append(node)
         }
 
         return nodes
@@ -2844,6 +2987,35 @@ struct StoryKnowledgePanelView: View {
     private func wrappedIndex(from currentIndex: Int, step: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
         return (currentIndex + step + count) % count
+    }
+
+    private func beginGraphInspectorEdit(for node: StoryKnowledgeNode) {
+        graphSelectedEdgeID = nil
+        graphSelectedNodeID = node.id
+        graphInspectorEditTarget = .node(node.id)
+        showingExpandedGraph = true
+    }
+
+    private func beginGraphInspectorEdit(for edge: StoryKnowledgeEdge) {
+        graphSelectedNodeID = nil
+        graphSelectedEdgeID = edge.id
+        graphInspectorEditTarget = .edge(edge.id)
+        showingExpandedGraph = true
+    }
+
+    private func synchronizeGraphInspectorEditTarget() {
+        guard let graphInspectorEditTarget else { return }
+
+        switch graphInspectorEditTarget {
+        case .node(let nodeID):
+            if graphSelectedNodeID != nodeID {
+                self.graphInspectorEditTarget = nil
+            }
+        case .edge(let edgeID):
+            if graphSelectedEdgeID != edgeID {
+                self.graphInspectorEditTarget = nil
+            }
+        }
     }
 
     private func applyExpandedConnectionFocus(
@@ -3605,6 +3777,7 @@ private struct StoryKnowledgeNodeCard: View {
     let onRevealScene: @MainActor (UUID) -> Void
     let onOpenCompendiumEntry: (UUID) -> Void
     let onUpdateCompendium: () -> Void
+    let onEdit: (() -> Void)?
     let onPromote: () -> Void
     let onReject: () -> Void
 
@@ -3663,6 +3836,13 @@ private struct StoryKnowledgeNodeCard: View {
                 }
 
                 if node.status == .inferred {
+                    if let onEdit {
+                        Button("Edit") {
+                            onEdit()
+                        }
+                        .disabled(isUpdating)
+                    }
+
                     Button("Promote to Compendium") {
                         onPromote()
                     }
@@ -3689,6 +3869,7 @@ private struct StoryKnowledgeEdgeCard: View {
     let isSelected: Bool
     let onToggleSelection: (() -> Void)?
     let onRevealScene: @MainActor (UUID) -> Void
+    let onEdit: (() -> Void)?
     let onAccept: () -> Void
     let onReject: () -> Void
 
@@ -3743,6 +3924,13 @@ private struct StoryKnowledgeEdgeCard: View {
 
             if edge.status == .inferred {
                 HStack(spacing: 8) {
+                    if let onEdit {
+                        Button("Edit") {
+                            onEdit()
+                        }
+                        .disabled(isUpdating)
+                    }
+
                     Button("Accept") {
                         onAccept()
                     }
@@ -4139,6 +4327,148 @@ private struct StoryKnowledgeCompendiumMergeSheet: View {
         } else {
             dismiss()
         }
+    }
+}
+
+private struct StoryKnowledgeNodeInspectorEditor: View {
+    let node: StoryKnowledgeNode
+    let onSave: (String, StoryKnowledgeNodeKind, String, [String]) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+    @State private var kind: StoryKnowledgeNodeKind
+    @State private var summary: String
+    @State private var aliasesText: String
+
+    init(
+        node: StoryKnowledgeNode,
+        onSave: @escaping (String, StoryKnowledgeNodeKind, String, [String]) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.node = node
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _name = State(initialValue: node.name)
+        _kind = State(initialValue: node.kind)
+        _summary = State(initialValue: node.summary)
+        _aliasesText = State(initialValue: node.aliases.joined(separator: ", "))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Edit Inferred Node")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                Button("Save") {
+                    let aliases = aliasesText
+                        .split(whereSeparator: { $0 == "," || $0.isNewline })
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    onSave(name, kind, summary, aliases)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            TextField("Name", text: $name)
+
+            Picker("Kind", selection: $kind) {
+                ForEach(StoryKnowledgeNodeKind.allCases) { kind in
+                    Text(kind.rawValue.capitalized).tag(kind)
+                }
+            }
+            .pickerStyle(.menu)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Summary")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $summary)
+                    .frame(minHeight: 100)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Aliases")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("Comma-separated aliases", text: $aliasesText, axis: .vertical)
+                    .lineLimit(2...4)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct StoryKnowledgeEdgeInspectorEditor: View {
+    let edge: StoryKnowledgeEdge
+    let sourceName: String
+    let targetName: String
+    let onSave: (String, String) -> Void
+    let onCancel: () -> Void
+
+    @State private var relation: String
+    @State private var note: String
+
+    init(
+        edge: StoryKnowledgeEdge,
+        sourceName: String,
+        targetName: String,
+        onSave: @escaping (String, String) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.edge = edge
+        self.sourceName = sourceName
+        self.targetName = targetName
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _relation = State(initialValue: edge.relation)
+        _note = State(initialValue: edge.note)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Edit Inferred Edge")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                Button("Save") {
+                    onSave(relation, note)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(relation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            LabeledContent("Source", value: sourceName)
+            LabeledContent("Target", value: targetName)
+            TextField("Relation", text: $relation)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Note")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $note)
+                    .frame(minHeight: 120)
+            }
+
+            Text("Saved relations are normalized with the same canonicalization rules as auto-extracted edges.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
