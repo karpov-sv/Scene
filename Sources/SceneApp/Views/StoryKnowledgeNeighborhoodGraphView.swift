@@ -165,7 +165,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var hoveredEdgeID: UUID?
     @State private var previewedNavigationTarget: SelectionNavigation.Target?
     @State private var previewGhostPhase = false
-    @FocusState private var isCanvasFocused: Bool
 
     let nodes: [NodeModel]
     let edges: [EdgeModel]
@@ -238,7 +237,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("-", modifiers: [.command])
                 .help("Zoom Out (Command--)")
-                .focusable()
 
                 Text("\(zoomPercentage)%")
                     .font(.caption)
@@ -256,7 +254,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("=", modifiers: [.command])
                 .help("Zoom In (Command-Plus)")
-                .focusable()
 
                 Button(fitButtonTitle) {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -268,7 +265,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .disabled(nodes.isEmpty)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .help("\(fitButtonTitle) (Shift-Command-F)")
-                .focusable()
 
                 Button("Reset View") {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -279,7 +275,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .controlSize(.small)
                 .keyboardShortcut("0", modifiers: [.command])
                 .help("Reset View (Command-0)")
-                .focusable()
 
                 if let selectionNavigation {
                     Divider()
@@ -290,7 +285,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                         .foregroundStyle(.secondary)
 
                     Button {
-                        clearNavigationPreview()
                         selectionNavigation.onPrevious()
                     } label: {
                         Image(systemName: "chevron.left.circle")
@@ -306,13 +300,8 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             ? "Previous Node (Option-Command-Left Arrow)"
                             : "Previous Edge (Option-Command-Up Arrow)"
                     )
-                    .onHover { isHovering in
-                        updateNavigationPreview(isHovering ? selectionNavigation.previousTarget : nil)
-                    }
-                    .focusable()
 
                     Button {
-                        clearNavigationPreview()
                         selectionNavigation.onNext()
                     } label: {
                         Image(systemName: "chevron.right.circle")
@@ -328,17 +317,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                             ? "Next Node (Option-Command-Right Arrow)"
                             : "Next Edge (Option-Command-Down Arrow)"
                     )
-                    .onHover { isHovering in
-                        updateNavigationPreview(isHovering ? selectionNavigation.nextTarget : nil)
-                    }
-                    .focusable()
-
-                    if let previewedNavigationTarget {
-                        Text("Preview: \(previewedNavigationTarget.title)")
-                            .font(.caption2)
-                            .foregroundStyle(Color.accentColor)
-                            .lineLimit(1)
-                    }
                 }
 
                 Text("\(nodes.count) nodes • \(edges.count) edges")
@@ -496,8 +474,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                     )
                     .contentShape(Rectangle())
                     .clipped()
-                    .focusable()
-                    .focused($isCanvasFocused)
                     .overlay(alignment: .bottomLeading) {
                         if let selectionOverlay {
                             selectionOverlayCard(selectionOverlay)
@@ -1122,7 +1098,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     }
 
     private func handleCanvasTap(at location: CGPoint, layout: LayoutResult) {
-        isCanvasFocused = true
         let contentLocation = contentPoint(forCanvasLocation: location)
 
         if let clusterKind = hitTestClusterLabel(at: contentLocation, layout: layout) {
@@ -2105,19 +2080,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         .allowsHitTesting(false)
     }
 
-    private func clusterLabelButton(_ clusterLabel: ClusterLabel) -> some View {
-        Button {
-            isCanvasFocused = true
-            onSelectClusterKind?(clusterLabel.kind)
-        } label: {
-            clusterLabelBadge(clusterLabel)
-        }
-        .buttonStyle(.plain)
-        .focusable()
-        .disabled(onSelectClusterKind == nil)
-        .help(onSelectClusterKind == nil ? "" : clusterHelpText(for: clusterLabel))
-    }
-
     private func clusterLabelBadge(_ clusterLabel: ClusterLabel) -> some View {
         let isSelected = selectedClusterKind == clusterLabel.kind
         let isFocusedSourceCluster = focusedClusterLink?.sourceKind == clusterLabel.kind
@@ -2157,13 +2119,6 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             )
             .clipShape(Capsule())
             .opacity(focusedClusterLink == nil || isPartOfFocusedLink ? 1 : 0.55)
-    }
-
-    private func clusterHelpText(for clusterLabel: ClusterLabel) -> String {
-        if selectedClusterKind == clusterLabel.kind {
-            return "Clear \(clusterLabel.title) filter"
-        }
-        return "Filter to \(clusterLabel.title)"
     }
 
     private func normalizedRelationKey(_ relation: String) -> String {
