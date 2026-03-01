@@ -165,6 +165,7 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     @State private var hoveredEdgeID: UUID?
     @State private var previewedNavigationTarget: SelectionNavigation.Target?
     @State private var previewGhostPhase = false
+    @State private var layoutRevision = 0
 
     let nodes: [NodeModel]
     let edges: [EdgeModel]
@@ -178,6 +179,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
     let selectedClusterKind: StoryKnowledgeNodeKind?
     let focusedClusterLink: FocusedClusterLink?
     let focusedRelation: String?
+    let hiddenKinds: Set<StoryKnowledgeNodeKind>
+    let hiddenNodeStatuses: Set<StoryKnowledgeRecordStatus>
+    let hiddenEdgeStatuses: Set<StoryKnowledgeRecordStatus>
+    let onToggleLegendKindVisibility: ((StoryKnowledgeNodeKind) -> Void)?
+    let onToggleLegendNodeStatusVisibility: ((StoryKnowledgeRecordStatus) -> Void)?
+    let onToggleLegendEdgeStatusVisibility: ((StoryKnowledgeRecordStatus) -> Void)?
     let onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?
     let fillsAvailableHeight: Bool
     @Binding var selectedNodeID: UUID?
@@ -196,6 +203,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         selectedClusterKind: StoryKnowledgeNodeKind?,
         focusedClusterLink: FocusedClusterLink?,
         focusedRelation: String?,
+        hiddenKinds: Set<StoryKnowledgeNodeKind> = [],
+        hiddenNodeStatuses: Set<StoryKnowledgeRecordStatus> = [],
+        hiddenEdgeStatuses: Set<StoryKnowledgeRecordStatus> = [],
+        onToggleLegendKindVisibility: ((StoryKnowledgeNodeKind) -> Void)? = nil,
+        onToggleLegendNodeStatusVisibility: ((StoryKnowledgeRecordStatus) -> Void)? = nil,
+        onToggleLegendEdgeStatusVisibility: ((StoryKnowledgeRecordStatus) -> Void)? = nil,
         onSelectClusterKind: ((StoryKnowledgeNodeKind) -> Void)?,
         fillsAvailableHeight: Bool = false,
         selectedNodeID: Binding<UUID?>,
@@ -213,6 +226,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         self.selectedClusterKind = selectedClusterKind
         self.focusedClusterLink = focusedClusterLink
         self.focusedRelation = focusedRelation
+        self.hiddenKinds = hiddenKinds
+        self.hiddenNodeStatuses = hiddenNodeStatuses
+        self.hiddenEdgeStatuses = hiddenEdgeStatuses
+        self.onToggleLegendKindVisibility = onToggleLegendKindVisibility
+        self.onToggleLegendNodeStatusVisibility = onToggleLegendNodeStatusVisibility
+        self.onToggleLegendEdgeStatusVisibility = onToggleLegendEdgeStatusVisibility
         self.onSelectClusterKind = onSelectClusterKind
         self.fillsAvailableHeight = fillsAvailableHeight
         _selectedNodeID = selectedNodeID
@@ -265,6 +284,16 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 .disabled(nodes.isEmpty)
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .help("\(fitButtonTitle) (Shift-Command-F)")
+
+                Button("Relayout") {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        relayoutGraph()
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(nodes.count < 2)
+                .help("Relayout Graph")
 
                 Button("Reset View") {
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -586,20 +615,12 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
                 Divider()
                     .frame(height: 16)
 
-                legendNodeKindSample(
-                    title: "Character",
-                    kind: .character
-                )
-
-                legendNodeKindSample(
-                    title: "Location",
-                    kind: .location
-                )
-
-                legendNodeKindSample(
-                    title: "Object",
-                    kind: .object
-                )
+                ForEach(StoryKnowledgeNodeKind.allCases) { kind in
+                    legendNodeKindSample(
+                        title: kind.rawValue.capitalized,
+                        kind: kind
+                    )
+                }
 
                 Divider()
                     .frame(height: 16)
@@ -745,6 +766,13 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
     private func stepZoom(by factor: CGFloat) {
         contentScale = clampedScale(contentScale * factor)
+    }
+
+    private func relayoutGraph() {
+        hoveredNodeID = nil
+        hoveredEdgeID = nil
+        clearNavigationPreview()
+        layoutRevision += 1
     }
 
     private func updateNavigationPreview(_ target: SelectionNavigation.Target?) {
@@ -1393,9 +1421,11 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
 
             let ringRadiusX = min(max(size.width * 0.08, 54), 110)
             let ringRadiusY = min(max(size.height * 0.07, 40), 84)
+            let clusterAngleOffset = clusteredAngleOffset(for: kind, clusterIndex: index)
 
             for (nodeIndex, node) in clusterNodes.enumerated() {
                 let angle = (-CGFloat.pi / 2)
+                    + clusterAngleOffset
                     + (2 * CGFloat.pi * CGFloat(nodeIndex) / CGFloat(max(clusterNodes.count, 1)))
                 positions[node.id] = CGPoint(
                     x: center.x + cos(angle) * ringRadiusX,
@@ -1446,14 +1476,28 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
             let rhsNode = nodesByID[rhs]?.title ?? ""
             return lhsNode.localizedCaseInsensitiveCompare(rhsNode) == .orderedAscending
         }
+        let angleOffset = neighborhoodAngleOffset(for: level)
 
         for (index, nodeID) in orderedNodeIDs.enumerated() {
-            let angle = (-CGFloat.pi / 2) + (2 * CGFloat.pi * CGFloat(index) / CGFloat(max(orderedNodeIDs.count, 1)))
+            let angle = (-CGFloat.pi / 2)
+                + angleOffset
+                + (2 * CGFloat.pi * CGFloat(index) / CGFloat(max(orderedNodeIDs.count, 1)))
             positions[nodeID] = CGPoint(
                 x: center.x + cos(angle) * radiusX,
                 y: center.y + sin(angle) * radiusY
             )
         }
+    }
+
+    private func neighborhoodAngleOffset(for level: Int) -> CGFloat {
+        let baseStep = CGFloat.pi / 9
+        return CGFloat((layoutRevision + level) % 18) * baseStep
+    }
+
+    private func clusteredAngleOffset(for kind: StoryKnowledgeNodeKind, clusterIndex: Int) -> CGFloat {
+        let baseStep = CGFloat.pi / 10
+        let kindBias = abs(kind.rawValue.hashValue % 7)
+        return CGFloat((layoutRevision + clusterIndex + kindBias) % 20) * baseStep
     }
 
     private func adjacencyMap() -> [UUID: Set<UUID>] {
@@ -2132,62 +2176,124 @@ struct StoryKnowledgeNeighborhoodGraphView: View {
         title: String,
         status: StoryKnowledgeRecordStatus
     ) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(nodeFillColor(kind: .character).opacity(0.2))
-                .frame(width: 18, height: 14)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(
-                            status == .canonical ? nodeFillColor(kind: .character) : Color(nsColor: .separatorColor),
-                            lineWidth: 1.5
-                        )
-                )
+        let isHidden = hiddenNodeStatuses.contains(status)
 
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        return Button {
+            onToggleLegendNodeStatusVisibility?(status)
+        } label: {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(nodeFillColor(kind: .character).opacity(isHidden ? 0.08 : 0.2))
+                    .frame(width: 18, height: 14)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(
+                                status == .canonical
+                                    ? nodeFillColor(kind: .character).opacity(isHidden ? 0.28 : 1)
+                                    : Color(nsColor: .separatorColor).opacity(isHidden ? 0.35 : 1),
+                                lineWidth: 1.5
+                            )
+                    )
+
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(isHidden ? .tertiary : .secondary)
+                    .strikethrough(isHidden, color: Color.secondary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(isHidden ? Color(nsColor: .windowBackgroundColor) : nodeFillColor(kind: .character).opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(nodeFillColor(kind: .character).opacity(isHidden ? 0.18 : 0.32), lineWidth: 1)
+            )
+            .opacity(isHidden ? 0.8 : 1)
         }
+        .buttonStyle(.plain)
+        .help(isHidden ? "Show \(title)" : "Hide \(title)")
     }
 
     private func legendNodeKindSample(
         title: String,
         kind: StoryKnowledgeNodeKind
     ) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(nodeFillColor(kind: kind))
-                .frame(width: 10, height: 10)
+        let isHidden = hiddenKinds.contains(kind)
 
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        return Button {
+            onToggleLegendKindVisibility?(kind)
+        } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(nodeFillColor(kind: kind).opacity(isHidden ? 0.25 : 1))
+                    .frame(width: 10, height: 10)
+
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(isHidden ? .tertiary : .secondary)
+                    .strikethrough(isHidden, color: Color.secondary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(isHidden ? Color(nsColor: .windowBackgroundColor) : nodeFillColor(kind: kind).opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(nodeFillColor(kind: kind).opacity(isHidden ? 0.18 : 0.32), lineWidth: 1)
+            )
+            .opacity(isHidden ? 0.8 : 1)
         }
+        .buttonStyle(.plain)
+        .help(isHidden ? "Show \(title) nodes" : "Hide \(title) nodes")
     }
 
     private func legendEdgeSample(
         title: String,
         status: StoryKnowledgeRecordStatus
     ) -> some View {
-        HStack(spacing: 6) {
-            Path { path in
-                path.move(to: CGPoint(x: 0, y: 6))
-                path.addLine(to: CGPoint(x: 18, y: 6))
-            }
-            .stroke(
-                status == .canonical ? Color.accentColor : Color.secondary,
-                style: StrokeStyle(
-                    lineWidth: 2,
-                    lineCap: .round,
-                    dash: status == .inferred ? [4, 3] : []
-                )
-            )
-            .frame(width: 18, height: 12)
+        let isHidden = hiddenEdgeStatuses.contains(status)
 
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        return Button {
+            onToggleLegendEdgeStatusVisibility?(status)
+        } label: {
+            HStack(spacing: 6) {
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: 6))
+                    path.addLine(to: CGPoint(x: 18, y: 6))
+                }
+                .stroke(
+                    (status == .canonical ? Color.accentColor : Color.secondary).opacity(isHidden ? 0.3 : 1),
+                    style: StrokeStyle(
+                        lineWidth: 2,
+                        lineCap: .round,
+                        dash: status == .inferred ? [4, 3] : []
+                    )
+                )
+                .frame(width: 18, height: 12)
+
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(isHidden ? .tertiary : .secondary)
+                    .strikethrough(isHidden, color: Color.secondary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(isHidden ? Color(nsColor: .windowBackgroundColor) : Color.accentColor.opacity(0.06))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.accentColor.opacity(isHidden ? 0.14 : 0.24), lineWidth: 1)
+            )
+            .opacity(isHidden ? 0.8 : 1)
         }
+        .buttonStyle(.plain)
+        .help(isHidden ? "Show \(title)" : "Hide \(title)")
     }
 
     private func legendFocusedClusterSample(
