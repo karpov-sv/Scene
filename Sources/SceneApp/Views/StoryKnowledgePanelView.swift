@@ -706,6 +706,36 @@ struct StoryKnowledgePanelView: View {
                         actions: selectedGraphEdgeRelatedActions
                     )
                 ]
+            var actions: [StoryKnowledgeNeighborhoodGraphView.SelectionAction] = [
+                StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                    title: isSidebarFocused(on: selectedGraphEdge) ? "Clear Pair Focus" : "Focus Pair",
+                    action: { toggleSidebarFocus(for: selectedGraphEdge) }
+                ),
+                StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                    title: isRelationFiltered(to: selectedGraphEdge.relation) ? "Clear Relation Filter" : "Filter Relation",
+                    action: { toggleRelationFilter(selectedGraphEdge.relation) }
+                )
+            ]
+            if selectedGraphEdge.status == .inferred {
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Accept",
+                        action: {
+                            selectedPendingEdgeIDs.remove(selectedGraphEdge.id)
+                            store.acceptStoryKnowledgeEdge(selectedGraphEdge.id)
+                        }
+                    )
+                )
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Reject",
+                        action: {
+                            selectedPendingEdgeIDs.remove(selectedGraphEdge.id)
+                            store.rejectStoryKnowledgeEdge(selectedGraphEdge.id)
+                        }
+                    )
+                )
+            }
 
             return StoryKnowledgeNeighborhoodGraphView.SelectionOverlay(
                 title: store.storyKnowledgeEdgeDisplayLabel(selectedGraphEdge),
@@ -721,16 +751,7 @@ struct StoryKnowledgePanelView: View {
                 actionSections: actionSections,
                 evidenceLinks: evidenceLinks,
                 footnote: evidencePreview.isEmpty ? nil : evidencePreview,
-                actions: [
-                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
-                        title: isSidebarFocused(on: selectedGraphEdge) ? "Clear Pair Focus" : "Focus Pair",
-                        action: { toggleSidebarFocus(for: selectedGraphEdge) }
-                    ),
-                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
-                        title: isRelationFiltered(to: selectedGraphEdge.relation) ? "Clear Relation Filter" : "Filter Relation",
-                        action: { toggleRelationFilter(selectedGraphEdge.relation) }
-                    )
-                ],
+                actions: actions,
                 dismiss: { clearGraphSelection() }
             )
         }
@@ -773,6 +794,35 @@ struct StoryKnowledgePanelView: View {
                     StoryKnowledgeNeighborhoodGraphView.SelectionAction(
                         title: "Open Compendium",
                         action: { onOpenCompendiumEntry(compendiumID) }
+                    )
+                )
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Update Compendium",
+                        action: {
+                            compendiumMergePreview = store.storyKnowledgeCompendiumMergePreview(for: selectedGraphNode.id)
+                        }
+                    )
+                )
+            }
+
+            if selectedGraphNode.status == .inferred {
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Promote to Compendium",
+                        action: {
+                            selectedPendingNodeIDs.remove(selectedGraphNode.id)
+                            store.promoteStoryKnowledgeNodeToCompendium(selectedGraphNode.id)
+                        }
+                    )
+                )
+                actions.append(
+                    StoryKnowledgeNeighborhoodGraphView.SelectionAction(
+                        title: "Reject",
+                        action: {
+                            selectedPendingNodeIDs.remove(selectedGraphNode.id)
+                            store.rejectStoryKnowledgeNode(selectedGraphNode.id)
+                        }
                     )
                 )
             }
